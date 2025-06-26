@@ -1,0 +1,43 @@
+# =============================================================================
+# PANGEA FOOD DELIVERY - AI FRIEND SMS SYSTEM
+# Python Dependencies
+# =============================================================================
+
+# Core AI and Language Model Dependencies
+langchain-anthropic>=0.1.0          # Anthropic Claude integration
+langchain-core>=0.1.0               # Core LangChain functionality
+langgraph>=0.1.0                    # LangGraph for workflow orchestration
+
+# Web Framework and API
+Flask>=2.3.0                        # Web server for Twilio webhooks
+python-dotenv>=1.0.0                # Environment variable management
+
+# SMS and Communication
+twilio>=8.10.0                      # Twilio SMS API integration
+
+# Database and Storage
+firebase-admin>=6.2.0               # Firebase Firestore database
+google-cloud-firestore>=2.11.0      # Google Cloud Firestore client
+
+# Payment Processing
+stripe>=7.0.0                       # Stripe payment processing (optional)
+
+# Data Processing and Utilities
+python-dateutil>=2.8.2              # Date and time utilities
+pytz>=2023.3                        # Timezone handling
+uuid>=1.30                          # Unique identifier generation
+
+# Development and Testing (Optional)
+pytest>=7.4.0                       # Testing framework
+pytest-mock>=3.11.0                 # Mocking for tests
+black>=23.0.0                       # Code formatting
+flake8>=6.0.0                       # Code linting
+
+# Production and Monitoring (Optional)
+gunicorn>=21.2.0                    # Production WSGI server
+sentry-sdk[flask]>=1.35.0           # Error monitoring
+prometheus-client>=0.17.0           # Metrics collection
+
+# Development Tools (Optional)
+ngrok>=0.1.0                        # Local tunnel for webhook testing
+requests>=2.31.0                    # HTTP client for testing 
