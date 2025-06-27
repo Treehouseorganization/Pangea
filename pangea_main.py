@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
 from dotenv import load_dotenv # This loads the .env file
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import uuid
 
 # Import order processing system
@@ -27,6 +29,8 @@ from twilio.rest import Client
 import firebase_admin
 from firebase_admin import credentials, firestore
 from flask import Flask, request
+
+ADMIN_PHONE_NUMBER = os.getenv('ADMIN_PHONE_NUMBER', '+17089011754')
 
 load_dotenv() 
 
@@ -1881,6 +1885,7 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 
 # ===== FLASK WEBHOOK SERVER =====
 app = Flask(__name__)
+ # Enable CORS for frontend requests
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
@@ -1911,6 +1916,8 @@ def sms_webhook():
 @app.route('/health', methods=['GET'])
 def health_check():
     return {'status': 'healthy', 'service': 'Pangea AI Friend'}, 200
+
+
 
 if __name__ == "__main__":
     print("🍜 Starting Pangea AI Friend System...")

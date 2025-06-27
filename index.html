@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pangea - Your AI Friend That Saves 90% On Food Delivery</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-beige: #F5F1EB;
+            --accent-terracotta: #D4926B;
+            --sage-green: #8B9D83;
+            --deep-black: #000000;
+            --cream-white: #FEFCF8;
+            --warm-gray: #8B7D6B;
+            --charcoal: #1A1A1A;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            color: var(--deep-black);
+            background-color: var(--cream-white);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            background: var(--cream-white);
+            padding: 20px 0;
+            border-bottom: 1px solid var(--primary-beige);
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 24px;
+            font-weight: 900;
+            color: var(--deep-black);
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-terracotta), var(--sage-green));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: var(--warm-gray);
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent-terracotta);
+        }
+
+        .cta-button {
+            background: var(--deep-black);
+            color: var(--cream-white);
+            padding: 12px 24px;
+            border-radius: 25px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .cta-button:hover {
+            background: var(--accent-terracotta);
+            transform: translateY(-2px);
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--primary-beige);
+            padding: 80px 0;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 900;
+            color: var(--deep-black);
+            margin-bottom: 30px;
+            line-height: 1.1;
+        }
+
+        .hero .subtitle {
+            font-size: 1.3rem;
+            color: var(--warm-gray);
+            margin-bottom: 50px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-cta {
+            background: var(--accent-terracotta);
+            color: var(--cream-white);
+            padding: 18px 40px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.2rem;
+            display: inline-block;
+            transition: all 0.3s;
+            box-shadow: 0 10px 30px rgba(212, 146, 107, 0.3);
+        }
+
+        .hero-cta:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(212, 146, 107, 0.4);
+        }
+
+        /* How It Works */
+        .how-it-works {
+            padding: 80px 0;
+            background: var(--cream-white);
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: 900;
+            margin-bottom: 60px;
+            color: var(--deep-black);
+        }
+
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-bottom: 60px;
+        }
+
+        .step {
+            text-align: center;
+            padding: 40px 30px;
+            border-radius: 20px;
+            background: white;
+            border: 2px solid var(--primary-beige);
+            transition: all 0.3s;
+        }
+
+        .step:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-terracotta);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: var(--accent-terracotta);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 1.5rem;
+            margin: 0 auto 20px;
+        }
+
+        .step h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: var(--deep-black);
+        }
+
+        .step p {
+            color: var(--warm-gray);
+            font-size: 1.1rem;
+        }
+
+        /* Chat Example */
+        .chat-example {
+            background: var(--primary-beige);
+            padding: 60px 30px;
+            border-radius: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .chat-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .chat-header h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--deep-black);
+            margin-bottom: 10px;
+        }
+
+        .message {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--sage-green);
+            font-style: italic;
+            color: var(--charcoal);
+        }
+
+        /* Pricing Section */
+        .pricing {
+            padding: 80px 0;
+            background: var(--deep-black);
+            color: var(--cream-white);
+            text-align: center;
+        }
+
+        .pricing .section-title {
+            color: var(--cream-white);
+        }
+
+        .pricing-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .pricing-card {
+            padding: 40px 30px;
+            border-radius: 20px;
+            border: 2px solid var(--charcoal);
+        }
+
+        .before {
+            background: var(--charcoal);
+        }
+
+        .after {
+            background: var(--accent-terracotta);
+            transform: scale(1.05);
+        }
+
+        .pricing-card h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        .price {
+            font-size: 3rem;
+            font-weight: 900;
+            margin-bottom: 10px;
+        }
+
+        .old-price {
+            text-decoration: line-through;
+            color: #999;
+        }
+
+        .savings {
+            background: var(--sage-green);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            display: inline-block;
+            margin-top: 20px;
+        }
+
+        /* CTA Section */
+        .final-cta {
+            padding: 80px 0;
+            background: var(--primary-beige);
+            text-align: center;
+        }
+
+        .phone-number {
+            background: var(--deep-black);
+            color: var(--cream-white);
+            padding: 20px 40px;
+            border-radius: 15px;
+            font-size: 2rem;
+            font-weight: 900;
+            display: inline-block;
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+        }
+
+        /* Signup Form */
+        .signup-form {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            max-width: 500px;
+            margin: 40px auto 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .signup-form h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--deep-black);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            color: var(--deep-black);
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid var(--primary-beige);
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-terracotta);
+        }
+
+        .signup-button {
+            width: 100%;
+            background: var(--accent-terracotta);
+            color: var(--cream-white);
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .signup-button:hover {
+            background: var(--sage-green);
+            transform: translateY(-2px);
+        }
+
+        .signup-button:disabled {
+            background: var(--warm-gray);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .success-message {
+            background: var(--sage-green);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error-message {
+            background: #ef4444;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 15px;
+            }
+            
+            .hero {
+                padding: 60px 0;
+            }
+            
+            .hero h1 {
+                font-size: 2.2rem;
+                line-height: 1.2;
+                margin-bottom: 20px;
+            }
+            
+            .hero .subtitle {
+                font-size: 1.1rem;
+                margin-bottom: 40px;
+                padding: 0 10px;
+            }
+            
+            .hero-cta {
+                padding: 15px 30px;
+                font-size: 1.1rem;
+            }
+            
+            .pricing-comparison {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .nav-links {
+                display: none;
+            }
+            
+            .steps {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+            
+            .step {
+                padding: 30px 20px;
+            }
+            
+            .section-title {
+                font-size: 2rem;
+                margin-bottom: 40px;
+                line-height: 1.2;
+            }
+            
+            .how-it-works {
+                padding: 60px 0;
+            }
+            
+            .pricing {
+                padding: 60px 0;
+            }
+            
+            .final-cta {
+                padding: 60px 0;
+            }
+            
+            .phone-number {
+                font-size: 1.5rem;
+                padding: 15px 25px;
+                letter-spacing: 1px;
+            }
+            
+            .chat-example {
+                padding: 40px 20px;
+                margin: 0 10px;
+            }
+            
+            .message {
+                padding: 15px;
+                font-size: 0.95rem;
+            }
+            
+            .pricing-card {
+                padding: 30px 20px;
+            }
+            
+            .price {
+                font-size: 2.5rem;
+            }
+            
+            .after {
+                transform: none;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .hero h1 {
+                font-size: 1.8rem;
+            }
+            
+            .hero .subtitle {
+                font-size: 1rem;
+            }
+            
+            .section-title {
+                font-size: 1.7rem;
+            }
+            
+            .phone-number {
+                font-size: 1.2rem;
+                padding: 12px 20px;
+            }
+            
+            .step h3 {
+                font-size: 1.3rem;
+            }
+            
+            .step p {
+                font-size: 1rem;
+            }
+            
+            .chat-header h3 {
+                font-size: 1.3rem;
+            }
+            
+            .message {
+                font-size: 0.9rem;
+            }
+            
+            .pricing-card h3 {
+                font-size: 1.3rem;
+            }
+            
+            .price {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav class="container">
+            <div class="logo">
+                <div class="logo-icon">🍽️</div>
+                <span>PANGEA</span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#how-it-works">How It Works</a></li>
+                <li><a href="#pricing">Pricing</a></li>
+                <li><a href="#contact">Contact</a></li>
+            </ul>
+            <a href="#start" class="cta-button">Start Saving</a>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <div class="container">
+            <h1>Your AI Friend That Saves 90% On Food Delivery By Texting You</h1>
+            <p class="subtitle">
+                Your AI friend talks to you, while also talking to everyone else's AI friend to coordinate 
+                group food orders anywhere, anytime on campus making delivery 90% more affordable.
+            </p>
+            <p style="font-size: 1.1rem; color: var(--warm-gray); margin-bottom: 40px; font-style: italic;">
+                <strong>It's like having a friend who's constantly coordinating food orders for you and saving you money, except it never sleeps and knows everyone on campus.</strong>
+            </p>
+            <a href="#start" class="hero-cta">Text To Start Saving 90%</a>
+
+            <!-- Signup Form - Moved to top -->
+            <div class="signup-form">
+                <h3>Sign Up Now</h3>
+                <form id="signupForm">
+                    <div class="form-group">
+                        <label for="phone">Phone Number</label>
+                        <input type="tel" id="phone" name="phone" placeholder="+1 (555) 123-4567" required>
+                    </div>
+                    <button type="submit" class="signup-button" id="submitBtn">
+                        🚀 Sign Up
+                    </button>
+                    <div class="success-message" id="successMessage">
+                        🎉 Welcome to Pangea! You'll receive a text from your AI friend shortly.
+                    </div>
+                    <div class="error-message" id="errorMessage">
+                        ❌ Something went wrong. Please try again or text us directly.
+                    </div>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <section class="how-it-works" id="how-it-works">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Text Your Craving</h3>
+                    <p>Just text what you want to eat and where you are on campus. Simple as that.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>AI Finds Your Group</h3>
+                    <p>Your AI friend coordinates with other students' AI friends to form the perfect food group. Groups are never larger than 4 people per restaurant.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Save 90% Together</h3>
+                    <p>Split one delivery fee among your group instead of everyone paying $15+ alone.</p>
+                </div>
+            </div>
+
+            <div class="chat-example">
+                <div class="chat-header">
+                    <h3>You'll get friendly texts like:</h3>
+                </div>
+                <div class="message">
+                    "Good morning! Where will you be on campus today? What are you thinking for lunch? Give me 2 to 3 places you might want to order from."
+                </div>
+                <div class="message">
+                    "Perfect! I found 3 people who want Chipotle at the Student Union around 12:30pm too! Let me coordinate your group order..."
+                </div>
+                <div class="message">
+                    "🎉 Your group is ready! Your share is just $3.50 instead of $15. Click here to pay and place your order."
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="pricing" id="pricing">
+        <div class="container">
+            <h2 class="section-title">The Price Difference Is Incredible</h2>
+            <div class="pricing-comparison">
+                <div class="pricing-card before">
+                    <h3>Ordering Alone</h3>
+                    <div class="price old-price">$14-18</div>
+                    <p>Delivery fee + tips + service charges</p>
+                    <p>😭 Expensive and lonely</p>
+                </div>
+                <div class="pricing-card after">
+                    <h3>With Pangea</h3>
+                    <div class="price">$2.00-4.00</div>
+                    <p>Split delivery among your group</p>
+                    <div class="savings">Save 90%!</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="final-cta" id="start">
+        <div class="container">
+            <h2 class="section-title">Ready To Save 90% On Every Food Order?</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 40px; color: var(--warm-gray);">
+                Text this number to get started with your AI food coordination friend:
+            </p>
+            <div class="phone-number">+18443118208</div>
+            <p style="color: var(--warm-gray); margin-top: 30px;">
+                Just text "I want pizza at Campus Center" or any food craving to start saving immediately.
+            </p>
+        </div>
+    </section>
+
+    <script>
+        // DISABLED SIGNUP FORM - Just for UI display
+        document.getElementById('signupForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const successMessage = document.getElementById('successMessage');
+            
+            // Show a simple message instead of actually signing up
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Coming Soon!';
+            
+            setTimeout(() => {
+                successMessage.style.display = 'block';
+                successMessage.innerHTML = '🚀 Signup coming soon! For now, just text our number below.';
+                
+                // Reset after 3 seconds
+                setTimeout(() => {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '🚀 Sign Up';
+                    successMessage.style.display = 'none';
+                    document.getElementById('signupForm').reset();
+                }, 3000);
+            }, 1000);
+        });
+
+        // Phone number formatting (keep this for UI polish)
+        document.getElementById('phone').addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length >= 10) {
+                value = value.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+                if (value.length === 14) {
+                    value = '+1 ' + value;
+                }
+            }
+            e.target.value = value;
+        });
+    </script>
+
+    <footer style="background: var(--deep-black); color: var(--cream-white); padding: 40px 0; text-align: center;">
+        <div class="container">
+            <div class="logo" style="justify-content: center; margin-bottom: 20px;">
+                <div class="logo-icon">🍽️</div>
+                <span>PANGEA</span>
+            </div>
+            <p style="color: var(--warm-gray);">Making food delivery affordable for every college student, everywhere.</p>
+        </div>
+    </footer>
+</body>
+</html>

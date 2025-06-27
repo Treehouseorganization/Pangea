@@ -1,0 +1,14 @@
+{
+  "name": "pangea",
+  "version": "1.0.0",
+  "description": "AI Food Delivery Coordination",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx live-server .",
+    "server": "npx live-server .",
+    "dev": "npx live-server ."
+  },
+  "keywords": ["food", "delivery", "ai"],
+  "author": "You",
+  "license": "MIT"
+}

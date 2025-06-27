@@ -17,6 +17,71 @@
 # - Firebase backend for user data and order management
 # - LangGraph workflow orchestration for complex conversation flows
 # - Group payment coordination with Stripe integration
+# - ADAPTIVE LEARNING: AI Friends learn and improve over time based on user interactions
+#
+# AI LEARNING CAPABILITIES & CODE IMPLEMENTATION:
+# The learning system is implemented through several key functions in pangea_main.py:
+#
+# 1. MEMORY STORAGE & RETRIEVAL:
+#    - get_user_preferences() [Lines 98-127]: Retrieves stored user data including:
+#      * Food preferences and favorite cuisines
+#      * Successful matches history
+#      * Preferred times and locations
+#      * Satisfaction scores from past orders
+#
+#    - update_user_memory() [Lines 684-753]: Stores new interaction data including:
+#      * Interaction type (successful_group_order, no_matches_found, etc.)
+#      * Restaurant, location, timing preferences
+#      * Group members and satisfaction scores
+#      * AI-generated insights from extract_learning_insights()
+#
+# 2. AI-POWERED INSIGHT EXTRACTION:
+#    - extract_learning_insights() [Lines 754-780]: Uses Claude 4 to analyze interactions and extract:
+#      * Food preference updates (what they liked/disliked)
+#      * Timing insights (when they prefer to eat)
+#      * Social preferences (group size, compatibility patterns)
+#      * Price sensitivity patterns
+#      * Communication style preferences
+#
+# 3. HISTORICAL COMPATIBILITY LEARNING:
+#    - check_historical_compatibility() [Lines 461-476]: Checks if users have successfully
+#      ordered together before and returns perfect compatibility score (1.0) if they have
+#
+# 4. NEGOTIATION STRATEGY LEARNING:
+#    - negotiate_with_other_ai() [Lines 501-573]: Uses target user's history to:
+#      * Access their preferences via get_user_preferences()
+#      * Generate personalized negotiation reasoning
+#      * Calculate success probability based on historical patterns
+#
+# 5. PERSONALIZED COMMUNICATION:
+#    - enhance_message_with_context() [Lines 657-683]: Adapts message tone and content based on:
+#      * User's past interactions and preferences
+#      * Communication style patterns
+#      * Previous satisfaction scores
+#
+# 6. SUCCESS PATTERN RECOGNITION:
+#    - update_user_memory() stores successful patterns when satisfaction_score >= 7:
+#      * Restaurant preferences that worked well
+#      * Optimal group sizes for each user
+#      * Timing patterns that led to successful orders
+#      * Location preferences and success rates
+#
+# 7. LEARNING DATA STRUCTURE (Firebase Collections):
+#    - 'users' collection: Stores per-user learning data
+#      * preferences: Learned food/timing/location preferences
+#      * successful_matches: History of successful group formations
+#      * interactions: Array of all interactions with AI insights
+#      * successful_patterns: Patterns that led to high satisfaction
+#      * satisfaction_scores: Historical satisfaction ratings
+#
+#    - 'negotiations' collection: Stores negotiation attempts for learning
+#      * target_user_preferences: Used to improve future negotiations
+#      * ai_reasoning: Claude 4's reasoning for each negotiation
+#      * success/failure outcomes for pattern recognition
+#
+#    - 'completed_orders' collection: Stores successful orders for compatibility learning
+#      * participants: Users who successfully ordered together
+#      * Used by check_historical_compatibility() for future matching
 #
 # PROJECT FILES:
 # - pangea_main.py: Core AI Friend system with matching and negotiation
@@ -73,6 +138,19 @@ PORT=8000              # Port for the Flask web server
 ANTHROPIC_MODEL=claude-opus-4-20250514  # Latest Claude 4 model
 ANTHROPIC_TEMPERATURE=0.1               # Low temperature for consistent responses
 ANTHROPIC_MAX_TOKENS=4096               # Maximum response length
+
+# =============================================================================
+# AI LEARNING CONFIGURATION
+# =============================================================================
+# Settings for the AI Friend's learning and adaptation capabilities
+# These control the learning functions in pangea_main.py
+ENABLE_LEARNING=True                    # Enable AI learning and adaptation
+LEARNING_RETENTION_DAYS=90              # How long to retain learning data
+SATISFACTION_THRESHOLD=7.0              # Minimum satisfaction score for positive learning
+MAX_LEARNING_PATTERNS=1000              # Maximum patterns to store per user
+ENABLE_PERSONALIZATION=True             # Enable personalized communication
+ENABLE_PATTERN_RECOGNITION=True         # Enable success pattern recognition
+ENABLE_NEGOTIATION_OPTIMIZATION=True    # Enable negotiation strategy learning
 
 # =============================================================================
 # SYSTEM BEHAVIOR CONFIGURATION
