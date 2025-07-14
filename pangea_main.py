@@ -9,8 +9,10 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
+from venv import logger
 from dotenv import load_dotenv # This loads the .env file
 import uuid
+import random
 
 # Import order processing system
 from pangea_order_processor import start_order_process, process_order_message
@@ -46,6 +48,8 @@ LOCATIONS = [
     "Recreation Center",
     "Health Sciences Building"
 ]
+
+MAX_GROUP_SIZE = 4
 
 # Initialize services with 2025 best practices
 twilio_client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
@@ -1635,69 +1639,83 @@ def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
     user_phone = state['user_phone']
     
     try:
-        # Find the pending negotiation for this user
+        # --- find the pending negotiation (unchanged) ------------------
         pending_negotiations = db.collection('negotiations')\
                                .where('to_user', '==', user_phone)\
                                .where('status', '==', 'pending')\
                                .limit(1).get()
         
         if len(pending_negotiations) > 0:
-            negotiation_doc = pending_negotiations[0]
+            negotiation_doc  = pending_negotiations[0]
             negotiation_data = negotiation_doc.to_dict()
             
-            # Update negotiation status to accepted
+            # ------------------------------------------------------------
+            # 1. collect essentials BEFORE accepting
+            requesting_user = negotiation_data['from_user']
+            other_accepted  = db.collection('negotiations')\
+                                 .where('from_user', '==', requesting_user)\
+                                 .where('status', '==', 'accepted')\
+                                 .get()
+            proposed_group_size = len(other_accepted) + 2  # requester + this user + accepted others
+            # 2. FULL-GROUP gate
+            if proposed_group_size > MAX_GROUP_SIZE:
+                send_friendly_message(
+                    user_phone,
+                    "Sorry, that group filled up just before you replied. "
+                    "I'll look for another match right away! 🔄",
+                    message_type="general"
+                )
+                # keep the negotiation from flipping to 'accepted'
+                negotiation_doc.reference.update({'status': 'declined_full'})
+                state['messages'].append(AIMessage(
+                    content="Group response YES rejected (group full)"
+                ))
+                return state
+            # ------------------------------------------------------------
+            # 3. we still have room – now mark the negotiation accepted
             negotiation_doc.reference.update({'status': 'accepted'})
-            
-            # DEBUG: Print the full negotiation data to see structure
+            # ------------------------------------------------------------
+            # DEBUG…
             print(f"🔍 DEBUG - Full negotiation data: {json.dumps(negotiation_data, default=str, indent=2)}")
             
-            # FIX: Get restaurant from the correct location in proposal structure
-            proposal = negotiation_data.get('proposal', {})
-            
-            # Try multiple possible keys where restaurant might be stored
+            proposal   = negotiation_data.get('proposal', {})
             restaurant = (
-                proposal.get('restaurant') or           # Direct restaurant key
-                proposal.get('primary_restaurant') or   # From multi_agent_negotiation_node 
-                proposal.get('restaurant_name') or      # Alternative key
-                'Unknown Restaurant'                     # Fallback
+                proposal.get('restaurant')
+                or proposal.get('primary_restaurant')
+                or proposal.get('restaurant_name')
+                or 'Unknown Restaurant'
             )
-            
             print(f"🍽️ DEBUG - Extracted restaurant: '{restaurant}'")
             print(f"🍽️ DEBUG - Proposal keys: {list(proposal.keys())}")
             
-            group_id = negotiation_data['negotiation_id']
+            group_id   = negotiation_data['negotiation_id']
+            group_size = proposed_group_size    # <— we already calculated it
             
-            # Calculate group size (requesting user + this user + any other accepted)
-            requesting_user = negotiation_data['from_user']
-            group_size = 2  # Start with 2 (requester + this user)
-            
-            # Check for other accepted negotiations for this group
-            other_accepted = db.collection('negotiations')\
-                              .where('from_user', '==', requesting_user)\
-                              .where('status', '==', 'accepted')\
-                              .get()
-            group_size += len(other_accepted)
-            
-            # START ORDER PROCESS FOR THIS USER with correct restaurant
+            # START ORDER PROCESS FOR THIS USER
             print(f"🚀 DEBUG - Starting order process with restaurant: '{restaurant}'")
             start_order_process(user_phone, group_id, restaurant, group_size)
             
-            # Also start order process for requesting user if they haven't started yet
+            # also kick off for requester if not started
             requesting_user_session = db.collection('order_sessions').document(requesting_user).get()
             if not requesting_user_session.exists:
                 start_order_process(requesting_user, group_id, restaurant, group_size)
             
             print(f"✅ Group accepted and order process started: {negotiation_data['negotiation_id']}")
-            
+        
         else:
-            # No pending negotiation found
-            message = "I don't see any pending group invitations for you right now. Want to start a new food order?"
-            send_friendly_message(user_phone, message, message_type="general")
+            send_friendly_message(
+                user_phone,
+                "I don't see any pending group invitations for you right now. Want to start a new food order?",
+                message_type="general"
+            )
             
     except Exception as e:
         print(f"Error handling group response YES: {e}")
-        error_message = "Something went wrong processing your response. Can you try again?"
-        send_friendly_message(user_phone, error_message, message_type="general")
+        send_friendly_message(
+            user_phone,
+            "Something went wrong processing your response. Can you try again?",
+            message_type="general"
+        )
     
     state['messages'].append(AIMessage(content="Group response YES processed"))
     return state
@@ -2262,7 +2280,18 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
     all_members = [state['user_phone']] + [neg['target_user'] for neg in confirmed_members]
     restaurant = state['current_request'].get('restaurant', 'chosen restaurant')
     group_size = len(all_members)
-    
+
+    # --- NEW: Enforce 4-person maximum ---------------------------------
+    if group_size > 4:
+        # Trim or abort – this sample simply aborts gracefully
+        send_friendly_message(
+            state['user_phone'],
+            "Oops - a Pangea group can't exceed 4 people. Let me regroup and try again! 🚦",
+            message_type="general"
+        )
+        return state
+    # -------------------------------------------------------------------
+
     # ✨ NEW: Find optimal time for the group
     requesting_user_time = state['current_request'].get('time_preference', 'now')
     optimal_time = find_optimal_group_time(state['potential_matches'], requesting_user_time)
@@ -2271,7 +2300,7 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
     group_id = str(uuid.uuid4())
     
     # PROACTIVE NOTIFICATION: Check if group has room for more people
-    if len(all_members) < 4:  # Group has room for more people
+    if len(all_members) < MAX_GROUP_SIZE:  # Group has room for more people
         print(f"🔔 Group has {len(all_members)} members, looking for more compatible users...")
         
         notify_result = notify_compatible_users_of_active_groups.invoke({
@@ -2387,6 +2416,14 @@ A few options:
 
 Want me to keep monitoring for matches?"""
     
+    #-------- NEW: attach $3-4 solo-order link -------------------------
+    solo_link = get_payment_link_for_group([state['user_phone']])     # size == 1
+    no_match_message += (
+        f"\n\n👤 Prefer to go solo right now? "
+        f"Delivery is only $3-4 👉 {solo_link}"
+    )
+    # ------------------------------------------------------------------
+    
     send_friendly_message(
         state['user_phone'],
         no_match_message,
@@ -2470,6 +2507,24 @@ def send_morning_checkins():
         morning_greeting_node(morning_state)
 
 # ===== HELPER FUNCTIONS =====
+
+def get_payment_link_for_group(group_members):
+    size = len(group_members)
+    if size == 1:
+        # Fallback for solo delivery pricing (task 8)
+        return random.choice([
+            os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
+            os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE")
+        ])
+    if size > 4:
+        raise ValueError("Group size exceeds maximum of 4 people.")
+    links = {
+        2: os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
+        3: os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE"),
+        4: os.getenv("STRIPE_PAYMENT_LINK_4_PEOPLE")
+    }
+    return links.get(size)
+
 def send_negotiation_notification(target_user: str, negotiation_doc: Dict):
     """Agent autonomously crafts negotiation message"""
     
