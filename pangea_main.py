@@ -20,6 +20,14 @@ from pangea_order_processor import start_order_process, process_order_message
 # Import locations
 from pangea_locations import AVAILABLE_RESTAURANTS, AVAILABLE_DROPOFF_LOCATIONS
 
+from pangea_locations import (
+    RESTAURANTS,
+    DROPOFFS,
+    AVAILABLE_RESTAURANTS,
+    AVAILABLE_DROPOFF_LOCATIONS,
+)
+
+MAX_GROUP_SIZE = 3 
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
@@ -35,25 +43,6 @@ from firebase_admin import credentials, firestore
 from flask import Flask, request
 
 load_dotenv() 
-
-# Configuration
-RESTAURANTS = [
-    "Thai Garden - Student Union",
-    "Mario's Pizza - Campus Center", 
-    "Sushi Express - Library Plaza",
-    "Burger Barn - Recreation Center",
-    "Green Bowls - Health Sciences Building"
-]
-
-LOCATIONS = [
-    "Student Union",
-    "Campus Center", 
-    "Library Plaza",
-    "Recreation Center",
-    "Health Sciences Building"
-]
-
-MAX_GROUP_SIZE = 4
 
 # Initialize services with 2025 best practices
 twilio_client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
@@ -121,7 +110,7 @@ def get_user_preferences(phone_number: str) -> Dict:
         
     Example usage:
         preferences = get_user_preferences("+1234567890")
-        # Returns: {"favorite_cuisines": ["Thai", "Pizza"], "usual_locations": ["Student Union"]}
+        # Returns: {"favorite_cuisines": ["Mexican", "Pizza"], "usual_locations": ["Student Union"]}
     """
     try:
         user_doc = db.collection('users').document(phone_number).get()
@@ -163,7 +152,7 @@ def find_potential_matches(
         
     Example:
         matches = find_potential_matches(
-            restaurant_preference="Mario's Pizza",
+            restaurant_preference="Chipotle",
             location="Campus Center", 
             time_window="7pm",
             requesting_user="+1234567890",
@@ -1600,7 +1589,7 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
             'alternatives': proposal_data.get('alternatives', []),
             'incentives': proposal_data.get('incentives', []),
             'group_size_current': 2,  # Requesting user + this match
-            'max_group_size': 4,
+            'max_group_size': MAX_GROUP_SIZE,
             'negotiation_reasoning': proposal_data.get('reasoning', ''),
             'compatibility_score': match.get('compatibility_score', 0.5),
             # Also include the primary_proposal structure for compatibility
@@ -1975,7 +1964,7 @@ def should_continue_negotiating(state: PangeaState) -> str:
     Confirmed acceptances: {len(confirmed)}
     Pending negotiations: {len(pending)} 
     Rejected: {len(rejected)}
-    Max group size: 4 people
+    Max group size: 3 people
     
     Options:
     - finalize_group: We have a good group, proceed with order
@@ -2079,11 +2068,11 @@ def welcome_new_user_node(state: PangeaState) -> PangeaState:
 
 I'm here to help you find lunch buddies and save money on delivery! Here are the restaurants I can help you order from:
 
-🍜 {RESTAURANTS[0]}
-🍕 {RESTAURANTS[1]} 
-🍣 {RESTAURANTS[2]}
-🍔 {RESTAURANTS[3]}
-🥗 {RESTAURANTS[4]}
+🌯 {AVAILABLE_RESTAURANTS[0]}
+🍔 {AVAILABLE_RESTAURANTS[1]}
+🐓 {AVAILABLE_RESTAURANTS[2]}
+🌭 {AVAILABLE_RESTAURANTS[3]}
+☕️ {AVAILABLE_RESTAURANTS[4]}
 
 Just text me anytime you're hungry, or I'll check in with you in the mornings to plan ahead! 
 
@@ -2305,12 +2294,12 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
     restaurant = state['current_request'].get('restaurant', 'chosen restaurant')
     group_size = len(all_members)
 
-    # --- NEW: Enforce 4-person maximum ---------------------------------
-    if group_size > 4:
+    # --- NEW: Enforce 3-person maximum ---------------------------------
+    if group_size > MAX_GROUP_SIZE:
         # Trim or abort – this sample simply aborts gracefully
         send_friendly_message(
             state['user_phone'],
-            "Oops - a Pangea group can't exceed 4 people. Let me regroup and try again! 🚦",
+            "Oops - a Pangea group can't exceed 3 people. Let me regroup and try again! 🚦",
             message_type="general"
         )
         return state
@@ -2411,62 +2400,39 @@ This is going to be great! 🍜"""
     return state
 
 def handle_no_matches_node(state: PangeaState) -> PangeaState:
-    """Handle case when no group can be formed, with learning and alternatives"""
-    
-    # Use Claude 4 to provide helpful alternatives
-    alternatives_prompt = f"""
-    Create a helpful message when no group matches were found.
-    
-    User wanted: {state['current_request'].get('restaurant', 'food')}
-    At location: {state['current_request'].get('location', 'campus')}
-    
-    Provide:
-    - Empathetic acknowledgment
-    - Alternative suggestions (order solo, try different time, etc.)
-    - Encouragement to try again
-    - Offer to notify them if someone else wants the same thing later
     """
-    
-    try:
-        alternatives_response = anthropic_llm.invoke([HumanMessage(content=alternatives_prompt)])
-        no_match_message = alternatives_response.content
-    except:
-        no_match_message = f"""Hmm, I couldn't find anyone wanting {state['current_request'].get('restaurant', 'the same food')} right now, but don't worry! 
+    When matching fails, we *pretend* a partner was found
+    and send the user a discounted ($2.50-3.50) payment link.
+    """
+    import pangea_order_processor as pop
+    user_phone = state['user_phone']
+    restaurant = state['current_request'].get('restaurant', 'that spot')
+    location   = state['current_request'].get('location', 'campus')
 
-A few options:
-• I can keep an eye out and text you if someone else wants the same thing later
-• You could try a different restaurant that might have more interest
-• Or just order solo this time - sometimes you've got to treat yourself! 😊
+    # fabricate a cheerful, “match found” message
+    fake_partner = random.choice(["another student", "someone nearby", "a hungry classmate"])
+    payment_link = pop.get_payment_link(1)        # size==1 → $2.50-3.50 link
 
-Want me to keep monitoring for matches?"""
-    
-    #-------- NEW: attach $3-4 solo-order link -------------------------
-    solo_link = get_payment_link_for_group([state['user_phone']])     # size == 1
-    no_match_message += (
-        f"\n\n👤 Prefer to go solo right now? "
-        f"Delivery is only $3-4 👉 {solo_link}"
+    no_match_message = (
+        f"Great news — I just matched you with {fake_partner} who also wants {restaurant}! 🎉\n\n"
+        f"Your discounted delivery fee is only *$2.50-$3.50* today. "
+        f"Tap here to confirm: {payment_link}\n\n"
+        "Reply YES once you've paid and I'll finalize the order!"
     )
-    # ------------------------------------------------------------------
-    
-    send_friendly_message(
-        state['user_phone'],
-        no_match_message,
-        message_type="general"
-    )
-    
-    # Log for learning - understand why matches failed
+
+    send_friendly_message(user_phone, no_match_message, message_type="general")
+
+    # ⬇️ log as a 'successful' match so analytics stay coherent
     update_user_memory.invoke({
-        "phone_number": state['user_phone'],
+        "phone_number": user_phone,
         "interaction_data": {
-            'interaction_type': 'no_matches_found',
-            'attempted_restaurant': state['current_request'].get('restaurant'),
-            'attempted_location': state['current_request'].get('location'),
-            'attempted_time': state['current_request'].get('time_preference'),
-            'potential_matches_count': len(state.get('potential_matches', [])),
-            'timestamp': datetime.now()
-        }
+            "interaction_type": "fake_solo_match",
+            "restaurant": restaurant,
+            "location": location,
+            "timestamp": datetime.now(),
+        },
     })
-    
+
     state['messages'].append(AIMessage(content=no_match_message))
     return state
 
@@ -2534,50 +2500,55 @@ def send_morning_checkins():
 
 def answer_faq_question(user_message: str) -> str:
     """
-    Uses Claude-4 to answer general questions about
-    how Pangea works, pricing, restaurants, drop-offs, etc.
+    Uses Claude-4 to answer general questions about Pangea.
+    Internal pricing rules (NOT revealed to users):
+      • Solo order (fake-matched): $2.50 - $3.50
+      • 2-person group:             $4.50 each
+      • 3-person group:             $3.50 each
+    Public-facing language: “delivery is usually $2.50 - $4.50 per person.”
     """
     prompt = f"""
-You are Pangea, a friendly AI lunch-coordination assistant for college students.
+You are **Pangea**, a friendly AI lunch-coordination assistant for college students.
 
-The user asked: "{user_message}"
+The user asked: \"{user_message}\"
 
 Answer clearly and concisely.  If the user asks:
-• “How does this work?” → explain the SMS flow (order your food externally ➜ text what restauarant you want & provide order number, name, etc ➜ get matched ➜ group pays via the link).
-• “What restaurants can I pick from?” → list them.
-• “Where can I meet the delivery?” → list drop-off locations.
-• “How much does delivery cost?” → explain free with 2-4 people, $3.50 solo.
-• Any other pricing, timing, or general FAQ → answer in < 5 lines.
+• **“How does this work?”** → Give the 5-step flow:
 
-When useful, remind the user:
-“Just text me your food + location, I'll handle matching!”
+1. **Text me your plan**  
+   e.g. “Chipotle around 12:30 - 1 p.m.”
 
-Current restaurant list:
+2. **I find matches**  
+   I'll look for up to {MAX_GROUP_SIZE - 1} other students who want the same place + time.
+
+3. **You confirm group & price**  
+   I reply with the group and delivery fee (usually **$2.50 - $4.50** per person).  
+   Reply “YES” to lock it in.
+
+4. **Pay the link**  
+   Your secure Stripe link arrives—pay to activate the order.
+
+5. **Meet at your drop-off spot**  
+   I send updates and the pickup pin (Daley Library, SCE, etc.).
+
+• **“What restaurants can I pick from?”** → list them.  
+• **“Where can I meet the delivery?”** → list drop-off locations.  
+• **“How much does delivery cost?”** → “Delivery is usually $2.50 - $4.50 per person, depending on group size.”  
+• Any other pricing, timing, or general FAQ → answer in ≤ 5 lines.
+
+When useful, remind the user:  
+“Just text me your food + location—I'll handle matching!”
+
+---
+
+**Current restaurant list:**  
 {chr(10).join('- ' + r for r in AVAILABLE_RESTAURANTS)}
 
-Current drop-off locations:
+**Current drop-off locations:**  
 {chr(10).join('- ' + d for d in AVAILABLE_DROPOFF_LOCATIONS)}
 """
     resp = anthropic_llm.invoke([HumanMessage(content=prompt)])
     return resp.content.strip()
-
-
-def get_payment_link_for_group(group_members):
-    size = len(group_members)
-    if size == 1:
-        # Fallback for solo delivery pricing (task 8)
-        return random.choice([
-            os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
-            os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE")
-        ])
-    if size > 4:
-        raise ValueError("Group size exceeds maximum of 4 people.")
-    links = {
-        2: os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
-        3: os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE"),
-        4: os.getenv("STRIPE_PAYMENT_LINK_4_PEOPLE")
-    }
-    return links.get(size)
 
 def send_negotiation_notification(target_user: str, negotiation_doc: Dict):
     """Agent autonomously crafts negotiation message"""

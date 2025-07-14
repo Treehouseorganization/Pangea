@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
+import random
+from pangea_locations import RESTAURANTS
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
@@ -24,6 +26,8 @@ from twilio.rest import Client
 import firebase_admin
 from firebase_admin import credentials, firestore
 from flask import Flask, request
+
+MAX_GROUP_SIZE = 3 
 
 load_dotenv()
 
@@ -45,50 +49,12 @@ except ImportError:
         firebase_admin.initialize_app(cred)
     db = firestore.client()
 
-# Restaurant Data
-RESTAURANTS = {
-    "Mario's Pizza - Campus Center": {
-        "location": "Campus Center",
-        "menu_items": [
-            "Margherita Pizza", "Pepperoni Pizza", "Supreme Pizza", "Hawaiian Pizza",
-            "BBQ Chicken Pizza", "Veggie Pizza", "Meat Lovers Pizza", "White Pizza"
-        ]
-    },
-    "Thai Garden - Student Union": {
-        "location": "Student Union", 
-        "menu_items": [
-            "Pad Thai", "Green Curry", "Red Curry", "Tom Yum Soup", "Fried Rice",
-            "Drunken Noodles", "Massaman Curry", "Spring Rolls", "Thai Basil Stir Fry"
-        ]
-    },
-    "Sushi Express - Library Plaza": {
-        "location": "Library Plaza",
-        "menu_items": [
-            "California Roll", "Spicy Tuna Roll", "Salmon Avocado Roll", "Dragon Roll",
-            "Rainbow Roll", "Chicken Teriyaki Bento", "Beef Teriyaki Bento", "Miso Soup"
-        ]
-    },
-    "Burger Barn - Recreation Center": {
-        "location": "Recreation Center",
-        "menu_items": [
-            "Classic Burger", "Cheeseburger", "BBQ Burger", "Mushroom Swiss Burger",
-            "Chicken Sandwich", "Fish Sandwich", "Veggie Burger", "Bacon Burger"
-        ]
-    },
-    "Green Bowls - Health Sciences Building": {
-        "location": "Health Sciences Building",
-        "menu_items": [
-            "Buddha Bowl", "Quinoa Power Bowl", "Greek Salad", "Caesar Salad",
-            "Protein Bowl", "Smoothie Bowl", "Avocado Toast", "Grain Bowl"
-        ]
-    }
-}
-
 # Payment Link Logic
 PAYMENT_LINKS = {
-    2: "https://buy.stripe.com/cNi00i96U8Uu0qO5nSdwc01",  # $4.50
-    3: "https://buy.stripe.com/8x2eVc6YM2w6ddA03ydwc02",  # $3.50
-    4: "https://buy.stripe.com/eVqbJ0gzm3Aa6Pcg2wdwc03"   # $2.50 (4+ people)
+    1: [os.getenv("STRIPE_LINK_250"),
+        os.getenv("STRIPE_LINK_350")],   # solo “discount” links
+    2: [os.getenv("STRIPE_LINK_450")],    # $4.50
+    3: [os.getenv("STRIPE_LINK_350")],    # $3.50
 }
 
 # Order State Management
@@ -105,25 +71,20 @@ class OrderState(TypedDict):
     order_number: Optional[str]
     customer_name: Optional[str]
 
-def get_payment_link(group_size: int) -> str:
-    if group_size == 1:                       
-        return PAYMENT_LINKS[3]
-    elif group_size == 2:
-        return PAYMENT_LINKS[2]
-    elif group_size == 3:
-        return PAYMENT_LINKS[3]
-    else:
-        return PAYMENT_LINKS[4]
-    
+def get_payment_link(size: int) -> str:
+    """Return a Stripe URL for the given group size (1-3)."""
+    if size not in PAYMENT_LINKS:
+        raise ValueError("Group size exceeds 3.")
+    return random.choice(PAYMENT_LINKS[size])
 
-def get_payment_amount(group_size: int) -> str:
-    """Get payment amount text based on group size"""
-    if group_size <= 2:
+def get_payment_amount(size: int) -> str:
+    """Human-readable share text."""
+    if size == 2:
         return "$4.50"
-    elif group_size == 3:
+    elif size == 3:
         return "$3.50"
-    else:
-        return "$2.50"
+    else:   # size == 1 (our 'fake match')
+        return random.choice(["$2.50", "$3.50"])
 
 @tool
 def get_user_order_session(phone_number: str) -> Dict:
@@ -605,7 +566,7 @@ def is_new_food_request(message: str) -> bool:
         return True
         
     # If message mentions specific restaurants or delivery, it's likely new
-    restaurants = ['mario', 'thai', 'sushi', 'burger', 'green']
+    restaurants = ['chipotle', 'mcdonalds', 'chickfila', 'portillos', 'starbucks']
     if any(restaurant in message_lower for restaurant in restaurants):
         return True
         
