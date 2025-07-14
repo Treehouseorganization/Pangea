@@ -9,8 +9,10 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
+from venv import logger
 from dotenv import load_dotenv # This loads the .env file
 import uuid
+import random
 
 # Import order processing system
 from pangea_order_processor import start_order_process, process_order_message
@@ -47,6 +49,8 @@ LOCATIONS = [
     "Health Sciences Building"
 ]
 
+MAX_GROUP_SIZE = 4
+
 # Initialize services with 2025 best practices
 twilio_client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
 
@@ -75,6 +79,9 @@ class PangeaState(TypedDict):
     final_group: Optional[Dict]
     conversation_stage: str
     search_attempts: int
+    rejection_data: Optional[Dict]  # Store rejection info for counter-proposals
+    alternative_suggestions: List[Dict]  # Track suggested alternatives
+    proactive_notification_data: Optional[Dict]  # Store proactive notification data
 
 
 def cleanup_stale_sessions():
@@ -604,6 +611,439 @@ def calculate_negotiation_success_probability(proposal: Dict, target_history: Di
     
     return min(base_probability, 1.0)
 
+@tool
+def generate_counter_proposal(
+    rejected_proposal: Dict,
+    declining_user_preferences: Dict,
+    available_alternatives: List[Dict]
+) -> Dict:
+    """Generate intelligent counter-proposal after rejection"""
+    
+    counter_proposal_prompt = f"""
+    A user rejected this proposal: {json.dumps(rejected_proposal, default=str)}
+    
+    User's preferences: {json.dumps(declining_user_preferences, default=str)}
+    Available alternatives nearby: {json.dumps(available_alternatives, default=str)}
+    
+    Should I make a counter-proposal? Consider:
+    1. User's favorite cuisines vs what they rejected
+    2. Their typical eating times vs rejected time
+    3. Success probability vs user annoyance risk
+    4. Quality of available alternatives
+    
+    Return JSON:
+    - "should_counter": true/false
+    - "counter_proposal": {...} or null
+    - "reasoning": "why this approach"
+    
+    If should_counter is false, return null for counter_proposal.
+    """
+    
+    try:
+        response = anthropic_llm.invoke([HumanMessage(content=counter_proposal_prompt)])
+        result = json.loads(response.content)
+        return result
+    except Exception as e:
+        return {"should_counter": False, "counter_proposal": None, "reasoning": f"Error: {e}"}
+
+@tool
+def notify_compatible_users_of_active_groups(
+    active_group_data: Dict,
+    max_notifications: int = 3,
+    compatibility_threshold: float = 0.7
+) -> Dict:
+    """
+    Notify users who would be compatible with an actively forming group.
+    
+    Only sends notifications to users with high compatibility and appropriate
+    location/timing patterns. Avoids spam by checking notification history.
+    
+    Args:
+        active_group_data: The group that's forming (restaurant, location, time, members)
+        max_notifications: Max users to notify (prevent overwhelming the group)
+        compatibility_threshold: Minimum compatibility score to notify (0.7 = high match)
+        
+    Returns:
+        Dict with notification results and user responses
+    """
+    try:
+        restaurant = active_group_data.get('restaurant', '')
+        location = active_group_data.get('location', '')
+        time = active_group_data.get('time', 'now')
+        current_members = active_group_data.get('current_members', [])
+        group_id = active_group_data.get('group_id', '')
+        
+        print(f"🔔 Finding compatible users for {restaurant} at {location} ({time})")
+        print(f"🔔 Current group has {len(current_members)} members")
+        
+        # Get all users to check compatibility
+        users_ref = db.collection('users')
+        all_users = users_ref.get()
+        
+        compatible_users = []
+        notifications_sent = 0
+        
+        for user_doc in all_users:
+            if notifications_sent >= max_notifications:
+                break
+                
+            user_data = user_doc.to_dict()
+            user_phone = user_data.get('phone', user_doc.id)
+            
+            # Skip if user is already in the group
+            if user_phone in current_members:
+                continue
+            
+            # Check if user should be notified
+            should_notify = check_user_compatibility_for_notification(
+                user_phone, user_data, active_group_data, compatibility_threshold
+            )
+            
+            if should_notify:
+                # Send notification
+                notification_sent = send_proactive_group_notification(
+                    user_phone, user_data, active_group_data
+                )
+                
+                if notification_sent:
+                    compatible_users.append({
+                        'user_phone': user_phone,
+                        'notification_sent': True,
+                        'compatibility_reason': should_notify.get('reason', 'high_compatibility')
+                    })
+                    notifications_sent += 1
+                    
+                    # Track notification in Firebase
+                    track_proactive_notification(user_phone, active_group_data)
+        
+        return {
+            'notifications_sent': notifications_sent,
+            'compatible_users': compatible_users,
+            'group_id': group_id,
+            'status': 'success'
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in notify_compatible_users_of_active_groups: {e}")
+        return {
+            'notifications_sent': 0,
+            'compatible_users': [],
+            'status': 'error',
+            'error': str(e)
+        }
+
+def check_user_compatibility_for_notification(user_phone: str, user_data: Dict, active_group_data: Dict, threshold: float) -> Dict:
+    """Check if user should be notified about active group - smart filtering logic"""
+    
+    # 1. Check notification fatigue (max 2 per day)
+    if check_notification_fatigue(user_phone):
+        return False
+    
+    # 2. Check if user recently declined similar opportunities
+    if check_recent_declines(user_phone, active_group_data):
+        return False
+    
+    # 3. Calculate compatibility score
+    compatibility_score = calculate_proactive_compatibility(user_data, active_group_data)
+    
+    if compatibility_score < threshold:
+        return False
+    
+    # 4. Check location intelligence
+    location_match = check_location_intelligence(user_data, active_group_data)
+    
+    if not location_match:
+        return False
+    
+    # 5. Check timing patterns
+    timing_match = check_timing_patterns(user_data, active_group_data)
+    
+    if not timing_match:
+        return False
+    
+    return {
+        'should_notify': True,
+        'compatibility_score': compatibility_score,
+        'reason': f'High compatibility ({compatibility_score:.2f}) + location match + timing match'
+    }
+
+def check_notification_fatigue(user_phone: str) -> bool:
+    """Check if user has received too many notifications today"""
+    try:
+        today = datetime.now().date()
+        
+        # Count notifications sent today
+        notifications_today = db.collection('notification_history')\
+                               .where('user_phone', '==', user_phone)\
+                               .where('date', '==', today)\
+                               .where('type', '==', 'proactive_group')\
+                               .get()
+        
+        return len(notifications_today) >= 2  # Max 2 per day
+        
+    except Exception as e:
+        print(f"❌ Error checking notification fatigue: {e}")
+        return True  # Default to not notifying if error
+
+def check_recent_declines(user_phone: str, active_group_data: Dict) -> bool:
+    """Check if user recently declined similar opportunities"""
+    try:
+        # Check last 24 hours for declines
+        yesterday = datetime.now() - timedelta(hours=24)
+        
+        recent_declines = db.collection('notification_history')\
+                           .where('user_phone', '==', user_phone)\
+                           .where('timestamp', '>=', yesterday)\
+                           .where('response', '==', 'declined')\
+                           .get()
+        
+        restaurant = active_group_data.get('restaurant', '')
+        location = active_group_data.get('location', '')
+        
+        # Check if declined similar restaurant/location combo
+        for decline in recent_declines:
+            decline_data = decline.to_dict()
+            if (decline_data.get('restaurant') == restaurant and 
+                decline_data.get('location') == location):
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"❌ Error checking recent declines: {e}")
+        return False
+
+def calculate_proactive_compatibility(user_data: Dict, active_group_data: Dict) -> float:
+    """Calculate compatibility score for proactive notifications (higher threshold)"""
+    
+    preferences = user_data.get('preferences', {})
+    successful_matches = user_data.get('successful_matches', [])
+    
+    restaurant = active_group_data.get('restaurant', '')
+    location = active_group_data.get('location', '')
+    
+    score = 0.0
+    
+    # 1. Restaurant preference match (40% weight)
+    favorite_cuisines = preferences.get('favorite_cuisines', [])
+    if restaurant in favorite_cuisines:
+        score += 0.4
+    elif any(cuisine.lower() in restaurant.lower() for cuisine in favorite_cuisines):
+        score += 0.3
+    
+    # 2. Historical success at this restaurant (30% weight)
+    for match in successful_matches:
+        if match.get('restaurant') == restaurant:
+            score += 0.3
+            break
+    
+    # 3. Location familiarity (20% weight)
+    usual_locations = preferences.get('usual_locations', [])
+    if location in usual_locations:
+        score += 0.2
+    
+    # 4. Overall success rate (10% weight)
+    satisfaction_scores = user_data.get('satisfaction_scores', [])
+    if satisfaction_scores:
+        avg_satisfaction = sum(satisfaction_scores) / len(satisfaction_scores)
+        if avg_satisfaction >= 8:  # High satisfaction users
+            score += 0.1
+    
+    return min(score, 1.0)
+
+def check_location_intelligence(user_data: Dict, active_group_data: Dict) -> bool:
+    """Check if user's location patterns match the group location"""
+    
+    preferences = user_data.get('preferences', {})
+    location = active_group_data.get('location', '')
+    time = active_group_data.get('time', 'now')
+    
+    # 1. Check usual locations
+    usual_locations = preferences.get('usual_locations', [])
+    if location in usual_locations:
+        return True
+    
+    # 2. Check successful patterns at this location
+    successful_patterns = user_data.get('successful_patterns', [])
+    for pattern in successful_patterns:
+        if pattern.get('location') == location:
+            return True
+    
+    # 3. Check interaction history for this location
+    interactions = user_data.get('interactions', [])
+    for interaction in interactions:
+        if (interaction.get('location') == location and 
+            interaction.get('interaction_type') == 'successful_group_order'):
+            return True
+    
+    return False
+
+def check_timing_patterns(user_data: Dict, active_group_data: Dict) -> bool:
+    """Check if user's timing patterns match the group timing"""
+    
+    preferences = user_data.get('preferences', {})
+    time = active_group_data.get('time', 'now')
+    
+    # 1. Check preferred times
+    preferred_times = preferences.get('preferred_times', [])
+    if time in preferred_times:
+        return True
+    
+    # 2. Check current time against historical patterns
+    current_hour = datetime.now().hour
+    
+    # Look at successful patterns for similar times
+    successful_patterns = user_data.get('successful_patterns', [])
+    for pattern in successful_patterns:
+        pattern_time = pattern.get('time', '')
+        # Simple time matching - could be more sophisticated
+        if ('lunch' in time.lower() and 'lunch' in pattern_time.lower()) or \
+           ('dinner' in time.lower() and 'dinner' in pattern_time.lower()) or \
+           ('now' in time.lower() and 11 <= current_hour <= 14):  # Lunch hours
+            return True
+    
+    return True  # Default to True for flexible timing
+
+def send_proactive_group_notification(user_phone: str, user_data: Dict, active_group_data: Dict) -> bool:
+    """Send personalized notification about active group"""
+    
+    restaurant = active_group_data.get('restaurant', '')
+    location = active_group_data.get('location', '')
+    time = active_group_data.get('time', 'now')
+    group_size = len(active_group_data.get('current_members', []))
+    
+    # Get user's history for personalization
+    successful_matches = user_data.get('successful_matches', [])
+    preferences = user_data.get('preferences', {})
+    
+    # Create personalized message
+    personalization = ""
+    if any(match.get('restaurant') == restaurant for match in successful_matches):
+        personalization = f"You ordered from there last week around this time. "
+    elif restaurant.lower() in [cuisine.lower() for cuisine in preferences.get('favorite_cuisines', [])]:
+        personalization = f"I know you love {restaurant}! "
+    
+    message = f"""Hey! 🍕 There's a {restaurant} group forming at {location} in {time}. 
+{personalization}
+{group_size} people are already in - want to join? Reply YES to jump in!"""
+    
+    return send_friendly_message(user_phone, message, message_type="proactive_group")
+
+def track_proactive_notification(user_phone: str, active_group_data: Dict):
+    """Track proactive notification in Firebase for analytics and spam prevention"""
+    
+    try:
+        notification_record = {
+            'user_phone': user_phone,
+            'type': 'proactive_group',
+            'restaurant': active_group_data.get('restaurant', ''),
+            'location': active_group_data.get('location', ''),
+            'time': active_group_data.get('time', ''),
+            'group_id': active_group_data.get('group_id', ''),
+            'timestamp': datetime.now(),
+            'date': datetime.now().date(),
+            'response': 'pending'  # Will be updated when user responds
+        }
+        
+        db.collection('notification_history').add(notification_record)
+        
+    except Exception as e:
+        print(f"❌ Error tracking proactive notification: {e}")
+
+def check_pending_proactive_notifications(user_phone: str) -> Dict:
+    """Check if user has pending proactive notifications"""
+    try:
+        # Check for notifications sent in the last 30 minutes that haven't been responded to
+        recent_cutoff = datetime.now() - timedelta(minutes=30)
+        
+        pending_notifications = db.collection('notification_history')\
+                                .where('user_phone', '==', user_phone)\
+                                .where('type', '==', 'proactive_group')\
+                                .where('timestamp', '>=', recent_cutoff)\
+                                .where('response', '==', 'pending')\
+                                .limit(1).get()
+        
+        if len(pending_notifications) > 0:
+            return pending_notifications[0].to_dict()
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error checking pending proactive notifications: {e}")
+        return None
+
+def update_proactive_notification_response(user_phone: str, response: str):
+    """Update proactive notification with user's response"""
+    try:
+        recent_cutoff = datetime.now() - timedelta(minutes=30)
+        
+        pending_notifications = db.collection('notification_history')\
+                                .where('user_phone', '==', user_phone)\
+                                .where('type', '==', 'proactive_group')\
+                                .where('timestamp', '>=', recent_cutoff)\
+                                .where('response', '==', 'pending')\
+                                .limit(1).get()
+        
+        if len(pending_notifications) > 0:
+            notification_doc = pending_notifications[0]
+            notification_doc.reference.update({
+                'response': response,
+                'response_timestamp': datetime.now()
+            })
+            print(f"✅ Updated proactive notification response: {response}")
+            
+    except Exception as e:
+        print(f"❌ Error updating proactive notification response: {e}")
+
+def find_alternatives_for_user(user_phone: str, rejected_proposal: Dict) -> List[Dict]:
+    """Find alternative group opportunities for users who decline"""
+    
+    user_prefs = get_user_preferences.invoke({"phone_number": user_phone})
+    preferred_cuisines = user_prefs.get('preferences', {}).get('favorite_cuisines', ['any'])
+    
+    if not preferred_cuisines or preferred_cuisines == ['any']:
+        # Use historical data or fallback to popular options
+        preferred_cuisines = ['Thai Garden', 'Mario\'s Pizza', 'Sushi Express']
+    
+    alternative_opportunities = []
+    
+    for cuisine in preferred_cuisines[:2]:  # Check top 2 preferences
+        matches = find_potential_matches.invoke({
+            "restaurant_preference": cuisine,
+            "location": rejected_proposal.get('location', 'Campus Center'),
+            "time_window": "flexible",  # More flexible after rejection
+            "requesting_user": user_phone
+        })
+        alternative_opportunities.extend(matches)
+    
+    # Remove duplicates and limit to top 3
+    seen_users = set()
+    unique_alternatives = []
+    for alt in alternative_opportunities:
+        if alt['user_phone'] not in seen_users:
+            seen_users.add(alt['user_phone'])
+            unique_alternatives.append(alt)
+        if len(unique_alternatives) >= 3:
+            break
+    
+    return unique_alternatives
+
+def learn_from_rejection(rejecting_user: str, rejected_proposal: Dict, rejection_reason: str = None):
+    """Learn from rejections to improve future matching"""
+    
+    update_user_memory.invoke({
+        "phone_number": rejecting_user,
+        "interaction_data": {
+            'interaction_type': 'proposal_rejection',
+            'rejected_restaurant': rejected_proposal.get('restaurant'),
+            'rejected_time': rejected_proposal.get('time'),
+            'rejected_location': rejected_proposal.get('location'),
+            'rejection_reason': rejection_reason or 'not_specified',
+            'timestamp': datetime.now(),
+            'proposal_compatibility_score': rejected_proposal.get('compatibility_score', 0.0)
+        }
+    })
+
 
 def send_friendly_message(phone_number: str, message: str, message_type: str = "general") -> bool:
     """
@@ -808,6 +1248,31 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
                 return state
     except Exception as e:
         print(f"Error checking pending negotiations: {e}")
+    
+    # Check if this is a response to alternative suggestions
+    if len(pending_negotiations) == 0:  # No pending group invitations
+        # Check if they have alternative suggestions pending
+        # You can store this in a separate collection or check message history
+        message_lower = last_message.lower().strip()
+        if ('yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'no' in message_lower) and \
+           state.get('alternative_suggestions'):
+            state['conversation_stage'] = "alternative_response"
+            return state
+    
+    # Check if this is a response to proactive group notifications
+    if len(pending_negotiations) == 0:  # No pending group invitations
+        # Check if they have pending proactive notifications
+        proactive_notification = check_pending_proactive_notifications(user_phone)
+        if proactive_notification:
+            message_lower = last_message.lower().strip()
+            if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
+                state['conversation_stage'] = "proactive_group_yes"
+                state['proactive_notification_data'] = proactive_notification
+                return state
+            elif 'no' in message_lower or 'n' == message_lower or 'pass' in message_lower or 'nah' in message_lower:
+                state['conversation_stage'] = "proactive_group_no"
+                state['proactive_notification_data'] = proactive_notification
+                return state
     
     # If not a group response, use LLM to classify intent
     classification_prompt = f"""
@@ -1032,6 +1497,27 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     # Enhanced negotiation with Claude 4's planning capabilities
     negotiations = []
     
+    # PROACTIVE NOTIFICATION: Check if we have viable matches to notify others
+    if len(matches) >= 1:  # We have at least one match, group is forming
+        print(f"🔔 Group is forming with {len(matches)} matches, notifying compatible users...")
+        
+        # Create preliminary group data for notifications
+        preliminary_group_data = {
+            "restaurant": request.get('restaurant'),
+            "location": request.get('location'),
+            "time": request.get('time_preference'),
+            "current_members": [state['user_phone']],  # Just the requesting user for now
+            "group_id": "preliminary_" + str(uuid.uuid4())
+        }
+        
+        notify_result = notify_compatible_users_of_active_groups.invoke({
+            "active_group_data": preliminary_group_data,
+            "max_notifications": 2,  # Limit to 2 during formation
+            "compatibility_threshold": 0.8  # Higher threshold during formation
+        })
+        
+        print(f"🔔 Proactive notifications sent: {notify_result.get('notifications_sent', 0)}")
+    
     for match in matches:
         negotiation_id = str(uuid.uuid4())
         
@@ -1153,75 +1639,89 @@ def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
     user_phone = state['user_phone']
     
     try:
-        # Find the pending negotiation for this user
+        # --- find the pending negotiation (unchanged) ------------------
         pending_negotiations = db.collection('negotiations')\
                                .where('to_user', '==', user_phone)\
                                .where('status', '==', 'pending')\
                                .limit(1).get()
         
         if len(pending_negotiations) > 0:
-            negotiation_doc = pending_negotiations[0]
+            negotiation_doc  = pending_negotiations[0]
             negotiation_data = negotiation_doc.to_dict()
             
-            # Update negotiation status to accepted
+            # ------------------------------------------------------------
+            # 1. collect essentials BEFORE accepting
+            requesting_user = negotiation_data['from_user']
+            other_accepted  = db.collection('negotiations')\
+                                 .where('from_user', '==', requesting_user)\
+                                 .where('status', '==', 'accepted')\
+                                 .get()
+            proposed_group_size = len(other_accepted) + 2  # requester + this user + accepted others
+            # 2. FULL-GROUP gate
+            if proposed_group_size > MAX_GROUP_SIZE:
+                send_friendly_message(
+                    user_phone,
+                    "Sorry, that group filled up just before you replied. "
+                    "I'll look for another match right away! 🔄",
+                    message_type="general"
+                )
+                # keep the negotiation from flipping to 'accepted'
+                negotiation_doc.reference.update({'status': 'declined_full'})
+                state['messages'].append(AIMessage(
+                    content="Group response YES rejected (group full)"
+                ))
+                return state
+            # ------------------------------------------------------------
+            # 3. we still have room – now mark the negotiation accepted
             negotiation_doc.reference.update({'status': 'accepted'})
-            
-            # DEBUG: Print the full negotiation data to see structure
+            # ------------------------------------------------------------
+            # DEBUG…
             print(f"🔍 DEBUG - Full negotiation data: {json.dumps(negotiation_data, default=str, indent=2)}")
             
-            # FIX: Get restaurant from the correct location in proposal structure
-            proposal = negotiation_data.get('proposal', {})
-            
-            # Try multiple possible keys where restaurant might be stored
+            proposal   = negotiation_data.get('proposal', {})
             restaurant = (
-                proposal.get('restaurant') or           # Direct restaurant key
-                proposal.get('primary_restaurant') or   # From multi_agent_negotiation_node 
-                proposal.get('restaurant_name') or      # Alternative key
-                'Unknown Restaurant'                     # Fallback
+                proposal.get('restaurant')
+                or proposal.get('primary_restaurant')
+                or proposal.get('restaurant_name')
+                or 'Unknown Restaurant'
             )
-            
             print(f"🍽️ DEBUG - Extracted restaurant: '{restaurant}'")
             print(f"🍽️ DEBUG - Proposal keys: {list(proposal.keys())}")
             
-            group_id = negotiation_data['negotiation_id']
+            group_id   = negotiation_data['negotiation_id']
+            group_size = proposed_group_size    # <— we already calculated it
             
-            # Calculate group size (requesting user + this user + any other accepted)
-            requesting_user = negotiation_data['from_user']
-            group_size = 2  # Start with 2 (requester + this user)
-            
-            # Check for other accepted negotiations for this group
-            other_accepted = db.collection('negotiations')\
-                              .where('from_user', '==', requesting_user)\
-                              .where('status', '==', 'accepted')\
-                              .get()
-            group_size += len(other_accepted)
-            
-            # START ORDER PROCESS FOR THIS USER with correct restaurant
+            # START ORDER PROCESS FOR THIS USER
             print(f"🚀 DEBUG - Starting order process with restaurant: '{restaurant}'")
             start_order_process(user_phone, group_id, restaurant, group_size)
             
-            # Also start order process for requesting user if they haven't started yet
+            # also kick off for requester if not started
             requesting_user_session = db.collection('order_sessions').document(requesting_user).get()
             if not requesting_user_session.exists:
                 start_order_process(requesting_user, group_id, restaurant, group_size)
             
             print(f"✅ Group accepted and order process started: {negotiation_data['negotiation_id']}")
-            
+        
         else:
-            # No pending negotiation found
-            message = "I don't see any pending group invitations for you right now. Want to start a new food order?"
-            send_friendly_message(user_phone, message, message_type="general")
+            send_friendly_message(
+                user_phone,
+                "I don't see any pending group invitations for you right now. Want to start a new food order?",
+                message_type="general"
+            )
             
     except Exception as e:
         print(f"Error handling group response YES: {e}")
-        error_message = "Something went wrong processing your response. Can you try again?"
-        send_friendly_message(user_phone, error_message, message_type="general")
+        send_friendly_message(
+            user_phone,
+            "Something went wrong processing your response. Can you try again?",
+            message_type="general"
+        )
     
     state['messages'].append(AIMessage(content="Group response YES processed"))
     return state
 
 def handle_group_response_no_node(state: PangeaState) -> PangeaState:
-    """Handle NO response to group invitation"""
+    """Handle NO response with intelligent follow-up and counter-proposals"""
     
     user_phone = state['user_phone']
     
@@ -1235,22 +1735,58 @@ def handle_group_response_no_node(state: PangeaState) -> PangeaState:
         if len(pending_negotiations) > 0:
             negotiation_doc = pending_negotiations[0]
             negotiation_data = negotiation_doc.to_dict()
+            rejected_proposal = negotiation_data.get('proposal', {})
             
             # Update negotiation status to rejected
             negotiation_doc.reference.update({'status': 'rejected'})
             
-            # Send acknowledgment to this user
-            acknowledgment_message = "No worries! 👍 Maybe next time. I'll keep an eye out for other opportunities for you."
-            send_friendly_message(user_phone, acknowledgment_message, message_type="general")
+            # LEARN from rejection
+            learn_from_rejection(user_phone, rejected_proposal)
             
-            # Notify the original requesting user  
+            # FIND alternatives they might actually want
+            alternatives = find_alternatives_for_user(user_phone, rejected_proposal)
+            
+            if alternatives and len(alternatives) > 0:
+                # GET their preferences to make smart suggestions
+                user_prefs = get_user_preferences.invoke({"phone_number": user_phone})
+                
+                # GENERATE counter-proposal using AI reasoning
+                counter_result = generate_counter_proposal.invoke({
+                    "rejected_proposal": rejected_proposal,
+                    "declining_user_preferences": user_prefs,
+                    "available_alternatives": alternatives
+                })
+                
+                if counter_result.get('should_counter', False) and counter_result.get('counter_proposal'):
+                    # Send intelligent alternative suggestion
+                    best_alt = alternatives[0]
+                    alt_message = f"""No worries about {rejected_proposal.get('restaurant', 'that')}! 
+                    
+I see you usually prefer {user_prefs.get('preferences', {}).get('favorite_cuisines', ['other food'])[0] if user_prefs.get('preferences', {}).get('favorite_cuisines') else 'other options'}. I found {len(alternatives)} people wanting {best_alt['restaurant']} nearby. 
+
+Want me to see if they'd like you to join? 😊 (Just reply YES if interested)"""
+                    
+                    send_friendly_message(user_phone, alt_message, message_type="alternative_suggestion")
+                    
+                    # Store the alternative suggestion for potential follow-up
+                    state['alternative_suggestions'] = alternatives
+                    
+                else:
+                    # Standard acknowledgment
+                    send_friendly_message(user_phone, "No worries! 👍 Maybe next time. I'll keep an eye out for other opportunities for you.", message_type="general")
+            else:
+                # No good alternatives found
+                send_friendly_message(user_phone, "No worries! 👍 Maybe next time. I'll keep an eye out for other opportunities for you.", message_type="general")
+            
+            # Notify the original requesting user with enhanced feedback
             requesting_user = negotiation_data['from_user']
-            restaurant = negotiation_data['proposal'].get('restaurant', 'food')
+            restaurant = rejected_proposal.get('restaurant', 'food')
             
-            update_message = f"The person I reached out to for {restaurant} can't join this time, but I'm still looking for other matches! 🔍"
+            # Enhanced notification to original requester
+            update_message = f"The person I reached out to for {restaurant} can't join this time. I'm still looking for other matches and will update you soon! 🔍"
             send_friendly_message(requesting_user, update_message, message_type="general")
             
-            print(f"✅ Group declined: {negotiation_data['negotiation_id']}")
+            print(f"✅ Group declined with enhanced follow-up: {negotiation_data['negotiation_id']}")
             
         else:
             # No pending negotiation found
@@ -1258,11 +1794,119 @@ def handle_group_response_no_node(state: PangeaState) -> PangeaState:
             send_friendly_message(user_phone, message, message_type="general")
             
     except Exception as e:
-        print(f"Error handling group response NO: {e}")
+        print(f"Error handling enhanced group response NO: {e}")
         error_message = "Something went wrong processing your response. Can you try again?"
         send_friendly_message(user_phone, error_message, message_type="general")
     
-    state['messages'].append(AIMessage(content="Group response NO processed"))
+    state['messages'].append(AIMessage(content="Enhanced group response NO processed"))
+    return state
+
+def handle_alternative_response_node(state: PangeaState) -> PangeaState:
+    """Handle responses to alternative suggestions"""
+    
+    user_phone = state['user_phone']
+    last_message = state['messages'][-1].content.lower().strip()
+    
+    if 'yes' in last_message or 'y' == last_message or 'sure' in last_message:
+        # User wants the alternative - start new negotiation
+        alternatives = state.get('alternative_suggestions', [])
+        
+        if alternatives and len(alternatives) > 0:
+            best_alternative = alternatives[0]
+            
+            # Create new negotiation for the alternative
+            negotiation_id = str(uuid.uuid4())
+            
+            # Use their existing request format but with new restaurant
+            new_proposal = {
+                'restaurant': best_alternative['restaurant'],
+                'location': best_alternative['location'], 
+                'time': best_alternative['time_requested'],
+                'requesting_user': user_phone  # They become the requester now
+            }
+            
+            result = negotiate_with_other_ai.invoke({
+                "target_ai_user": best_alternative['user_phone'],
+                "proposal": new_proposal,
+                "negotiation_id": negotiation_id,
+                "strategy": "collaborative"
+            })
+            
+            success_message = f"Great! I'm reaching out to see if they'd like you to join their {best_alternative['restaurant']} group. I'll let you know what they say! 🤝"
+            send_friendly_message(user_phone, success_message, message_type="negotiation")
+            
+        else:
+            send_friendly_message(user_phone, "Sorry, those opportunities are no longer available. I'll keep looking for new matches! 🔍", message_type="general")
+    
+    else:
+        # User declined the alternative too
+        send_friendly_message(user_phone, "No problem! I'll keep an eye out for other opportunities that might interest you. 👍", message_type="general")
+    
+    state['messages'].append(AIMessage(content="Alternative response processed"))
+    return state
+
+def handle_proactive_group_yes_node(state: PangeaState) -> PangeaState:
+    """Handle YES response to proactive group notification"""
+    
+    user_phone = state['user_phone']
+    proactive_data = state.get('proactive_notification_data', {})
+    
+    try:
+        # Update notification response
+        update_proactive_notification_response(user_phone, 'accepted')
+        
+        # Get group details from the notification
+        group_id = proactive_data.get('group_id', '')
+        restaurant = proactive_data.get('restaurant', '')
+        
+        # Calculate new group size (this would be more sophisticated in real implementation)
+        # For now, assume group size is 3 (original + this user)
+        new_group_size = 3
+        
+        # Start order process directly - skip negotiation since group is already forming
+        print(f"🚀 User {user_phone} accepted proactive invitation for {restaurant}")
+        
+        # Import and call the order processor
+        from pangea_order_processor import start_order_process
+        
+        start_order_process(user_phone, group_id, restaurant, new_group_size)
+        
+        # Send confirmation message
+        confirmation_message = f"Awesome! 🎉 You're now part of the {restaurant} group! Check your messages for order instructions."
+        send_friendly_message(user_phone, confirmation_message, message_type="proactive_group_accepted")
+        
+        print(f"✅ Proactive group acceptance processed for {user_phone}")
+        
+    except Exception as e:
+        print(f"❌ Error processing proactive group YES: {e}")
+        error_message = "Something went wrong adding you to the group. Let me try again or you can start a new order."
+        send_friendly_message(user_phone, error_message, message_type="general")
+    
+    state['messages'].append(AIMessage(content="Proactive group YES processed"))
+    return state
+
+def handle_proactive_group_no_node(state: PangeaState) -> PangeaState:
+    """Handle NO response to proactive group notification"""
+    
+    user_phone = state['user_phone']
+    proactive_data = state.get('proactive_notification_data', {})
+    
+    try:
+        # Update notification response
+        update_proactive_notification_response(user_phone, 'declined')
+        
+        # Send acknowledgment
+        acknowledgment_message = "No worries! 👍 I'll keep an eye out for other opportunities that might interest you."
+        send_friendly_message(user_phone, acknowledgment_message, message_type="general")
+        
+        print(f"✅ Proactive group decline processed for {user_phone}")
+        
+    except Exception as e:
+        print(f"❌ Error processing proactive group NO: {e}")
+        error_message = "Got it - I'll look for other opportunities for you!"
+        send_friendly_message(user_phone, error_message, message_type="general")
+    
+    state['messages'].append(AIMessage(content="Proactive group NO processed"))
     return state
 
 def wait_for_responses_node(state: PangeaState) -> PangeaState:
@@ -1540,6 +2184,9 @@ def create_pangea_graph():
     # ADD NEW GROUP RESPONSE NODES
     workflow.add_node("handle_group_yes", handle_group_response_yes_node)
     workflow.add_node("handle_group_no", handle_group_response_no_node)
+    workflow.add_node("handle_alternative_response", handle_alternative_response_node)
+    workflow.add_node("handle_proactive_group_yes", handle_proactive_group_yes_node)
+    workflow.add_node("handle_proactive_group_no", handle_proactive_group_no_node)
     
     # Enhanced conditional routing with Claude 4 reasoning and group response handling
     workflow.add_conditional_edges(
@@ -1552,6 +2199,9 @@ def create_pangea_graph():
             "preference_update": "process_morning_response",
             "group_response_yes": "handle_group_yes",  # NEW: Handle YES to group invitation
             "group_response_no": "handle_group_no",    # NEW: Handle NO to group invitation
+            "alternative_response": "handle_alternative_response",  # NEW: Handle alternative response
+            "proactive_group_yes": "handle_proactive_group_yes",  # NEW: Handle YES to proactive notification
+            "proactive_group_no": "handle_proactive_group_no",    # NEW: Handle NO to proactive notification
         }
     )
     
@@ -1580,6 +2230,9 @@ def create_pangea_graph():
     workflow.add_edge("wait_for_responses", END)
     workflow.add_edge("handle_group_yes", END)  # NEW: Group YES response ends workflow
     workflow.add_edge("handle_group_no", END)   # NEW: Group NO response ends workflow
+    workflow.add_edge("handle_alternative_response", END)  # NEW: Alternative response ends workflow
+    workflow.add_edge("handle_proactive_group_yes", END)  # NEW: Proactive group YES ends workflow
+    workflow.add_edge("handle_proactive_group_no", END)   # NEW: Proactive group NO ends workflow
     
     # Set entry point
     workflow.set_entry_point("classify_intent")
@@ -1627,13 +2280,40 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
     all_members = [state['user_phone']] + [neg['target_user'] for neg in confirmed_members]
     restaurant = state['current_request'].get('restaurant', 'chosen restaurant')
     group_size = len(all_members)
-    
+
+    # --- NEW: Enforce 4-person maximum ---------------------------------
+    if group_size > 4:
+        # Trim or abort – this sample simply aborts gracefully
+        send_friendly_message(
+            state['user_phone'],
+            "Oops - a Pangea group can't exceed 4 people. Let me regroup and try again! 🚦",
+            message_type="general"
+        )
+        return state
+    # -------------------------------------------------------------------
+
     # ✨ NEW: Find optimal time for the group
     requesting_user_time = state['current_request'].get('time_preference', 'now')
     optimal_time = find_optimal_group_time(state['potential_matches'], requesting_user_time)
     
     # Generate unique group ID
     group_id = str(uuid.uuid4())
+    
+    # PROACTIVE NOTIFICATION: Check if group has room for more people
+    if len(all_members) < MAX_GROUP_SIZE:  # Group has room for more people
+        print(f"🔔 Group has {len(all_members)} members, looking for more compatible users...")
+        
+        notify_result = notify_compatible_users_of_active_groups.invoke({
+            "active_group_data": {
+                "restaurant": restaurant,
+                "location": state['current_request'].get('location'),
+                "time": optimal_time,
+                "current_members": all_members,
+                "group_id": group_id
+            }
+        })
+        
+        print(f"🔔 Proactive notifications sent: {notify_result.get('notifications_sent', 0)}")
     
     # Start order process for all group members
     for member_phone in all_members:
@@ -1736,6 +2416,14 @@ A few options:
 
 Want me to keep monitoring for matches?"""
     
+    #-------- NEW: attach $3-4 solo-order link -------------------------
+    solo_link = get_payment_link_for_group([state['user_phone']])     # size == 1
+    no_match_message += (
+        f"\n\n👤 Prefer to go solo right now? "
+        f"Delivery is only $3-4 👉 {solo_link}"
+    )
+    # ------------------------------------------------------------------
+    
     send_friendly_message(
         state['user_phone'],
         no_match_message,
@@ -1772,7 +2460,10 @@ def handle_incoming_sms(phone_number: str, message_body: str):
         active_negotiations=[],
         final_group=None,
         conversation_stage="initial",
-        search_attempts=0
+        search_attempts=0,
+        rejection_data=None,
+        alternative_suggestions=[],
+        proactive_notification_data=None
     )
     
     # Run through LangGraph
@@ -1816,6 +2507,24 @@ def send_morning_checkins():
         morning_greeting_node(morning_state)
 
 # ===== HELPER FUNCTIONS =====
+
+def get_payment_link_for_group(group_members):
+    size = len(group_members)
+    if size == 1:
+        # Fallback for solo delivery pricing (task 8)
+        return random.choice([
+            os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
+            os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE")
+        ])
+    if size > 4:
+        raise ValueError("Group size exceeds maximum of 4 people.")
+    links = {
+        2: os.getenv("STRIPE_PAYMENT_LINK_2_PEOPLE"),
+        3: os.getenv("STRIPE_PAYMENT_LINK_3_PEOPLE"),
+        4: os.getenv("STRIPE_PAYMENT_LINK_4_PEOPLE")
+    }
+    return links.get(size)
+
 def send_negotiation_notification(target_user: str, negotiation_doc: Dict):
     """Agent autonomously crafts negotiation message"""
     

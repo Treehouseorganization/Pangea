@@ -106,13 +106,15 @@ class OrderState(TypedDict):
     customer_name: Optional[str]
 
 def get_payment_link(group_size: int) -> str:
-    """Get appropriate payment link based on group size"""
-    if group_size <= 2:
+    if group_size == 1:                       
+        return PAYMENT_LINKS[3]
+    elif group_size == 2:
         return PAYMENT_LINKS[2]
     elif group_size == 3:
         return PAYMENT_LINKS[3]
-    else:  # 4+ people
+    else:
         return PAYMENT_LINKS[4]
+    
 
 def get_payment_amount(group_size: int) -> str:
     """Get payment amount text based on group size"""
