@@ -17,6 +17,10 @@ import random
 # Import order processing system
 from pangea_order_processor import start_order_process, process_order_message
 
+# Import locations
+from pangea_locations import AVAILABLE_RESTAURANTS, AVAILABLE_DROPOFF_LOCATIONS
+
+
 # LangGraph imports
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -1274,7 +1278,16 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
                 state['proactive_notification_data'] = proactive_notification
                 return state
     
-    # If not a group response, use LLM to classify intent
+    # ----- NEW: FAQ fallback ------------------------------------------
+    faq_answer = answer_faq_question(last_message)
+    if faq_answer and not faq_answer.lower().startswith("sorry"):
+        send_friendly_message(user_phone, faq_answer, message_type="general")
+        state['messages'].append(AIMessage(content=faq_answer))
+        state['conversation_stage'] = "faq_answered"
+        return state               # short-circuit: no further intent work
+    # -------------------------------------------------------------------
+
+        # If not a group response, use LLM to classify intent
     classification_prompt = f"""
     Classify this message intent for a food delivery matching service:
     
@@ -1926,6 +1939,13 @@ def wait_for_responses_node(state: PangeaState) -> PangeaState:
     state['messages'].append(AIMessage(content=message))
     return state
 
+# ─── FAQ terminal node ────────────────────────────────────────────────
+def faq_answered_node(state: PangeaState) -> PangeaState:
+    """
+    Terminal step after answering a general FAQ.
+    Does nothing except return the state unchanged.
+    """
+    return state
 
 #  should_continue_negotiating function  more robust version:
 def should_continue_negotiating(state: PangeaState) -> str:
@@ -2236,6 +2256,10 @@ def create_pangea_graph():
     
     # Set entry point
     workflow.set_entry_point("classify_intent")
+
+    # Terminal FAQ answered node
+    workflow.add_node("faq_answered", faq_answered_node)
+
     
     return workflow.compile()
 
@@ -2507,6 +2531,36 @@ def send_morning_checkins():
         morning_greeting_node(morning_state)
 
 # ===== HELPER FUNCTIONS =====
+
+def answer_faq_question(user_message: str) -> str:
+    """
+    Uses Claude-4 to answer general questions about
+    how Pangea works, pricing, restaurants, drop-offs, etc.
+    """
+    prompt = f"""
+You are Pangea, a friendly AI lunch-coordination assistant for college students.
+
+The user asked: "{user_message}"
+
+Answer clearly and concisely.  If the user asks:
+• “How does this work?” → explain the SMS flow (order your food externally ➜ text what restauarant you want & provide order number, name, etc ➜ get matched ➜ group pays via the link).
+• “What restaurants can I pick from?” → list them.
+• “Where can I meet the delivery?” → list drop-off locations.
+• “How much does delivery cost?” → explain free with 2-4 people, $3.50 solo.
+• Any other pricing, timing, or general FAQ → answer in < 5 lines.
+
+When useful, remind the user:
+“Just text me your food + location, I'll handle matching!”
+
+Current restaurant list:
+{chr(10).join('- ' + r for r in AVAILABLE_RESTAURANTS)}
+
+Current drop-off locations:
+{chr(10).join('- ' + d for d in AVAILABLE_DROPOFF_LOCATIONS)}
+"""
+    resp = anthropic_llm.invoke([HumanMessage(content=prompt)])
+    return resp.content.strip()
+
 
 def get_payment_link_for_group(group_members):
     size = len(group_members)
