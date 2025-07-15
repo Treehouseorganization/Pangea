@@ -296,12 +296,12 @@ def restaurants_match(rest1: str, rest2: str) -> bool:
     
     # Known restaurant mappings (deterministic)
     restaurant_aliases = {
-        "mario's pizza": ["mario", "mario's", "pizza", "mario's pizza"],
-        "thai garden": ["thai", "thai garden", "thai food"],
-        "sushi express": ["sushi", "sushi express"],
-        "burger barn": ["burger", "burger barn", "burgers"],
-        "green bowls": ["green", "green bowls", "salad", "healthy"]
-    }
+    "chipotle": ["chipotle", "mexican", "burrito", "bowl"],
+    "mcdonald's": ["mcdonald", "mcdonalds", "mcd", "burger", "fries"],
+    "chick-fil-a": ["chickfila", "chick", "chicken", "sandwich"],
+    "portillo's": ["portillos", "italian beef", "hot dog", "chicago"],
+    "starbucks": ["starbucks", "coffee", "latte", "frappuccino"]
+}
     
     # Check if both restaurants map to the same canonical restaurant
     rest1_canonical = None
@@ -2189,6 +2189,7 @@ def create_pangea_graph():
     workflow.add_node("finalize_group", finalize_group_node)
     workflow.add_node("handle_no_matches", handle_no_matches_node)
     workflow.add_node("wait_for_responses", wait_for_responses_node)
+    workflow.add_node("faq_answered", faq_answered_node) 
     
     # ADD NEW GROUP RESPONSE NODES
     workflow.add_node("handle_group_yes", handle_group_response_yes_node)
@@ -2210,13 +2211,15 @@ def create_pangea_graph():
             "group_response_no": "handle_group_no",    # NEW: Handle NO to group invitation
             "alternative_response": "handle_alternative_response",  # NEW: Handle alternative response
             "proactive_group_yes": "handle_proactive_group_yes",  # NEW: Handle YES to proactive notification
-            "proactive_group_no": "handle_proactive_group_no",    # NEW: Handle NO to proactive notification
+            "proactive_group_no": "handle_proactive_group_no",
+            "faq_answered": "faq_answered",  # ← ADD THIS LINE# NEW: Handle NO to proactive notification
         }
     )
     
     # Morning workflow chain (Anthropic's Prompt Chaining pattern)
     workflow.add_edge("process_morning_response", "present_morning_matches")
     workflow.add_edge("present_morning_matches", END)
+    workflow.add_edge("faq_answered", END)
     
     # Enhanced spontaneous agent flow with learning
     workflow.add_edge("analyze_spontaneous", "realtime_search")
@@ -2247,7 +2250,7 @@ def create_pangea_graph():
     workflow.set_entry_point("classify_intent")
 
     # Terminal FAQ answered node
-    workflow.add_node("faq_answered", faq_answered_node)
+    
 
     
     return workflow.compile()
