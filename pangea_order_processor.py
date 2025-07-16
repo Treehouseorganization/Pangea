@@ -260,7 +260,11 @@ Please provide either:
 
 This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
             
-            send_friendly_message(user_phone, message, message_type="clarification")
+            send_friendly_message(user_phone, message, message_type="order_update")
+            
+            # 🚚 CRITICAL: Check if group is complete and trigger delivery
+            check_group_completion_and_trigger_delivery(user_phone)
+            
             state['messages'].append(AIMessage(content=message))
             return state
         
@@ -269,7 +273,7 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
         
         payment_amount = get_payment_amount(session.get('group_size', 2))
         
-        message = f"""Perfect! I've got your {identifier} for {session.get('restaurant')}! ✅
+        message = f"""Perfect! I've got your name: {name} for {session.get('restaurant')}! ✅
 
 Your payment share: {payment_amount}
 Pickup location: {session.get('pickup_location')}
@@ -278,6 +282,9 @@ When you're ready to pay, just text:
 **PAY**
 
 I'll send you the payment link! 💳"""
+        
+        # 🚚 ADD THIS LINE HERE:
+        check_group_completion_and_trigger_delivery(user_phone)
         
     except (json.JSONDecodeError, ValueError) as e:
         print(f"JSON parsing error: {e}")
@@ -305,7 +312,6 @@ I'll send you the payment link! 💳"""
                 session['customer_name'] = name
                 session['order_stage'] = 'ready_to_pay'
                 update_order_session.invoke({"phone_number": user_phone, "session_data": session})
-                
                 payment_amount = get_payment_amount(session.get('group_size', 2))
                 
                 message = f"""Perfect! I've got your name: {name} for {session.get('restaurant')}! ✅
@@ -339,6 +345,10 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
 Try something like "Order #123" or "My name is John"."""
     
     send_friendly_message(user_phone, message, message_type="order_update")
+    
+    # 🚚 CRITICAL: Check if group is complete and trigger delivery
+    check_group_completion_and_trigger_delivery(user_phone)
+    
     state['messages'].append(AIMessage(content=message))
     return state
 
@@ -579,6 +589,145 @@ def clear_old_order_session(phone_number: str):
         print(f"🗑️ Cleared old order session for {phone_number}")
     except Exception as e:
         print(f"❌ Failed to clear order session: {e}")
+
+
+def check_group_completion_and_trigger_delivery(user_phone: str):
+    """
+    Check if all group members have provided their order details,
+    and if so, trigger the Uber Direct delivery
+    """
+    
+    # Get this user's session to find their group
+    session = get_user_order_session.invoke({"phone_number": user_phone})
+    if not session:
+        return
+    
+    group_id = session.get('group_id')
+    if not group_id:
+        return
+    
+    print(f"🔍 Checking if group {group_id} is ready for delivery...")
+    
+    # Get ALL sessions for this group
+    try:
+        all_group_sessions = db.collection('order_sessions')\
+                              .where('group_id', '==', group_id)\
+                              .get()
+        
+        group_sessions = [doc.to_dict() for doc in all_group_sessions]
+        total_members = len(group_sessions)
+        
+        print(f"📊 Group {group_id}: {total_members} total members")
+        
+        # Check if ALL members have provided order details
+        members_with_orders = []
+        
+        for session_data in group_sessions:
+            user_phone = session_data.get('user_phone')
+            order_number = session_data.get('order_number')
+            customer_name = session_data.get('customer_name')
+            order_stage = session_data.get('order_stage')
+            
+            print(f"  📱 {user_phone}: stage={order_stage}, order_num={order_number}, name={customer_name}")
+            
+            # Check if this member has provided order details
+            if order_number or customer_name:
+                members_with_orders.append({
+                    'user_phone': user_phone,
+                    'order_number': order_number,
+                    'customer_name': customer_name,
+                    'session_data': session_data
+                })
+        
+        print(f"✅ {len(members_with_orders)} members have order details")
+        
+        # Trigger delivery ONLY if ALL members have provided order details
+        if len(members_with_orders) == total_members and len(members_with_orders) >= 2:
+            print(f"🚚 ALL GROUP MEMBERS READY! Triggering delivery for group {group_id}")
+            
+            # Build group data with individual order details
+            group_data = {
+                'restaurant': session.get('restaurant'),
+                'location': session.get('pickup_location'),
+                'members': [member['user_phone'] for member in members_with_orders],
+                'group_id': group_id,
+                'order_details': [
+                    {
+                        'user_phone': member['user_phone'],
+                        'order_number': member['order_number'],
+                        'customer_name': member['customer_name']
+                    }
+                    for member in members_with_orders
+                ]
+            }
+            
+            # Import and trigger delivery
+            try:
+                from pangea_uber_direct import create_group_delivery
+                delivery_result = create_group_delivery(group_data)
+                
+                if delivery_result.get('success'):
+                    print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
+                    
+                    # Notify all group members about delivery
+                    notify_group_about_delivery_creation(group_data, delivery_result)
+                    
+                    # Update all sessions to mark delivery as triggered
+                    for member in members_with_orders:
+                        member_session = member['session_data']
+                        member_session['delivery_triggered'] = True
+                        member_session['delivery_id'] = delivery_result.get('delivery_id')
+                        member_session['tracking_url'] = delivery_result.get('tracking_url')
+                        
+                        update_order_session.invoke({
+                            "phone_number": member['user_phone'],
+                            "session_data": member_session
+                        })
+                
+                else:
+                    print(f"❌ Delivery creation failed: {delivery_result}")
+                    
+            except ImportError:
+                print("❌ Uber Direct integration not available")
+            except Exception as e:
+                print(f"❌ Delivery creation error: {e}")
+        
+        else:
+            missing_count = total_members - len(members_with_orders)
+            print(f"⏳ Waiting for {missing_count} more members to provide order details")
+            
+    except Exception as e:
+        print(f"❌ Error checking group completion: {e}")
+
+def notify_group_about_delivery_creation(group_data: Dict, delivery_result: Dict):
+    """Notify all group members that delivery has been triggered"""
+    
+    restaurant = group_data.get('restaurant')
+    location = group_data.get('location')
+    tracking_url = delivery_result.get('tracking_url', '')
+    delivery_id = delivery_result.get('delivery_id', '')
+    
+    message = f"""🚚 DELIVERY TRIGGERED! 🎉
+
+Your {restaurant} group order is now being processed!
+
+📍 Pickup: {restaurant}
+📍 Dropoff: {location}
+🆔 Delivery ID: {delivery_id[:8]}...
+
+The driver will pick up all individual orders and deliver them to {location}. 
+
+📱 Track delivery: {tracking_url}
+
+I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
+    
+    # Send to all group members
+    for member_phone in group_data.get('members', []):
+        try:
+            send_friendly_message(member_phone, message, message_type="delivery_triggered")
+        except Exception as e:
+            print(f"❌ Failed to notify {member_phone} about delivery: {e}")
+
 
 # REPLACE the existing process_order_message function (around line 400) with this:
 

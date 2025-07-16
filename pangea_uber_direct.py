@@ -1,0 +1,659 @@
+"""
+Pangea Uber Direct Integration
+Handles delivery creation and tracking through Uber Direct API
+Integrated with main Pangea group ordering system
+"""
+
+import os
+import json
+import requests
+import hashlib
+import hmac
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Union
+from dataclasses import dataclass
+from dotenv import load_dotenv
+import uuid
+
+# Firebase imports
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Import from main Pangea system
+try:
+    from pangea_main import db, send_friendly_message, anthropic_llm
+    from pangea_locations import RESTAURANTS, DROPOFFS
+except ImportError:
+    # Fallback initialization if running standalone
+    load_dotenv()
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(os.getenv('FIREBASE_SERVICE_ACCOUNT_PATH'))
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+
+load_dotenv()
+
+@dataclass
+class UberDeliveryConfig:
+    """Configuration for Uber Direct API"""
+    client_id: str = os.getenv('UBER_CLIENT_ID')
+    client_secret: str = os.getenv('UBER_CLIENT_SECRET')
+    customer_id: str = os.getenv('UBER_CUSTOMER_ID')
+    test_mode: str = os.getenv('UBER_DIRECT_TEST_MODE', 'true')  # 'true' for sandbox, 'false' for production
+    base_url: str = None
+    webhook_secret: str = os.getenv('UBER_WEBHOOK_SECRET')
+    
+    def __post_init__(self):
+        """Set base URL based on test mode"""
+        if self.test_mode.lower() == 'true':
+            self.base_url = 'https://sandbox-api.uber.com'
+            print("🧪 Using Uber Direct SANDBOX environment")
+        else:
+            self.base_url = 'https://api.uber.com'
+            print("🚀 Using Uber Direct PRODUCTION environment")
+        
+        # Validate required API keys
+        if not self.client_id:
+            raise ValueError("UBER_CLIENT_ID environment variable is required")
+        if not self.client_secret:
+            raise ValueError("UBER_CLIENT_SECRET environment variable is required")
+        if not self.customer_id:
+            raise ValueError("UBER_CUSTOMER_ID environment variable is required")
+        
+        print(f"✅ Uber Direct configured with Customer ID: {self.customer_id[:8]}...")
+
+class UberDirectClient:
+    """Uber Direct API client for Pangea food delivery"""
+    
+    def __init__(self):
+        self.config = UberDeliveryConfig()
+        self.access_token = None
+        self.token_expires_at = None
+        
+    def authenticate(self) -> str:
+        """Get OAuth 2.0 access token for Uber Direct API"""
+        
+        if self.access_token and self.token_expires_at > datetime.now():
+            return self.access_token
+            
+        auth_url = f"{self.config.base_url}/oauth/v2/token"
+        
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        data = {
+            'client_id': self.config.client_id,
+            'client_secret': self.config.client_secret,
+            'grant_type': 'client_credentials',
+            'scope': 'eats.deliveries'
+        }
+        
+        print(f"🔐 Authenticating with Uber Direct API...")
+        print(f"   Client ID: {self.config.client_id[:8]}...")
+        print(f"   Environment: {self.config.base_url}")
+        
+        try:
+            response = requests.post(auth_url, headers=headers, data=data)
+            
+            if response.status_code != 200:
+                print(f"❌ Authentication failed with status {response.status_code}")
+                print(f"   Response: {response.text}")
+                response.raise_for_status()
+            
+            token_data = response.json()
+            self.access_token = token_data['access_token']
+            
+            # Set expiration time (subtract 5 minutes for safety)
+            expires_in = token_data.get('expires_in', 3600)
+            self.token_expires_at = datetime.now() + timedelta(seconds=expires_in - 300)
+            
+            print(f"✅ Uber authentication successful!")
+            print(f"   Token expires at: {self.token_expires_at}")
+            print(f"   Scope: {token_data.get('scope', 'N/A')}")
+            
+            return self.access_token
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Uber authentication failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"   Status Code: {e.response.status_code}")
+                print(f"   Response Body: {e.response.text}")
+            raise Exception(f"Failed to authenticate with Uber: {e}")
+
+    def create_delivery_quote(self, pickup_location: str, dropoff_location: str) -> Dict:
+        """
+        Create a delivery quote to check feasibility and cost
+        
+        Args:
+            pickup_location: Restaurant location
+            dropoff_location: Student delivery location
+            
+        Returns:
+            Quote data with pricing and timing estimates
+        """
+        
+        access_token = self.authenticate()
+        
+        quote_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/delivery_quotes"
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Convert location names to addresses
+        pickup_address = self._get_restaurant_address(pickup_location)
+        dropoff_address = self._get_dropoff_address(dropoff_location)
+        
+        payload = {
+            "pickup_address": pickup_address,
+            "dropoff_address": dropoff_address
+        }
+        
+        try:
+            response = requests.post(quote_url, headers=headers, json=payload)
+            response.raise_for_status()
+            
+            quote_data = response.json()
+            
+            print(f"✅ Quote created: ${quote_data['fee']/100:.2f}, {quote_data['duration']} min ETA")
+            
+            # Store quote in Firebase for tracking
+            self._store_quote(quote_data)
+            
+            return quote_data
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Quote creation failed: {e}")
+            return {"error": f"Failed to create quote: {e}"}
+
+    def create_delivery(self, group_data: Dict, quote_id: str) -> Dict:
+        """
+        Create actual delivery using a valid quote
+        
+        Args:
+            group_data: Group order information
+            quote_id: Valid quote ID from create_delivery_quote
+            
+        Returns:
+            Delivery data with tracking information
+        """
+        
+        access_token = self.authenticate()
+        
+        delivery_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/deliveries"
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Build delivery payload
+        payload = self._build_delivery_payload(group_data, quote_id)
+        
+        try:
+            response = requests.post(delivery_url, headers=headers, json=payload)
+            response.raise_for_status()
+            
+            delivery_data = response.json()
+            
+            print(f"✅ Delivery created: {delivery_data['id']}")
+            print(f"📱 Tracking URL: {delivery_data['tracking_url']}")
+            
+            # Store delivery in Firebase
+            self._store_delivery(delivery_data, group_data)
+            
+            # Notify group members
+            self._notify_group_about_delivery(group_data, delivery_data)
+            
+            return delivery_data
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Delivery creation failed: {e}")
+            return {"error": f"Failed to create delivery: {e}"}
+
+    def get_delivery_status(self, delivery_id: str) -> Dict:
+        """Get current status of a delivery"""
+        
+        access_token = self.authenticate()
+        
+        status_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/deliveries/{delivery_id}"
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}'
+        }
+        
+        try:
+            response = requests.get(status_url, headers=headers)
+            response.raise_for_status()
+            
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Status check failed: {e}")
+            return {"error": f"Failed to get delivery status: {e}"}
+
+    def cancel_delivery(self, delivery_id: str) -> Dict:
+        """Cancel a delivery if needed"""
+        
+        access_token = self.authenticate()
+        
+        cancel_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/deliveries/{delivery_id}/cancel"
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        try:
+            response = requests.post(cancel_url, headers=headers)
+            response.raise_for_status()
+            
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Delivery cancellation failed: {e}")
+            return {"error": f"Failed to cancel delivery: {e}"}
+
+    def _get_restaurant_address(self, restaurant_name: str) -> str:
+        """Convert restaurant name to full address"""
+        
+        restaurant_addresses = {
+            "Chipotle": '{"street_address": ["633 N State St"], "city": "Chicago", "state": "IL", "zip_code": "60654"}',
+            "McDonald's": '{"street_address": ["210 N Canal St"], "city": "Chicago", "state": "IL", "zip_code": "60606"}',
+            "Chick-fil-A": '{"street_address": ["30 E Adams St"], "city": "Chicago", "state": "IL", "zip_code": "60603"}',
+            "Portillo's": '{"street_address": ["520 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Starbucks": '{"street_address": ["1 N State St"], "city": "Chicago", "state": "IL", "zip_code": "60602"}'
+        }
+        
+        return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
+
+    def _get_dropoff_address(self, dropoff_location: str) -> str:
+        """Convert dropoff location to full address"""
+        
+        dropoff_addresses = {
+            "Student Union": '{"street_address": ["750 S Halsted St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Campus Center": '{"street_address": ["828 S Wolcott Ave"], "city": "Chicago", "state": "IL", "zip_code": "60612"}',
+            "Library Plaza": '{"street_address": ["801 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Recreation Center": '{"street_address": ["901 W Roosevelt Rd"], "city": "Chicago", "state": "IL", "zip_code": "60608"}',
+            "Health Sciences Building": '{"street_address": ["1601 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60612"}'
+        }
+        
+        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Student Union"])
+
+    def _build_delivery_payload(self, group_data: Dict, quote_id: str) -> Dict:
+        """Build the delivery request payload with individual order details"""
+        
+        restaurant = group_data.get('restaurant', 'Unknown Restaurant')
+        dropoff_location = group_data.get('location', 'Student Union')
+        group_members = group_data.get('members', [])
+        order_details = group_data.get('order_details', [])
+        
+        # Use first group member as primary contact
+        primary_contact = group_members[0] if group_members else "+1234567890"
+        
+        # Build detailed pickup notes with each person's order
+        pickup_notes = f"PANGEA GROUP ORDER - {len(group_members)} people:\n"
+        for i, order_detail in enumerate(order_details):
+            order_number = order_detail.get('order_number', '')
+            customer_name = order_detail.get('customer_name', '')
+            
+            if order_number:
+                pickup_notes += f"{i+1}. Order #{order_number}\n"
+            elif customer_name:
+                pickup_notes += f"{i+1}. Name: {customer_name}\n"
+            else:
+                pickup_notes += f"{i+1}. Student order\n"
+        
+        pickup_notes += f"\nTotal: {len(group_members)} orders to pick up"
+        
+        # Build manifest items for each individual order
+        manifest_items = []
+        for i, order_detail in enumerate(order_details):
+            order_number = order_detail.get('order_number', '')
+            customer_name = order_detail.get('customer_name', '')
+            
+            if order_number:
+                item_name = f"Order #{order_number}"
+            elif customer_name:
+                item_name = f"{customer_name}'s Order"
+            else:
+                item_name = f"Student Order {i+1}"
+            
+            manifest_items.append({
+                "name": item_name,
+                "quantity": 1,
+                "size": "medium"
+            })
+        
+        payload = {
+            "quote_id": quote_id,
+            "pickup_name": f"{restaurant} Pickup",
+            "pickup_phone_number": "+1234567890",  # Restaurant phone
+            "pickup_business_name": restaurant,
+            "pickup_address": self._get_restaurant_address(restaurant),
+            "pickup_notes": pickup_notes,
+            
+            "dropoff_name": "Pangea Group Order",
+            "dropoff_phone_number": primary_contact,
+            "dropoff_address": self._get_dropoff_address(dropoff_location),
+            "dropoff_notes": f"Group delivery for {len(group_members)} students - Meet at main entrance",
+            
+            "manifest_items": manifest_items,
+            
+            "manifest_reference": f"PANGEA-{group_data.get('group_id', 'unknown')}",
+            "manifest_total_value": len(group_members) * 1500,  # $15 per person estimated
+            
+            "deliverable_action": "deliverable_action_meet_at_door",
+            "undeliverable_action": "return",
+            
+            "requires_dropoff_signature": False,
+            "requires_id": False,
+            
+            "pickup_ready_dt": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+            
+            "tip": 300,  # $3 tip
+            
+            "idempotency_key": str(uuid.uuid4())
+        }
+        
+        return payload
+
+    def _store_quote(self, quote_data: Dict):
+        """Store quote in Firebase for tracking"""
+        try:
+            db.collection('uber_quotes').document(quote_data['id']).set({
+                **quote_data,
+                'created_at': datetime.now(),
+                'pangea_service': 'group_delivery'
+            })
+        except Exception as e:
+            print(f"❌ Failed to store quote: {e}")
+
+    def _store_delivery(self, delivery_data: Dict, group_data: Dict):
+        """Store delivery in Firebase for tracking"""
+        try:
+            db.collection('uber_deliveries').document(delivery_data['id']).set({
+                **delivery_data,
+                'group_data': group_data,
+                'created_at': datetime.now(),
+                'pangea_service': 'group_delivery',
+                'status': 'pending'
+            })
+        except Exception as e:
+            print(f"❌ Failed to store delivery: {e}")
+
+    def _notify_group_about_delivery(self, group_data: Dict, delivery_data: Dict):
+        """Notify all group members about delivery status"""
+        
+        restaurant = group_data.get('restaurant', 'your restaurant')
+        location = group_data.get('location', 'your location')
+        tracking_url = delivery_data.get('tracking_url', '')
+        
+        message = f"""🚚 Your {restaurant} delivery is on the way!
+
+📍 Delivery to: {location}
+📱 Track your order: {tracking_url}
+
+The driver will meet you at the delivery location. I'll send updates as your order progresses! 🍕"""
+        
+        for member_phone in group_data.get('members', []):
+            try:
+                if 'send_friendly_message' in globals():
+                    send_friendly_message(member_phone, message, message_type="delivery_started")
+                else:
+                    print(f"📱 Would send to {member_phone}: {message}")
+            except Exception as e:
+                print(f"❌ Failed to notify {member_phone}: {e}")
+
+    def verify_webhook(self, payload: bytes, signature: str) -> bool:
+        """Verify webhook signature for security"""
+        
+        if not self.config.webhook_secret:
+            print("⚠️ No webhook secret configured")
+            return True  # Allow if no secret configured
+            
+        try:
+            expected_signature = hmac.new(
+                self.config.webhook_secret.encode(),
+                payload,
+                hashlib.sha256
+            ).hexdigest()
+            
+            return hmac.compare_digest(signature, expected_signature)
+            
+        except Exception as e:
+            print(f"❌ Webhook verification failed: {e}")
+            return False
+
+    def handle_webhook(self, payload: Dict, signature: str = None) -> Dict:
+        """Handle incoming webhook from Uber"""
+        
+        try:
+            event_type = payload.get('event_type')
+            delivery_id = payload.get('delivery_id')
+            
+            if event_type == 'delivery.status':
+                return self._handle_delivery_status_update(payload)
+            elif event_type == 'courier.update':
+                return self._handle_courier_update(payload)
+            else:
+                print(f"⚠️ Unknown webhook event: {event_type}")
+                return {"status": "ignored"}
+                
+        except Exception as e:
+            print(f"❌ Webhook handling failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _handle_delivery_status_update(self, payload: Dict) -> Dict:
+        """Handle delivery status change webhook"""
+        
+        delivery_id = payload.get('delivery_id')
+        new_status = payload.get('status')
+        
+        print(f"📦 Delivery {delivery_id} status: {new_status}")
+        
+        try:
+            # Update delivery status in Firebase
+            db.collection('uber_deliveries').document(delivery_id).update({
+                'status': new_status,
+                'last_status_update': datetime.now(),
+                'webhook_data': payload
+            })
+            
+            # Get group data for notifications
+            delivery_doc = db.collection('uber_deliveries').document(delivery_id).get()
+            if delivery_doc.exists:
+                delivery_data = delivery_doc.to_dict()
+                group_data = delivery_data.get('group_data', {})
+                
+                # Send status updates to group
+                self._send_status_update_to_group(group_data, new_status, payload)
+            
+            return {"status": "processed"}
+            
+        except Exception as e:
+            print(f"❌ Failed to process delivery status update: {e}")
+            return {"status": "error"}
+
+    def _handle_courier_update(self, payload: Dict) -> Dict:
+        """Handle courier location update webhook"""
+        
+        delivery_id = payload.get('delivery_id')
+        courier_location = payload.get('location', {})
+        
+        try:
+            # Update courier location in Firebase
+            db.collection('uber_deliveries').document(delivery_id).update({
+                'courier_location': courier_location,
+                'last_courier_update': datetime.now()
+            })
+            
+            return {"status": "processed"}
+            
+        except Exception as e:
+            print(f"❌ Failed to process courier update: {e}")
+            return {"status": "error"}
+
+    def _send_status_update_to_group(self, group_data: Dict, status: str, payload: Dict):
+        """Send status updates to group members"""
+        
+        restaurant = group_data.get('restaurant', 'your restaurant')
+        
+        status_messages = {
+            'pending': f"📝 Your {restaurant} order is confirmed and being prepared for pickup!",
+            'pickup': f"🚚 Driver is picking up your {restaurant} order now!",
+            'pickup_complete': f"✅ Your {restaurant} order has been picked up and is on the way!",
+            'dropoff': f"📍 Driver is arriving with your {restaurant} order!",
+            'delivered': f"🎉 Your {restaurant} order has been delivered! Enjoy your meal!",
+            'canceled': f"❌ Your {restaurant} delivery was canceled. Please contact support.",
+            'returned': f"🔄 Your {restaurant} order couldn't be delivered and is being returned."
+        }
+        
+        message = status_messages.get(status, f"📦 Your {restaurant} order status: {status}")
+        
+        # Add ETA if available
+        if status == 'pickup_complete' and payload.get('dropoff_eta'):
+            eta = payload['dropoff_eta']
+            message += f"\n\n⏰ Estimated delivery: {eta}"
+        
+        for member_phone in group_data.get('members', []):
+            try:
+                if 'send_friendly_message' in globals():
+                    send_friendly_message(member_phone, message, message_type="delivery_update")
+                else:
+                    print(f"📱 Would send to {member_phone}: {message}")
+            except Exception as e:
+                print(f"❌ Failed to notify {member_phone}: {e}")
+
+
+# Main integration functions for Pangea
+def create_group_delivery(group_data: Dict) -> Dict:
+    """
+    Main function to create a delivery for a Pangea group order
+    
+    Args:
+        group_data: Dict containing:
+            - restaurant: Restaurant name
+            - location: Dropoff location
+            - members: List of group member phone numbers
+            - group_id: Unique group identifier
+            
+    Returns:
+        Delivery result with tracking info
+    """
+    
+    client = UberDirectClient()
+    
+    try:
+        print(f"🚚 Creating delivery for {group_data.get('restaurant')} group...")
+        
+        # Step 1: Create quote
+        quote_result = client.create_delivery_quote(
+            pickup_location=group_data.get('restaurant'),
+            dropoff_location=group_data.get('location')
+        )
+        
+        if 'error' in quote_result:
+            return quote_result
+        
+        quote_id = quote_result['id']
+        
+        # Step 2: Create delivery
+        delivery_result = client.create_delivery(group_data, quote_id)
+        
+        if 'error' in delivery_result:
+            return delivery_result
+        
+        print(f"✅ Delivery created successfully: {delivery_result['id']}")
+        
+        return {
+            'success': True,
+            'delivery_id': delivery_result['id'],
+            'tracking_url': delivery_result.get('tracking_url'),
+            'quote_data': quote_result,
+            'delivery_data': delivery_result
+        }
+        
+    except Exception as e:
+        print(f"❌ Group delivery creation failed: {e}")
+        return {'error': f'Failed to create group delivery: {e}'}
+
+
+def get_group_delivery_status(delivery_id: str) -> Dict:
+    """Get status of a group delivery"""
+    
+    client = UberDirectClient()
+    return client.get_delivery_status(delivery_id)
+
+
+def handle_uber_webhook(request_data: Dict, signature: str = None) -> Dict:
+    """Handle incoming Uber webhook"""
+    
+    client = UberDirectClient()
+    return client.handle_webhook(request_data, signature)
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test configuration and authentication
+    print("🧪 Testing Uber Direct integration...")
+    
+    # Check environment variables
+    required_env_vars = ['UBER_CLIENT_ID', 'UBER_CLIENT_SECRET', 'UBER_CUSTOMER_ID']
+    missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
+        print("\nAdd these to your .env file:")
+        print("UBER_CLIENT_ID=your_client_id_here")
+        print("UBER_CLIENT_SECRET=your_client_secret_here") 
+        print("UBER_CUSTOMER_ID=your_customer_id_here")
+        print("UBER_DIRECT_TEST_MODE=true  # Use 'false' for production")
+        print("UBER_WEBHOOK_SECRET=your_webhook_secret_here")
+        exit(1)
+    
+    # Test authentication
+    try:
+        client = UberDirectClient()
+        token = client.authenticate()
+        print(f"✅ Authentication test passed!")
+        
+        # Test with sample group data
+        sample_group = {
+            'restaurant': 'Chipotle',
+            'location': 'Student Union',
+            'members': ['+1234567890', '+0987654321', '+1122334455'],
+            'group_id': 'test_group_123',
+            'order_details': [
+                {'user_phone': '+1234567890', 'order_number': 'ABC123', 'customer_name': None},
+                {'user_phone': '+0987654321', 'order_number': None, 'customer_name': 'Maria Rodriguez'},
+                {'user_phone': '+1122334455', 'order_number': 'XYZ789', 'customer_name': None}
+            ]
+        }
+        
+        print("🧪 Testing quote creation...")
+        quote_result = client.create_delivery_quote(
+            pickup_location=sample_group['restaurant'],
+            dropoff_location=sample_group['location']
+        )
+        
+        if 'error' not in quote_result:
+            print(f"✅ Quote test passed! Fee: ${quote_result['fee']/100:.2f}")
+            
+            # Note: Uncomment below to test actual delivery creation in sandbox
+            # print("🧪 Testing delivery creation...")
+            # delivery_result = client.create_delivery(sample_group, quote_result['id'])
+            # print(f"Delivery test result: {delivery_result}")
+        else:
+            print(f"❌ Quote test failed: {quote_result['error']}")
+            
+    except Exception as e:
+        print(f"❌ Integration test failed: {e}")
+        
+    print("\n🔧 Environment Configuration:")
+    print(f"   Test Mode: {os.getenv('UBER_DIRECT_TEST_MODE', 'true')}")
+    print(f"   Client ID: {os.getenv('UBER_CLIENT_ID', 'NOT_SET')[:8]}...")
+    print(f"   Customer ID: {os.getenv('UBER_CUSTOMER_ID', 'NOT_SET')[:8]}...")
+    print(f"   Webhook Secret: {'SET' if os.getenv('UBER_WEBHOOK_SECRET') else 'NOT_SET'}")
