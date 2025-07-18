@@ -76,7 +76,7 @@ class UberDirectClient:
         if self.access_token and self.token_expires_at > datetime.now():
             return self.access_token
             
-        auth_url = f"{self.config.base_url}/oauth/v2/token"
+        auth_url = "https://auth.uber.com/oauth/v2/token"
         
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded'
@@ -135,6 +135,7 @@ class UberDirectClient:
         
         access_token = self.authenticate()
         
+        # ✅ FIX: Use correct endpoint for quotes
         quote_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/delivery_quotes"
         
         headers = {
@@ -142,9 +143,9 @@ class UberDirectClient:
             'Content-Type': 'application/json'
         }
         
-        # Convert location names to addresses
-        pickup_address = self._get_restaurant_address(pickup_location)
-        dropoff_address = self._get_dropoff_address(dropoff_location)
+        # ✅ FIX: Use proper address format for quotes
+        pickup_address = self._get_restaurant_address_string(pickup_location)
+        dropoff_address = self._get_dropoff_address_string(dropoff_location)
         
         payload = {
             "pickup_address": pickup_address,
@@ -182,6 +183,7 @@ class UberDirectClient:
         
         access_token = self.authenticate()
         
+        # ✅ FIX: Use correct delivery endpoint
         delivery_url = f"{self.config.base_url}/v1/customers/{self.config.customer_id}/deliveries"
         
         headers = {
@@ -192,8 +194,22 @@ class UberDirectClient:
         # Build delivery payload
         payload = self._build_delivery_payload(group_data, quote_id)
         
+        # Debug logging
+        print(f"🔍 DEBUG - Delivery payload:")
+        print(json.dumps(payload, indent=2, default=str))
+        
         try:
             response = requests.post(delivery_url, headers=headers, json=payload)
+            
+            if response.status_code != 200:
+                print(f"❌ Delivery creation failed with status {response.status_code}")
+                print(f"   Response: {response.text}")
+                try:
+                    error_data = response.json()
+                    print(f"   Error details: {json.dumps(error_data, indent=2)}")
+                except:
+                    pass
+            
             response.raise_for_status()
             
             delivery_data = response.json()
@@ -211,6 +227,9 @@ class UberDirectClient:
             
         except requests.exceptions.RequestException as e:
             print(f"❌ Delivery creation failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"   Status Code: {e.response.status_code}")
+                print(f"   Response Body: {e.response.text}")
             return {"error": f"Failed to create delivery: {e}"}
 
     def get_delivery_status(self, delivery_id: str) -> Dict:
@@ -283,7 +302,7 @@ class UberDirectClient:
         return dropoff_addresses.get(dropoff_location, dropoff_addresses["Student Union"])
 
     def _build_delivery_payload(self, group_data: Dict, quote_id: str) -> Dict:
-        """Build the delivery request payload with individual order details"""
+        """Build the delivery request payload with correct structure"""
         
         restaurant = group_data.get('restaurant', 'Unknown Restaurant')
         dropoff_location = group_data.get('location', 'Student Union')
@@ -324,20 +343,40 @@ class UberDirectClient:
             manifest_items.append({
                 "name": item_name,
                 "quantity": 1,
-                "size": "medium"
+                "size": "small"
             })
+        
+        # ✅ FIX: Use string addresses for delivery creation
+        pickup_address = self._get_restaurant_address_string(restaurant)
+        dropoff_address = self._get_dropoff_address_string(dropoff_location)
+        
+        # ✅ FIX: Set pickup time to at least 25 minutes in the future in UTC
+        import pytz
+        from datetime import datetime, timedelta
+        
+        # Get current UTC time
+        utc_now = datetime.now(pytz.UTC)
+        
+        # Add 25 minutes to ensure it's well past the 20-minute minimum
+        pickup_ready_time = utc_now + timedelta(minutes=25)
+        
+        # Format as ISO 8601 UTC timestamp
+        pickup_ready_dt = pickup_ready_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        
+        print(f"🕐 Current UTC time: {utc_now.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
+        print(f"🕐 Pickup ready time: {pickup_ready_dt}")
         
         payload = {
             "quote_id": quote_id,
             "pickup_name": f"{restaurant} Pickup",
-            "pickup_phone_number": "+1234567890",  # Restaurant phone
+            "pickup_phone_number": "+15555555555",  # Restaurant phone
             "pickup_business_name": restaurant,
-            "pickup_address": self._get_restaurant_address(restaurant),
+            "pickup_address": pickup_address,
             "pickup_notes": pickup_notes,
             
             "dropoff_name": "Pangea Group Order",
             "dropoff_phone_number": primary_contact,
-            "dropoff_address": self._get_dropoff_address(dropoff_location),
+            "dropoff_address": dropoff_address,
             "dropoff_notes": f"Group delivery for {len(group_members)} students - Meet at main entrance",
             
             "manifest_items": manifest_items,
@@ -351,7 +390,8 @@ class UberDirectClient:
             "requires_dropoff_signature": False,
             "requires_id": False,
             
-            "pickup_ready_dt": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+            # ✅ FIX: Use properly formatted UTC timestamp
+            "pickup_ready_dt": pickup_ready_dt,
             
             "tip": 300,  # $3 tip
             
@@ -359,6 +399,62 @@ class UberDirectClient:
         }
         
         return payload
+
+    def _get_restaurant_address_string(self, restaurant_name: str) -> str:
+        """Convert restaurant name to address string for delivery creation"""
+        
+        # ✅ UPDATED: Using your actual restaurant addresses
+        restaurant_addresses = {
+            "Chipotle": "1132 S Clinton St, Chicago, IL 60607",
+            "McDonald's": "2315 W Ogden Ave, Chicago, IL 60608", 
+            "Chick-fil-A": "1106 S Clinton St, Chicago, IL 60607",
+            "Portillo's": "520 W Taylor St, Chicago, IL 60607",
+            "Starbucks": "1430 W Taylor St, Chicago, IL 60607"
+        }
+        
+        return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
+
+    def _get_dropoff_address_string(self, dropoff_location: str) -> str:
+        """Convert dropoff location to address string for delivery creation"""
+        
+        # ✅ UPDATED: Using your actual dropoff addresses
+        dropoff_addresses = {
+            "Richard J Daley Library": "801 S Morgan St, Chicago, IL 60607",
+            "Student Center East": "750 S Halsted St, Chicago, IL 60607",
+            "Student Center West": "828 S Wolcott Ave, Chicago, IL 60612", 
+            "Student Services Building": "1200 W Harrison St, Chicago, IL 60607",
+            "University Hall": "601 S Morgan St, Chicago, IL 60607"
+        }
+        
+        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
+
+    def _get_restaurant_address(self, restaurant_name: str) -> str:
+        """Convert restaurant name to JSON address for quotes"""
+        
+        # ✅ UPDATED: Using your actual restaurant addresses in JSON format
+        restaurant_addresses = {
+            "Chipotle": '{"street_address": ["1132 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "McDonald's": '{"street_address": ["2315 W Ogden Ave"], "city": "Chicago", "state": "IL", "zip_code": "60608"}',
+            "Chick-fil-A": '{"street_address": ["1106 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Portillo's": '{"street_address": ["520 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Starbucks": '{"street_address": ["1430 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
+        }
+        
+        return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
+
+    def _get_dropoff_address(self, dropoff_location: str) -> str:
+        """Convert dropoff location to JSON address for quotes"""
+        
+        # ✅ UPDATED: Using your actual dropoff addresses in JSON format
+        dropoff_addresses = {
+            "Richard J Daley Library": '{"street_address": ["801 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Student Center East": '{"street_address": ["750 S Halsted St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Student Center West": '{"street_address": ["828 S Wolcott Ave"], "city": "Chicago", "state": "IL", "zip_code": "60612"}',
+            "Student Services Building": '{"street_address": ["1200 W Harrison St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "University Hall": '{"street_address": ["601 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
+        }
+        
+        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
 
     def _store_quote(self, quote_data: Dict):
         """Store quote in Firebase for tracking"""

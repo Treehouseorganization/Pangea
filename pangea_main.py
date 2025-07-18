@@ -1217,13 +1217,23 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     last_message = state['messages'][-1].content
     user_phone = state['user_phone']
     
+    # FIRST: Check if user has active order session - this takes priority
+    try:
+        session = db.collection('order_sessions').document(user_phone).get()
+        if session.exists:
+            # User has active order session, send to order processor
+            state['conversation_stage'] = "order_continuation"
+            return state
+    except Exception as e:
+        print(f"Error checking order session: {e}")
+    
     # Check if first-time user
     user_doc = db.collection('users').document(user_phone).get()
     if not user_doc.exists:
         state['conversation_stage'] = "welcome_new_user"
         return state
     
-    # FIRST: Check if this is a response to a group invitation
+    # SECOND: Check if this is a response to a group invitation
     try:
         pending_negotiations = db.collection('negotiations')\
                                .where('to_user', '==', user_phone)\
@@ -1242,41 +1252,20 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     except Exception as e:
         print(f"Error checking pending negotiations: {e}")
     
-    # Check if this is a response to alternative suggestions
-    if len(pending_negotiations) == 0:  # No pending group invitations
-        # Check if they have alternative suggestions pending
-        # You can store this in a separate collection or check message history
+    # THIRD: Check if this is a response to proactive group notifications
+    proactive_notification = check_pending_proactive_notifications(user_phone)
+    if proactive_notification:
         message_lower = last_message.lower().strip()
-        if ('yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'no' in message_lower) and \
-           state.get('alternative_suggestions'):
-            state['conversation_stage'] = "alternative_response"
+        if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
+            state['conversation_stage'] = "proactive_group_yes"
+            state['proactive_notification_data'] = proactive_notification
+            return state
+        elif 'no' in message_lower or 'n' == message_lower or 'pass' in message_lower or 'nah' in message_lower:
+            state['conversation_stage'] = "proactive_group_no"
+            state['proactive_notification_data'] = proactive_notification
             return state
     
-    # Check if this is a response to proactive group notifications
-    if len(pending_negotiations) == 0:  # No pending group invitations
-        # Check if they have pending proactive notifications
-        proactive_notification = check_pending_proactive_notifications(user_phone)
-        if proactive_notification:
-            message_lower = last_message.lower().strip()
-            if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
-                state['conversation_stage'] = "proactive_group_yes"
-                state['proactive_notification_data'] = proactive_notification
-                return state
-            elif 'no' in message_lower or 'n' == message_lower or 'pass' in message_lower or 'nah' in message_lower:
-                state['conversation_stage'] = "proactive_group_no"
-                state['proactive_notification_data'] = proactive_notification
-                return state
-    
-    # ----- NEW: FAQ fallback ------------------------------------------
-    faq_answer = answer_faq_question(last_message)
-    if faq_answer and not faq_answer.lower().startswith("sorry"):
-        send_friendly_message(user_phone, faq_answer, message_type="general")
-        state['messages'].append(AIMessage(content=faq_answer))
-        state['conversation_stage'] = "faq_answered"
-        return state               # short-circuit: no further intent work
-    # -------------------------------------------------------------------
-
-        # If not a group response, use LLM to classify intent
+    # If not a group response, use LLM to classify intent
     classification_prompt = f"""
     Classify this message intent for a food delivery matching service:
     
@@ -1292,7 +1281,31 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     """
     
     response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
-    state['conversation_stage'] = response.content.strip().lower()
+    intent = response.content.strip().lower()
+    
+    # If no clear intent is found, try FAQ fallback
+    if intent not in ['spontaneous_order', 'morning_response', 'preference_update', 'group_response']:
+        faq_answer = answer_faq_question(last_message)
+        if faq_answer and not faq_answer.lower().startswith("sorry"):
+            send_friendly_message(user_phone, faq_answer, message_type="general")
+            state['messages'].append(AIMessage(content=faq_answer))
+            state['conversation_stage'] = "faq_answered"
+            return state
+    
+    state['conversation_stage'] = intent
+    return state
+
+def handle_order_continuation_node(state: PangeaState) -> PangeaState:
+    """Handle messages that should go to order processor"""
+    user_phone = state['user_phone']
+    message_body = state['messages'][-1].content
+    
+    # Process through order system
+    result = process_order_message(user_phone, message_body)
+    
+    if result:
+        state['messages'].append(AIMessage(content="Order processed"))
+    
     return state
 
 def route_based_on_intent(state: PangeaState) -> str:
@@ -1388,37 +1401,44 @@ You are a smart location-matching agent. Extract information from this food requ
 User message: "{user_message}"
 
 AVAILABLE LOCATIONS (you MUST pick exactly one):
-- Student Union
-- Campus Center  
-- Library Plaza
-- Recreation Center
-- Health Sciences Building
+- Richard J Daley Library
+- Student Center East
+- Student Center West
+- Student Services Building
+- University Hall
 
-AVAILABLE RESTAURANTS:
-- Mario's Pizza
-- Thai Garden
-- Sushi Express
-- Burger Barn
-- Green Bowls
-- any (if user doesn't specify)
+AVAILABLE RESTAURANTS (pick the BEST match):
+- Chipotle
+- McDonald's
+- Chick-fil-A
+- Portillo's
+- Starbucks
+
+RESTAURANT MATCHING RULES:
+- "McDonald's" or "McDonalds" → "McDonald's"
+- "Chipotle" → "Chipotle"
+- "Chick-fil-A" or "Chickfila" or "Chick fil A" → "Chick-fil-A"
+- "Portillo's" or "Portillos" → "Portillo's"
+- "Starbucks" or "coffee" → "Starbucks"
+- If NO specific restaurant mentioned → "any"
+
+LOCATION MATCHING RULES:
+- "library" or "daley" → "Richard J Daley Library"
+- "student center east" or "sce" → "Student Center East"
+- "student center west" or "scw" → "Student Center West"
+- "student services" or "ssb" → "Student Services Building"
+- "university hall" or "uh" → "University Hall"
+- If NO specific location mentioned → "Richard J Daley Library" (default)
 
 IMPORTANT: For time, preserve the EXACT user intent. Don't convert to generic terms.
 
 Examples:
-- "campus center" → "Campus Center"
-- "library" → "Library Plaza" 
-- "mario's pizza" → "Mario's Pizza"
-- "pizza" → "Mario's Pizza"
-- "at 10 pm" → "10 pm"
-- "at 7:30" → "7:30 pm"
-- "for lunch" → "lunch time"
-- "now" → "now"
-- "soon" → "soon"
-- "tonight" → "tonight"
-- "in an hour" → "in an hour"
+- "McDonald's at library at 5pm" → {{"restaurant": "McDonald's", "location": "Richard J Daley Library", "time_preference": "5pm"}}
+- "Chipotle at student center" → {{"restaurant": "Chipotle", "location": "Student Center East", "time_preference": "now"}}
+- "food at library" → {{"restaurant": "any", "location": "Richard J Daley Library", "time_preference": "now"}}
 
 Return ONLY this JSON format:
-{{"restaurant": "exact match or any", "location": "exact match from list", "time_preference": "PRESERVE EXACT USER TIME"}}
+{{"restaurant": "exact match from list", "location": "exact match from list", "time_preference": "PRESERVE EXACT USER TIME"}}
 """
     
     response = anthropic_llm.invoke([HumanMessage(content=analysis_prompt)])
@@ -2189,6 +2209,7 @@ def create_pangea_graph():
     workflow.add_node("finalize_group", finalize_group_node)
     workflow.add_node("handle_no_matches", handle_no_matches_node)
     workflow.add_node("wait_for_responses", wait_for_responses_node)
+    workflow.add_node("handle_order_continuation", handle_order_continuation_node)
     workflow.add_node("faq_answered", faq_answered_node) 
     
     # ADD NEW GROUP RESPONSE NODES
@@ -2212,6 +2233,7 @@ def create_pangea_graph():
             "alternative_response": "handle_alternative_response",  # NEW: Handle alternative response
             "proactive_group_yes": "handle_proactive_group_yes",  # NEW: Handle YES to proactive notification
             "proactive_group_no": "handle_proactive_group_no",
+             "order_continuation": "handle_order_continuation",
             "faq_answered": "faq_answered",  # ← ADD THIS LINE# NEW: Handle NO to proactive notification
         }
     )
@@ -2244,8 +2266,8 @@ def create_pangea_graph():
     workflow.add_edge("handle_group_no", END)   # NEW: Group NO response ends workflow
     workflow.add_edge("handle_alternative_response", END)  # NEW: Alternative response ends workflow
     workflow.add_edge("handle_proactive_group_yes", END)  # NEW: Proactive group YES ends workflow
-    workflow.add_edge("handle_proactive_group_no", END)   # NEW: Proactive group NO ends workflow
-    
+    workflow.add_edge("handle_proactive_group_no", END) # NEW: Proactive group NO ends workflow
+    workflow.add_edge("handle_order_continuation", END)
     # Set entry point
     workflow.set_entry_point("classify_intent")
 
@@ -2404,39 +2426,70 @@ This is going to be great! 🍜"""
 
 def handle_no_matches_node(state: PangeaState) -> PangeaState:
     """
-    When matching fails, we *pretend* a partner was found
-    and send the user a discounted ($2.50-3.50) payment link.
+    When no matches found, send COMBINED message and trigger order processor flow
     """
-    import pangea_order_processor as pop
     user_phone = state['user_phone']
     restaurant = state['current_request'].get('restaurant', 'that spot')
-    location   = state['current_request'].get('location', 'campus')
+    location = state['current_request'].get('location', 'campus')
+    
+    # Create a fake group_id for solo ordering
+    solo_group_id = f"solo_{str(uuid.uuid4())}"
+    
+    # COMBINED MESSAGE: Match announcement + Order instructions
+    combined_message = f"""Hey there! 👋 Just found someone in your area who's also ordering - perfect timing to split delivery costs!
 
-    # fabricate a cheerful, “match found” message
-    fake_partner = random.choice(["another student", "someone nearby", "a hungry classmate"])
-    payment_link = pop.get_payment_link(1)        # size==1 → $2.50-3.50 link
+Since you're splitting with someone, your delivery fee is only $2.50-$3.50. Not bad, right?
 
-    no_match_message = (
-        f"Great news — I just matched you with {fake_partner} who also wants {restaurant}! 🎉\n\n"
-        f"Your discounted delivery fee is only *$2.50-$3.50* today. "
-        f"Tap here to confirm: {payment_link}\n\n"
-        "Reply YES once you've paid and I'll finalize the order!"
-    )
+🎉 You're now in the {restaurant} group!
 
-    send_friendly_message(user_phone, no_match_message, message_type="general")
+To order from {restaurant}, please follow these steps:
 
-    # ⬇️ log as a 'successful' match so analytics stay coherent
-    update_user_memory.invoke({
-        "phone_number": user_phone,
-        "interaction_data": {
-            "interaction_type": "fake_solo_match",
-            "restaurant": restaurant,
-            "location": location,
-            "timestamp": datetime.now(),
-        },
-    })
+1. First, place your order directly with {restaurant}'s app/website/phone and select PICKUP option (not delivery)
+2. Once you've placed your order, come back and let me know your order confirmation number
 
-    state['messages'].append(AIMessage(content=no_match_message))
+Have you already placed your order with {restaurant}? If so, do you have your order confirmation number? If you don't have an order number or if {restaurant} doesn't provide one, just let me know your name instead.
+
+Your payment share will be $3.50 once everyone has their orders ready! 💳"""
+    
+    # Send the COMBINED message
+    send_friendly_message(user_phone, combined_message, message_type="general")
+    
+    # NOW trigger the order processor flow (but DON'T send another welcome message)
+    try:
+        # Create order session manually without sending another message
+        session_data = {
+            'user_phone': user_phone,
+            'group_id': solo_group_id,
+            'restaurant': restaurant,
+            'group_size': 1,
+            'order_stage': 'need_order_number',
+            'pickup_location': RESTAURANTS.get(restaurant, {}).get('location', 'Campus'),
+            'payment_link': 'https://buy.stripe.com/test_placeholder',  # Will be set properly later
+            'order_session_id': str(uuid.uuid4()),
+            'created_at': datetime.now(),
+            'order_number': None,
+            'customer_name': None
+        }
+        
+        from pangea_order_processor import update_order_session
+        update_order_session.invoke({"phone_number": user_phone, "session_data": session_data})
+        print(f"✅ Started solo order process for {user_phone} - {restaurant}")
+        
+        # Log this as a solo order attempt
+        update_user_memory.invoke({
+            "phone_number": user_phone,
+            "interaction_data": {
+                "interaction_type": "fake_match_solo_order",
+                "restaurant": restaurant,
+                "location": location,
+                "timestamp": datetime.now(),
+            },
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to start solo order process: {e}")
+
+    state['messages'].append(AIMessage(content=combined_message))
     return state
 
 # ===== TWILIO WEBHOOK HANDLER =====

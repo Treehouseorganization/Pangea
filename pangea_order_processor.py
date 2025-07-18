@@ -242,14 +242,18 @@ def collect_order_number_node(state: OrderState) -> OrderState:
         print(f"🔍 Trying to parse: '{response_text}'")
         extracted_data = json.loads(response_text)
         
+        # ✅ FIXED: Use extracted_data instead of undefined 'name' variable
         if extracted_data.get("type") == "order_number":
             session['order_number'] = extracted_data.get("value")
             session['order_stage'] = 'ready_to_pay'
             identifier = f"order #{extracted_data.get('value')}"
+            identifier_for_message = f"order number: {extracted_data.get('value')}"
         elif extracted_data.get("type") == "customer_name":
             session['customer_name'] = extracted_data.get("value")
             session['order_stage'] = 'ready_to_pay'
-            identifier = f"name: {extracted_data.get('value')}"
+            name = extracted_data.get("value")  # ✅ FIXED: Define 'name' variable
+            identifier = f"name: {name}"
+            identifier_for_message = f"name: {name}"
         else:
             # Couldn't extract valid info
             message = f"""I couldn't find an order number or name in that message. 
@@ -261,10 +265,6 @@ Please provide either:
 This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
             
             send_friendly_message(user_phone, message, message_type="order_update")
-            
-            # 🚚 CRITICAL: Check if group is complete and trigger delivery
-            check_group_completion_and_trigger_delivery(user_phone)
-            
             state['messages'].append(AIMessage(content=message))
             return state
         
@@ -273,7 +273,8 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
         
         payment_amount = get_payment_amount(session.get('group_size', 2))
         
-        message = f"""Perfect! I've got your name: {name} for {session.get('restaurant')}! ✅
+        # ✅ FIXED: Use identifier_for_message which is always defined
+        message = f"""Perfect! I've got your {identifier_for_message} for {session.get('restaurant')}! ✅
 
 Your payment share: {payment_amount}
 Pickup location: {session.get('pickup_location')}
@@ -283,8 +284,8 @@ When you're ready to pay, just text:
 
 I'll send you the payment link! 💳"""
         
-        # 🚚 ADD THIS LINE HERE:
-        check_group_completion_and_trigger_delivery(user_phone)
+        send_friendly_message(user_phone, message, message_type="order_update")
+        
         
     except (json.JSONDecodeError, ValueError) as e:
         print(f"JSON parsing error: {e}")
@@ -345,10 +346,7 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
 Try something like "Order #123" or "My name is John"."""
     
     send_friendly_message(user_phone, message, message_type="order_update")
-    
-    # 🚚 CRITICAL: Check if group is complete and trigger delivery
     check_group_completion_and_trigger_delivery(user_phone)
-    
     state['messages'].append(AIMessage(content=message))
     return state
 
@@ -451,7 +449,6 @@ def handle_payment_request_node(state: OrderState) -> OrderState:
     message = f"""💳 Payment for {restaurant}
 
 Your share: {payment_amount}
-Group size: {group_size} people
 
 Click here to pay:
 {payment_link}
@@ -623,17 +620,17 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         members_with_orders = []
         
         for session_data in group_sessions:
-            user_phone = session_data.get('user_phone')
+            user_phone_session = session_data.get('user_phone')
             order_number = session_data.get('order_number')
             customer_name = session_data.get('customer_name')
             order_stage = session_data.get('order_stage')
             
-            print(f"  📱 {user_phone}: stage={order_stage}, order_num={order_number}, name={customer_name}")
+            print(f"  📱 {user_phone_session}: stage={order_stage}, order_num={order_number}, name={customer_name}")
             
             # Check if this member has provided order details
             if order_number or customer_name:
                 members_with_orders.append({
-                    'user_phone': user_phone,
+                    'user_phone': user_phone_session,
                     'order_number': order_number,
                     'customer_name': customer_name,
                     'session_data': session_data
@@ -641,8 +638,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         
         print(f"✅ {len(members_with_orders)} members have order details")
         
-        # Trigger delivery ONLY if ALL members have provided order details
-        if len(members_with_orders) == total_members and len(members_with_orders) >= 2:
+        # ✅ FIXED: Trigger delivery if ALL members have order details (including solo orders)
+        if len(members_with_orders) == total_members and len(members_with_orders) >= 1:
             print(f"🚚 ALL GROUP MEMBERS READY! Triggering delivery for group {group_id}")
             
             # Build group data with individual order details
