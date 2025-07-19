@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Union
 from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
+import re
+import pytz
 
 # Firebase imports
 import firebase_admin
@@ -61,6 +63,101 @@ class UberDeliveryConfig:
             raise ValueError("UBER_CUSTOMER_ID environment variable is required")
         
         print(f"✅ Uber Direct configured with Customer ID: {self.customer_id[:8]}...")
+
+def parse_delivery_time(time_str: str) -> datetime:
+    """
+    Parse user time preferences into datetime objects for Uber Direct scheduling
+    
+    Args:
+        time_str: User's time preference like "3pm", "5:30pm", "now", "lunch", etc.
+        
+    Returns:
+        datetime object for the scheduled delivery time
+    """
+    now = datetime.now()
+    
+    # Handle immediate delivery
+    if time_str.lower() in ['now', 'asap', 'immediately']:
+        return now + timedelta(minutes=25)  # 25 minutes from now (minimum prep time)
+    
+    # Handle meal periods
+    meal_times = {
+        'breakfast': 9,  # 9am
+        'lunch': 12,     # 12pm
+        'dinner': 18,    # 6pm
+        'late night': 21 # 9pm
+    }
+    
+    for meal, hour in meal_times.items():
+        if meal in time_str.lower():
+            target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            # If the time has passed today, schedule for tomorrow
+            if target_time <= now:
+                target_time += timedelta(days=1)
+            return target_time
+    
+    # Handle specific times like "3pm", "5:30pm", "2:15"
+    time_patterns = [
+        r'(\d{1,2}):(\d{2})\s*(pm|am)',  # 3:30pm, 2:15am
+        r'(\d{1,2})\s*(pm|am)',          # 3pm, 2am
+        r'(\d{1,2}):(\d{2})',            # 15:30, 14:00 (24-hour)
+        r'(\d{1,2})'                     # 3 (assume current period)
+    ]
+    
+    for pattern in time_patterns:
+        match = re.search(pattern, time_str.lower())
+        if match:
+            groups = match.groups()
+            
+            if len(groups) >= 3 and groups[2]:  # has am/pm with minutes (3:30pm)
+                hour = int(groups[0])
+                minute = int(groups[1]) if groups[1] else 0
+                period = groups[2]
+                
+                # Convert to 24-hour format
+                if period == 'pm' and hour != 12:
+                    hour += 12
+                elif period == 'am' and hour == 12:
+                    hour = 0
+                    
+            elif len(groups) == 2 and groups[1] in ['am', 'pm']:  # has am/pm without minutes (2am, 3pm)
+                hour = int(groups[0])
+                minute = 0
+                period = groups[1]
+                
+                # Convert to 24-hour format
+                if period == 'pm' and hour != 12:
+                    hour += 12
+                elif period == 'am' and hour == 12:
+                    hour = 0
+                    
+            elif len(groups) == 2 and groups[1] and ':' in time_str:  # 24-hour format
+                hour = int(groups[0])
+                minute = int(groups[1])
+                
+            else:  # just hour number
+                hour = int(groups[0])
+                minute = 0
+                
+                # Smart defaults: if hour is 1-7, assume PM; if 8-12, assume current period
+                if hour <= 7:
+                    hour += 12  # assume PM
+                elif hour >= 8 and hour <= 12:
+                    # keep as is for now, but check if it's passed
+                    pass
+            
+            # Create target time
+            target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # If the time has passed today, schedule for tomorrow
+            if target_time <= now:
+                target_time += timedelta(days=1)
+                
+            return target_time
+    
+    # Default fallback: 30 minutes from now
+    print(f"⚠️ Could not parse time '{time_str}', defaulting to 30 minutes from now")
+    return now + timedelta(minutes=30)
 
 class UberDirectClient:
     """Uber Direct API client for Pangea food delivery"""
@@ -350,21 +447,36 @@ class UberDirectClient:
         pickup_address = self._get_restaurant_address_string(restaurant)
         dropoff_address = self._get_dropoff_address_string(dropoff_location)
         
-        # ✅ FIX: Set pickup time to at least 25 minutes in the future in UTC
+        # ✅ FIX: Use scheduled delivery time from group data
         import pytz
-        from datetime import datetime, timedelta
         
-        # Get current UTC time
-        utc_now = datetime.now(pytz.UTC)
+        # Get scheduled delivery time from group data
+        delivery_time_str = group_data.get('delivery_time', 'now')
+        scheduled_delivery_time = parse_delivery_time(delivery_time_str)
         
-        # Add 25 minutes to ensure it's well past the 20-minute minimum
-        pickup_ready_time = utc_now + timedelta(minutes=25)
+        # Convert to UTC for Uber Direct API
+        if scheduled_delivery_time.tzinfo is None:
+            # Assume local time, convert to UTC
+            local_tz = pytz.timezone('America/Chicago')  # Adjust to your timezone
+            scheduled_delivery_time = local_tz.localize(scheduled_delivery_time)
+        
+        pickup_ready_time = scheduled_delivery_time.astimezone(pytz.UTC)
         
         # Format as ISO 8601 UTC timestamp
         pickup_ready_dt = pickup_ready_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
         
-        print(f"🕐 Current UTC time: {utc_now.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
-        print(f"🕐 Pickup ready time: {pickup_ready_dt}")
+        print(f"🕐 User requested delivery time: {delivery_time_str}")
+        print(f"🕐 Scheduled pickup time (UTC): {pickup_ready_dt}")
+        
+        # Validate that the time is at least 20 minutes in the future
+        utc_now = datetime.now(pytz.UTC)
+        min_delivery_time = utc_now + timedelta(minutes=20)
+        
+        if pickup_ready_time < min_delivery_time:
+            print(f"⚠️ Requested time is too soon, adjusting to minimum 20 minutes from now")
+            pickup_ready_time = min_delivery_time
+            pickup_ready_dt = pickup_ready_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+            print(f"🕐 Adjusted pickup time (UTC): {pickup_ready_dt}")
         
         payload = {
             "quote_id": quote_id,
@@ -483,6 +595,17 @@ class UberDirectClient:
     def _notify_group_about_delivery(self, group_data: Dict, delivery_data: Dict):
         """Notify all group members about delivery status"""
         
+        # Check if this is a scheduled delivery that hasn't started yet
+        delivery_time_str = group_data.get('delivery_time', 'now')
+        if delivery_time_str != 'now':
+            scheduled_time = parse_delivery_time(delivery_time_str)
+            current_time = datetime.now()
+            
+            # If delivery is scheduled for the future, don't send immediate notifications
+            if scheduled_time > current_time + timedelta(minutes=10):
+                print(f"🕐 Suppressing immediate delivery notification for scheduled delivery at {scheduled_time.strftime('%I:%M %p')}")
+                return
+        
         restaurant = group_data.get('restaurant', 'your restaurant')
         location = group_data.get('location', 'your location')
         tracking_url = delivery_data.get('tracking_url', '')
@@ -596,6 +719,19 @@ The driver will meet you at the delivery location. I'll send updates as your ord
         """Send status updates to group members"""
         
         restaurant = group_data.get('restaurant', 'your restaurant')
+        
+        # Check if this is a scheduled delivery that hasn't started yet
+        delivery_time_str = group_data.get('delivery_time', 'now')
+        if delivery_time_str != 'now':
+            scheduled_time = parse_delivery_time(delivery_time_str)
+            current_time = datetime.now()
+            
+            # If delivery is scheduled for the future, suppress early status updates
+            if scheduled_time > current_time + timedelta(minutes=10):
+                early_statuses = ['pending', 'pickup', 'pickup_complete']
+                if status in early_statuses:
+                    print(f"🕐 Suppressing early status update '{status}' for scheduled delivery at {scheduled_time.strftime('%I:%M %p')}")
+                    return
         
         status_messages = {
             'pending': f"📝 Your {restaurant} order is confirmed and being prepared for pickup!",

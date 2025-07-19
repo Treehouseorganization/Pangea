@@ -1276,6 +1276,7 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     - morning_response: Response to "where will you be today" question  
     - preference_update: User updating their food preferences
     - group_response: Response to a group invitation
+    - general_question: Non-food related questions, greetings, help requests
     
     Return only the classification.
     """
@@ -1283,8 +1284,8 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
     intent = response.content.strip().lower()
     
-    # If no clear intent is found, try FAQ fallback
-    if intent not in ['spontaneous_order', 'morning_response', 'preference_update', 'group_response']:
+    # If it's a general question OR no clear intent is found, try FAQ fallback
+    if intent == 'general_question' or intent not in ['spontaneous_order', 'morning_response', 'preference_update', 'group_response', 'general_question']:
         faq_answer = answer_faq_question(last_message)
         if faq_answer and not faq_answer.lower().startswith("sorry"):
             send_friendly_message(user_phone, faq_answer, message_type="general")
@@ -1714,13 +1715,14 @@ def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
             group_size = proposed_group_size    # <— we already calculated it
             
             # START ORDER PROCESS FOR THIS USER
-            print(f"🚀 DEBUG - Starting order process with restaurant: '{restaurant}'")
-            start_order_process(user_phone, group_id, restaurant, group_size)
+            delivery_time = proposal.get('time', 'now')
+            print(f"🚀 DEBUG - Starting order process with restaurant: '{restaurant}', delivery time: '{delivery_time}'")
+            start_order_process(user_phone, group_id, restaurant, group_size, delivery_time)
             
             # also kick off for requester if not started
             requesting_user_session = db.collection('order_sessions').document(requesting_user).get()
             if not requesting_user_session.exists:
-                start_order_process(requesting_user, group_id, restaurant, group_size)
+                start_order_process(requesting_user, group_id, restaurant, group_size, delivery_time)
             
             print(f"✅ Group accepted and order process started: {negotiation_data['negotiation_id']}")
         
@@ -1880,18 +1882,19 @@ def handle_proactive_group_yes_node(state: PangeaState) -> PangeaState:
         # Get group details from the notification
         group_id = proactive_data.get('group_id', '')
         restaurant = proactive_data.get('restaurant', '')
+        delivery_time = proactive_data.get('time', 'now')
         
         # Calculate new group size (this would be more sophisticated in real implementation)
         # For now, assume group size is 3 (original + this user)
         new_group_size = 3
         
         # Start order process directly - skip negotiation since group is already forming
-        print(f"🚀 User {user_phone} accepted proactive invitation for {restaurant}")
+        print(f"🚀 User {user_phone} accepted proactive invitation for {restaurant} at {delivery_time}")
         
         # Import and call the order processor
         from pangea_order_processor import start_order_process
         
-        start_order_process(user_phone, group_id, restaurant, new_group_size)
+        start_order_process(user_phone, group_id, restaurant, new_group_size, delivery_time)
         
         # Send confirmation message
         confirmation_message = f"Awesome! 🎉 You're now part of the {restaurant} group! Check your messages for order instructions."
@@ -2356,7 +2359,7 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
     # Start order process for all group members
     for member_phone in all_members:
         try:
-            start_order_process(member_phone, group_id, restaurant, group_size)
+            start_order_process(member_phone, group_id, restaurant, group_size, optimal_time)
             print(f"✅ Started order process for {member_phone}")
         except Exception as e:
             print(f"❌ Failed to start order process for {member_phone}: {e}")
@@ -2436,20 +2439,17 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
     solo_group_id = f"solo_{str(uuid.uuid4())}"
     
     # COMBINED MESSAGE: Match announcement + Order instructions
-    combined_message = f"""Hey there! 👋 Just found someone in your area who's also ordering - perfect timing to split delivery costs!
+    combined_message = f"""Hey! 👋 Great news - found someone nearby who's also craving {restaurant}, so you can split the delivery fee!
 
-Since you're splitting with someone, your delivery fee is only $2.50-$3.50. Not bad, right?
+Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet deal 🙌
 
-🎉 You're now in the {restaurant} group!
+**Quick steps to get your food:**
+1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
+2. Come back here with your confirmation number or name for the order
 
-To order from {restaurant}, please follow these steps:
+Once everyone's ready, your payment will be $3.50 💳
 
-1. First, place your order directly with {restaurant}'s app/website/phone and select PICKUP option (not delivery)
-2. Once you've placed your order, come back and let me know your order confirmation number
-
-Have you already placed your order with {restaurant}? If so, do you have your order confirmation number? If you don't have an order number or if {restaurant} doesn't provide one, just let me know your name instead.
-
-Your payment share will be $3.50 once everyone has their orders ready! 💳"""
+Let me know if you need any help!"""
     
     # Send the COMBINED message
     send_friendly_message(user_phone, combined_message, message_type="general")
@@ -2457,11 +2457,13 @@ Your payment share will be $3.50 once everyone has their orders ready! 💳"""
     # NOW trigger the order processor flow (but DON'T send another welcome message)
     try:
         # Create order session manually without sending another message
+        delivery_time = state['current_request'].get('time_preference', 'now')
         session_data = {
             'user_phone': user_phone,
             'group_id': solo_group_id,
             'restaurant': restaurant,
             'group_size': 1,
+            'delivery_time': delivery_time,
             'order_stage': 'need_order_number',
             'pickup_location': RESTAURANTS.get(restaurant, {}).get('location', 'Campus'),
             'payment_link': 'https://buy.stripe.com/test_placeholder',  # Will be set properly later
@@ -2473,7 +2475,7 @@ Your payment share will be $3.50 once everyone has their orders ready! 💳"""
         
         from pangea_order_processor import update_order_session
         update_order_session.invoke({"phone_number": user_phone, "session_data": session_data})
-        print(f"✅ Started solo order process for {user_phone} - {restaurant}")
+        print(f"✅ Started solo order process for {user_phone} - {restaurant} at {delivery_time}")
         
         # Log this as a solo order attempt
         update_user_memory.invoke({

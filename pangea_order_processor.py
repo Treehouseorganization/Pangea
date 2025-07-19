@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
 import random
+import threading
+import time
 from pangea_locations import RESTAURANTS
 
 # LangGraph imports
@@ -109,7 +111,7 @@ def update_order_session(phone_number: str, session_data: Dict) -> bool:
         print(f"Error updating order session: {e}")
         return False
 
-def start_order_process(user_phone: str, group_id: str, restaurant: str, group_size: int):
+def start_order_process(user_phone: str, group_id: str, restaurant: str, group_size: int, delivery_time: str = 'now'):
     """Called from main system when user joins a group - starts the order process"""
     
     # Create order session
@@ -118,6 +120,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         'group_id': group_id,
         'restaurant': restaurant,
         'group_size': group_size,
+        'delivery_time': delivery_time,
         'order_stage': 'need_order_number',
         'pickup_location': RESTAURANTS.get(restaurant, {}).get('location', 'Campus'),
         'payment_link': get_payment_link(group_size),
@@ -132,16 +135,17 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
     payment_amount = get_payment_amount(group_size)
     
     # Send order instructions
-    welcome_message = f"""🎉 You're now in the {restaurant} group!
+    welcome_message = f"""Hey! 👋 Great news - found someone nearby who's also craving {restaurant}, so you can split the delivery fee!
 
-Great! To order from {restaurant}, please follow these steps:
+Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet deal 🙌
 
-1. First, place your order directly with {restaurant}'s app/website/phone and select PICKUP option (not delivery)
-2. Once you've placed your order, come back and let me know your order confirmation number
+**Quick steps to get your food:**
+1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
+2. Come back here with your confirmation number or name for the order
 
-Have you already placed your order with {restaurant}? If so, do you have your order confirmation number? If you don't have an order number or if {restaurant} doesn't provide one, just let me know your name instead.
+Once everyone's ready, your payment will be {payment_amount} 💳
 
-Your payment share will be {payment_amount} once everyone has their orders ready! 💳"""
+Let me know if you need any help!"""
     
     send_friendly_message(user_phone, welcome_message, message_type="order_start")
     
@@ -285,6 +289,9 @@ When you're ready to pay, just text:
 I'll send you the payment link! 💳"""
         
         send_friendly_message(user_phone, message, message_type="order_update")
+        check_group_completion_and_trigger_delivery(user_phone)  # Trigger delivery check
+        state['messages'].append(AIMessage(content=message))
+        return state  # Exit after successful processing
         
         
     except (json.JSONDecodeError, ValueError) as e:
@@ -456,6 +463,10 @@ Click here to pay:
 After payment, I'll coordinate with your group to place the order! 🍕"""
     
     send_friendly_message(user_phone, message, message_type="payment")
+    
+    # Check if all group members have now paid and trigger delivery if so
+    check_group_completion_and_trigger_delivery(user_phone)
+    
     state['messages'].append(AIMessage(content=message))
     return state
 
@@ -544,40 +555,49 @@ def create_order_graph():
 # ADD these new functions to pangea_order_processor.py (around line 50, before start_order_process)
 
 def is_new_food_request(message: str) -> bool:
-    """Detect if message is a new food request vs order continuation"""
+    """Use Claude Opus 4 to intelligently detect if message is food-related vs general question"""
     
-    message_lower = message.lower().strip()
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.messages import HumanMessage
+    import os
     
-    # Keywords that indicate NEW food requests
-    new_request_indicators = [
-        'i want', 'want to order', 'craving', 'hungry for',
-        'delivered to', 'delivery to', 'order from',
-        'pizza', 'thai', 'sushi', 'burger', 'salad',
-        'mario', 'thai garden', 'sushi express', 'burger barn', 'green bowls'
-    ]
+    # Use same Claude Opus 4 model as main system
+    anthropic_llm = ChatAnthropic(
+        model="claude-opus-4-20250514",
+        api_key=os.getenv('ANTHROPIC_API_KEY'),
+    )
     
-    # Keywords that indicate ORDER continuation
-    order_continuation_indicators = [
-        'my order number', 'order #', 'confirmation',
-        'my name is', 'call me', 'pay', 'payment'
-    ]
+    classification_prompt = f"""
+    Classify this message into one of these categories:
+
+    Message: "{message}"
+
+    Categories:
+    - general_question: Non-food related questions, greetings, general conversation, help requests
+    - new_food_request: User wants to order food, mentions restaurants, craving food
+    - order_continuation: User providing details for existing order (name, payment, order number, contact info, "my name is", "call me")
+
+    Return only the category name.
+    """
     
-    # Check for new request indicators
-    has_new_request = any(indicator in message_lower for indicator in new_request_indicators)
-    
-    # Check for order continuation indicators  
-    has_order_continuation = any(indicator in message_lower for indicator in order_continuation_indicators)
-    
-    # If it has new request indicators and no clear order continuation, it's a new request
-    if has_new_request and not has_order_continuation:
-        return True
+    try:
+        response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
+        classification = response.content.strip().lower()
         
-    # If message mentions specific restaurants or delivery, it's likely new
-    restaurants = ['chipotle', 'mcdonalds', 'chickfila', 'portillos', 'starbucks']
-    if any(restaurant in message_lower for restaurant in restaurants):
-        return True
-        
-    return False
+        # If it's a general question, treat as "new request" to bypass order processor
+        if classification == "general_question":
+            return True
+        elif classification == "new_food_request":
+            return True
+        else:  # order_continuation
+            return False
+            
+    except Exception as e:
+        print(f"Error in message classification: {e}")
+        # Fallback to simple keyword detection
+        message_lower = message.lower().strip()
+        order_keywords = ['my order number', 'order #', 'pay', 'payment', 'my name is']
+        return not any(keyword in message_lower for keyword in order_keywords)
 
 def clear_old_order_session(phone_number: str):
     """Clear user's old order session"""
@@ -588,9 +608,89 @@ def clear_old_order_session(phone_number: str):
         print(f"❌ Failed to clear order session: {e}")
 
 
+def schedule_delayed_delivery_notifications(group_data: Dict, delivery_result: Dict):
+    """
+    Schedule 50-second delayed delivery notifications for each user individually
+    """
+    def send_delayed_notification(user_phone: str, delivery_info: Dict):
+        # Wait 50 seconds
+        time.sleep(50)
+        
+        restaurant = group_data.get('restaurant', 'your restaurant')
+        tracking_url = delivery_info.get('tracking_url', '')
+        delivery_id = delivery_info.get('delivery_id', 'N/A')
+        
+        message = f"""🚚 Your {restaurant} delivery is on the way!
+
+📱 Track your order: {tracking_url}
+📦 Delivery ID: {delivery_id}
+
+Your driver will contact you when they arrive! 🎉"""
+        
+        try:
+            send_friendly_message(user_phone, message, message_type="delivery_notification")
+            print(f"✅ Sent delayed delivery notification to {user_phone}")
+        except Exception as e:
+            print(f"❌ Failed to send delayed notification to {user_phone}: {e}")
+    
+    # Start individual delayed notification threads for each user
+    for user_phone in group_data.get('members', []):
+        thread = threading.Thread(
+            target=send_delayed_notification,
+            args=(user_phone, delivery_result)
+        )
+        thread.daemon = True  # Don't block program exit
+        thread.start()
+        print(f"⏰ Scheduled 50s delayed notification for {user_phone}")
+
+
+def schedule_delayed_triggered_notifications(group_data: Dict, delivery_result: Dict):
+    """
+    Schedule 50-second delayed DELIVERY TRIGGERED notifications for scheduled deliveries
+    """
+    def send_delayed_triggered_notification(user_phone: str, group_info: Dict, delivery_info: Dict):
+        # Wait 50 seconds
+        time.sleep(50)
+        
+        restaurant = group_info.get('restaurant')
+        location = group_info.get('location')
+        tracking_url = delivery_info.get('tracking_url', '')
+        delivery_id = delivery_info.get('delivery_id', '')
+        
+        message = f"""🚚 DELIVERY TRIGGERED! 🎉
+
+Your {restaurant} group order is now being processed!
+
+📍 Pickup: {restaurant}
+📍 Dropoff: {location}
+🆔 Delivery ID: {delivery_id[:8]}...
+
+The driver will pick up all individual orders and deliver them to {location}. 
+
+📱 Track delivery: {tracking_url}
+
+I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
+        
+        try:
+            send_friendly_message(user_phone, message, message_type="delivery_triggered")
+            print(f"✅ Sent delayed triggered notification to {user_phone}")
+        except Exception as e:
+            print(f"❌ Failed to send delayed triggered notification to {user_phone}: {e}")
+    
+    # Start background thread for each user
+    for user_phone in group_data.get('members', []):
+        thread = threading.Thread(
+            target=send_delayed_triggered_notification,
+            args=(user_phone, group_data, delivery_result)
+        )
+        thread.daemon = True  # Don't block program exit
+        thread.start()
+        print(f"⏰ Scheduled 50s delayed triggered notification for {user_phone}")
+
+
 def check_group_completion_and_trigger_delivery(user_phone: str):
     """
-    Check if all group members have provided their order details,
+    Check if all group members have paid (texted PAY),
     and if so, trigger the Uber Direct delivery
     """
     
@@ -616,37 +716,37 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         
         print(f"📊 Group {group_id}: {total_members} total members")
         
-        # Check if ALL members have provided order details
-        members_with_orders = []
+        # Check if ALL members have paid (texted PAY)
+        members_who_paid = []
         
         for session_data in group_sessions:
             user_phone_session = session_data.get('user_phone')
-            order_number = session_data.get('order_number')
-            customer_name = session_data.get('customer_name')
             order_stage = session_data.get('order_stage')
+            payment_requested_at = session_data.get('payment_requested_at')
             
-            print(f"  📱 {user_phone_session}: stage={order_stage}, order_num={order_number}, name={customer_name}")
+            print(f"  📱 {user_phone_session}: stage={order_stage}, paid={payment_requested_at is not None}")
             
-            # Check if this member has provided order details
-            if order_number or customer_name:
-                members_with_orders.append({
+            # Check if this member has paid (payment_requested_at exists)
+            if payment_requested_at:
+                members_who_paid.append({
                     'user_phone': user_phone_session,
-                    'order_number': order_number,
-                    'customer_name': customer_name,
+                    'order_number': session_data.get('order_number'),
+                    'customer_name': session_data.get('customer_name'),
                     'session_data': session_data
                 })
         
-        print(f"✅ {len(members_with_orders)} members have order details")
+        print(f"✅ {len(members_who_paid)} members have paid")
         
-        # ✅ FIXED: Trigger delivery if ALL members have order details (including solo orders)
-        if len(members_with_orders) == total_members and len(members_with_orders) >= 1:
-            print(f"🚚 ALL GROUP MEMBERS READY! Triggering delivery for group {group_id}")
+        # ✅ Trigger delivery if ALL members have paid
+        if len(members_who_paid) == total_members and len(members_who_paid) >= 1:
+            print(f"🚚 ALL GROUP MEMBERS PAID! Triggering delivery for group {group_id}")
             
             # Build group data with individual order details
             group_data = {
                 'restaurant': session.get('restaurant'),
                 'location': session.get('pickup_location'),
-                'members': [member['user_phone'] for member in members_with_orders],
+                'delivery_time': session.get('delivery_time', 'now'),
+                'members': [member['user_phone'] for member in members_who_paid],
                 'group_id': group_id,
                 'order_details': [
                     {
@@ -654,11 +754,11 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                         'order_number': member['order_number'],
                         'customer_name': member['customer_name']
                     }
-                    for member in members_with_orders
+                    for member in members_who_paid
                 ]
             }
             
-            # Import and trigger delivery
+            # Import and trigger delivery IMMEDIATELY
             try:
                 from pangea_uber_direct import create_group_delivery
                 delivery_result = create_group_delivery(group_data)
@@ -666,11 +766,17 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 if delivery_result.get('success'):
                     print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
                     
-                    # Notify all group members about delivery
-                    notify_group_about_delivery_creation(group_data, delivery_result)
+                    # Check delivery type and send appropriate 50-second delayed notification
+                    delivery_time = group_data.get('delivery_time', 'now')
+                    if delivery_time == 'now':
+                        # Immediate delivery: send 2nd message after 50 seconds
+                        schedule_delayed_delivery_notifications(group_data, delivery_result)
+                    else:
+                        # Scheduled delivery: send 1st message after 50 seconds
+                        schedule_delayed_triggered_notifications(group_data, delivery_result)
                     
                     # Update all sessions to mark delivery as triggered
-                    for member in members_with_orders:
+                    for member in members_who_paid:
                         member_session = member['session_data']
                         member_session['delivery_triggered'] = True
                         member_session['delivery_id'] = delivery_result.get('delivery_id')
@@ -690,8 +796,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 print(f"❌ Delivery creation error: {e}")
         
         else:
-            missing_count = total_members - len(members_with_orders)
-            print(f"⏳ Waiting for {missing_count} more members to provide order details")
+            missing_count = total_members - len(members_who_paid)
+            print(f"⏳ Waiting for {missing_count} more members to pay")
             
     except Exception as e:
         print(f"❌ Error checking group completion: {e}")
