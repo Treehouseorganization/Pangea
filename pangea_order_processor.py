@@ -88,7 +88,7 @@ def get_payment_amount(size: int) -> str:
     else:   # size == 1 (our 'fake match')
         return random.choice(["$2.50", "$3.50"])
 
-@tool
+
 def get_user_order_session(phone_number: str) -> Dict:
     """Get user's current order session"""
     try:
@@ -100,7 +100,7 @@ def get_user_order_session(phone_number: str) -> Dict:
         print(f"Error getting order session: {e}")
         return {}
 
-@tool
+
 def update_order_session(phone_number: str, session_data: Dict) -> bool:
     """Update user's order session"""
     try:
@@ -122,7 +122,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         'group_size': group_size,
         'delivery_time': delivery_time,
         'order_stage': 'need_order_number',
-        'pickup_location': RESTAURANTS.get(restaurant, {}).get('location', 'Campus'),
+        'pickup_location': RESTAURANTS.get(restaurant, {}).get('address', 'Campus'),
         'payment_link': get_payment_link(group_size),
         'order_session_id': str(uuid.uuid4()),
         'created_at': datetime.now(),
@@ -130,16 +130,12 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         'customer_name': None
     }
     
-    update_order_session.invoke({"phone_number": user_phone, "session_data": session_data})
+    update_order_session(user_phone, session_data)
     
     payment_amount = get_payment_amount(group_size)
     
     # Send order instructions
-    welcome_message = f"""Hey! 👋 Great news - found someone nearby who's also craving {restaurant}, so you can split the delivery fee!
-
-Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet deal 🙌
-
-**Quick steps to get your food:**
+    welcome_message = f"""**Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
 2. Come back here with your confirmation number or name for the order
 
@@ -163,7 +159,7 @@ def classify_order_intent_node(state: OrderState) -> OrderState:
     user_phone = state['user_phone']
     
     # Get current order session
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     
     if not session:
         state['order_stage'] = "no_session"
@@ -195,7 +191,7 @@ def collect_order_number_node(state: OrderState) -> OrderState:
     
     user_phone = state['user_phone']
     user_message = state['messages'][-1].content.strip()
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     
     # Use Claude to extract order number or name
     extraction_prompt = f"""
@@ -273,7 +269,7 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
             return state
         
         # Successfully got order info
-        update_order_session.invoke({"phone_number": user_phone, "session_data": session})
+        update_order_session(user_phone, session)
         
         payment_amount = get_payment_amount(session.get('group_size', 2))
         
@@ -319,7 +315,7 @@ I'll send you the payment link! 💳"""
             if name and len(name) < 50:  # Reasonable name length
                 session['customer_name'] = name
                 session['order_stage'] = 'ready_to_pay'
-                update_order_session.invoke({"phone_number": user_phone, "session_data": session})
+                update_order_session(user_phone, session)
                 payment_amount = get_payment_amount(session.get('group_size', 2))
                 
                 message = f"""Perfect! I've got your name: {name} for {session.get('restaurant')}! ✅
@@ -361,7 +357,7 @@ def handle_need_order_first_node(state: OrderState) -> OrderState:
     """Handle when user tries to pay without providing order number"""
     
     user_phone = state['user_phone']
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     restaurant = session.get('restaurant', 'the restaurant')
     
     message = f"""Hold on! I need your order information first before you can pay.
@@ -380,7 +376,7 @@ def handle_redirect_to_payment_node(state: OrderState) -> OrderState:
     """Redirect user back to payment flow"""
     
     user_phone = state['user_phone']
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     
     payment_amount = get_payment_amount(session.get('group_size', 2))
     restaurant = session.get('restaurant', 'your group')
@@ -411,11 +407,11 @@ def handle_order_confirmation_node(state: OrderState) -> OrderState:
     """Handle order confirmation"""
     
     user_phone = state['user_phone']
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     
     # Order is confirmed, move to payment stage
     session['order_stage'] = 'ready_to_pay'
-    update_order_session.invoke({"phone_number": user_phone, "session_data": session})
+    update_order_session(user_phone, session)
     
     payment_amount = get_payment_amount(session.get('group_size', 2))
     
@@ -436,7 +432,7 @@ def handle_payment_request_node(state: OrderState) -> OrderState:
     """Handle payment request when user texts PAY"""
     
     user_phone = state['user_phone']
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     
     if not session:
         message = "You don't have an active group to pay for. Please join a group first!"
@@ -451,7 +447,7 @@ def handle_payment_request_node(state: OrderState) -> OrderState:
     # Mark as payment initiated
     session['order_stage'] = 'payment_initiated'
     session['payment_requested_at'] = datetime.now()
-    update_order_session.invoke({"phone_number": user_phone, "session_data": session})
+    update_order_session(user_phone, session)
     
     message = f"""💳 Payment for {restaurant}
 
@@ -474,7 +470,7 @@ def handle_clarification_node(state: OrderState) -> OrderState:
     """Handle cases where user input needs clarification"""
     
     user_phone = state['user_phone']
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     restaurant = session.get('restaurant', '')
     
     message = f"""I want to make sure I get your order right! 
@@ -695,7 +691,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
     """
     
     # Get this user's session to find their group
-    session = get_user_order_session.invoke({"phone_number": user_phone})
+    session = get_user_order_session(user_phone)
     if not session:
         return
     
@@ -782,10 +778,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                         member_session['delivery_id'] = delivery_result.get('delivery_id')
                         member_session['tracking_url'] = delivery_result.get('tracking_url')
                         
-                        update_order_session.invoke({
-                            "phone_number": member['user_phone'],
-                            "session_data": member_session
-                        })
+                        update_order_session(member['user_phone'], member_session)
                 
                 else:
                     print(f"❌ Delivery creation failed: {delivery_result}")
@@ -846,7 +839,7 @@ def process_order_message(phone_number: str, message_body: str):
         return None
     
     # Check if user has an active order session
-    session = get_user_order_session.invoke({"phone_number": phone_number})
+    session = get_user_order_session(phone_number)
     
     if not session:
         # No active session - this message should go to main system
