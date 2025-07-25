@@ -72,6 +72,7 @@ class OrderState(TypedDict):
     order_session_id: str
     order_number: Optional[str]
     customer_name: Optional[str]
+    order_description: Optional[str]
 
 def get_payment_link(size: int) -> str:
     """Return a Stripe URL for the given group size (1-3)."""
@@ -138,7 +139,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
     # Send order instructions
     welcome_message = f"""**Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be {payment_amount} 💳
 
@@ -194,26 +195,26 @@ def collect_order_number_node(state: OrderState) -> OrderState:
     user_message = state['messages'][-1].content.strip()
     session = get_user_order_session(user_phone)
     
-    # Use Claude to extract order number or name
+    # Use Claude to extract order number, name, and what they ordered
     extraction_prompt = f"""
-    The user is providing their order confirmation number or name for pickup.
+    The user is providing their order confirmation number, name for pickup, and what they ordered.
     
     User message: "{user_message}"
     
-    Extract either:
-    1. An order confirmation number/ID (letters, numbers, or combination)
-    2. A customer name if no order number is provided
+    Extract:
+    1. Order confirmation number/ID (if available)
+    2. Customer name (if available)
+    3. What they ordered (food items)
     
     Return JSON with:
-    - "type": "order_number" or "customer_name"
-    - "value": the extracted value
+    - "order_number": confirmation number or null
+    - "customer_name": name or null
+    - "order_description": what they ordered or null
     
     Examples:
-    - "My order number is ABC123" → {{"type": "order_number", "value": "ABC123"}}
-    - "Order #4567" → {{"type": "order_number", "value": "4567"}}
-    - "Just use my name John Smith" → {{"type": "customer_name", "value": "John Smith"}}
-    - "My name is Maria" → {{"type": "customer_name", "value": "Maria"}}
-    - "I don't have an order number, use Sarah" → {{"type": "customer_name", "value": "Sarah"}}
+    - "My order number is ABC123, I got a Big Mac meal" → {{"order_number": "ABC123", "customer_name": null, "order_description": "Big Mac meal"}}
+    - "Order #4567, name is John, I ordered chicken nuggets" → {{"order_number": "4567", "customer_name": "John", "order_description": "chicken nuggets"}}
+    - "Just use my name Maria, I got a quarter pounder" → {{"order_number": null, "customer_name": "Maria", "order_description": "quarter pounder"}}
     
     IMPORTANT: Return ONLY valid JSON, no other text.
     """
@@ -243,25 +244,33 @@ def collect_order_number_node(state: OrderState) -> OrderState:
         print(f"🔍 Trying to parse: '{response_text}'")
         extracted_data = json.loads(response_text)
         
-        # ✅ FIXED: Use extracted_data instead of undefined 'name' variable
-        if extracted_data.get("type") == "order_number":
-            session['order_number'] = extracted_data.get("value")
-            session['order_stage'] = 'ready_to_pay'
-            identifier = f"order #{extracted_data.get('value')}"
-            identifier_for_message = f"order number: {extracted_data.get('value')}"
-        elif extracted_data.get("type") == "customer_name":
-            session['customer_name'] = extracted_data.get("value")
-            session['order_stage'] = 'ready_to_pay'
-            name = extracted_data.get("value")  # ✅ FIXED: Define 'name' variable
-            identifier = f"name: {name}"
+        # Store extracted information
+        order_number = extracted_data.get("order_number")
+        customer_name = extracted_data.get("customer_name")
+        order_description = extracted_data.get("order_description")
+        
+        if order_number:
+            session['order_number'] = order_number
+            identifier_for_message = f"order number: {order_number}"
+        elif customer_name:
+            session['customer_name'] = customer_name
+            name = customer_name
             identifier_for_message = f"name: {name}"
+        
+        # Store order description if provided
+        if order_description:
+            session['order_description'] = order_description
+            
+        if order_number or customer_name:
+            session['order_stage'] = 'ready_to_pay'
         else:
             # Couldn't extract valid info
             message = f"""I couldn't find an order number or name in that message. 
 
-Please provide either:
+Please provide:
 • Your order confirmation number (like "ABC123" or "#4567")
 • Your name if there's no order number (like "John Smith")
+• What you ordered (like "Big Mac meal")
 
 This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
             
@@ -793,7 +802,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                     {
                         'user_phone': member['user_phone'],
                         'order_number': member['order_number'],
-                        'customer_name': member['customer_name']
+                        'customer_name': member['customer_name'],
+                        'order_description': member['session_data'].get('order_description')
                     }
                     for member in members_who_paid
                 ]

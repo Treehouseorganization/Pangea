@@ -1118,7 +1118,7 @@ No worries - you can still get your {restaurant} order. Here's how:
 
 **Quick steps:**
 1. Order directly from {restaurant} (app/website/phone) - choose PICKUP
-2. Come back with your confirmation number
+2. Come back with your confirmation number AND what you ordered
 3. Pay your share: $3.50 💳
 
 Let me know when you've placed your order!"""
@@ -1138,7 +1138,7 @@ Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet dea
 
 **Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be $3.50 💳
 
@@ -2362,7 +2362,7 @@ def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
 
 **Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be {payment_amount} 💳
 
@@ -2616,7 +2616,7 @@ def handle_proactive_group_yes_node(state: PangeaState) -> PangeaState:
             # Send order instructions
             welcome_message = f"""**Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be {payment_amount} 💳
 
@@ -3223,7 +3223,7 @@ def finalize_group_node(state: PangeaState) -> PangeaState:
             # Send order instructions
             welcome_message = f"""**Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be {payment_amount} 💳
 
@@ -3321,7 +3321,7 @@ Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet dea
 
 **Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order
+2. Come back here with your confirmation number or name for the order AND what you ordered
 
 Once everyone's ready, your payment will be $3.50 💳
 

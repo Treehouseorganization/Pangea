@@ -413,12 +413,20 @@ class UberDirectClient:
         for i, order_detail in enumerate(order_details):
             order_number = order_detail.get('order_number', '')
             customer_name = order_detail.get('customer_name', '')
+            order_description = order_detail.get('order_description', '')
+            
+            line = f"{i+1}. "
             if order_number:
-                pickup_notes += f"{i+1}. Order #{order_number}\n"
+                line += f"Order #{order_number}"
             elif customer_name:
-                pickup_notes += f"{i+1}. Name: {customer_name}\n"
+                line += f"Name: {customer_name}"
             else:
-                pickup_notes += f"{i+1}. Student order\n"
+                line += "Student order"
+            
+            if order_description:
+                line += f" - {order_description}"
+            
+            pickup_notes += line + "\n"
         pickup_notes += f"\nTotal: {len(group_members)} orders to pick up"
         
         # Build manifest items for each individual order
@@ -426,12 +434,18 @@ class UberDirectClient:
         for i, order_detail in enumerate(order_details):
             order_number = order_detail.get('order_number', '')
             customer_name = order_detail.get('customer_name', '')
+            order_description = order_detail.get('order_description', '')
+            
             if order_number:
                 item_name = f"Order #{order_number}"
             elif customer_name:
                 item_name = f"{customer_name}'s Order"
             else:
                 item_name = f"Student Order {i+1}"
+            
+            if order_description:
+                item_name += f" - {order_description}"
+            
             manifest_items.append({
                 "name": item_name,
                 "quantity": 1,
