@@ -399,8 +399,7 @@ class UberDirectClient:
         return dropoff_addresses.get(dropoff_location, dropoff_addresses["Student Union"])
 
     def _build_delivery_payload(self, group_data: Dict, quote_id: str) -> Dict:
-        """Build the delivery request payload with correct structure"""
-        
+        """Build the delivery request payload with correct structure and FIXED timezone handling"""
         restaurant = group_data.get('restaurant', 'Unknown Restaurant')
         dropoff_location = group_data.get('location', 'Student Union')
         group_members = group_data.get('members', [])
@@ -414,14 +413,12 @@ class UberDirectClient:
         for i, order_detail in enumerate(order_details):
             order_number = order_detail.get('order_number', '')
             customer_name = order_detail.get('customer_name', '')
-            
             if order_number:
                 pickup_notes += f"{i+1}. Order #{order_number}\n"
             elif customer_name:
                 pickup_notes += f"{i+1}. Name: {customer_name}\n"
             else:
                 pickup_notes += f"{i+1}. Student order\n"
-        
         pickup_notes += f"\nTotal: {len(group_members)} orders to pick up"
         
         # Build manifest items for each individual order
@@ -429,54 +426,63 @@ class UberDirectClient:
         for i, order_detail in enumerate(order_details):
             order_number = order_detail.get('order_number', '')
             customer_name = order_detail.get('customer_name', '')
-            
             if order_number:
                 item_name = f"Order #{order_number}"
             elif customer_name:
                 item_name = f"{customer_name}'s Order"
             else:
                 item_name = f"Student Order {i+1}"
-            
             manifest_items.append({
                 "name": item_name,
                 "quantity": 1,
                 "size": "small"
             })
         
-        # ✅ FIX: Use string addresses for delivery creation
+        # Use string addresses for delivery creation
         pickup_address = self._get_restaurant_address_string(restaurant)
         dropoff_address = self._get_dropoff_address_string(dropoff_location)
         
-        # ✅ FIX: Use scheduled delivery time from group data
+        # ✅ FIXED: Better timezone handling for scheduled delivery time
         import pytz
         
         # Get scheduled delivery time from group data
         delivery_time_str = group_data.get('delivery_time', 'now')
-        scheduled_delivery_time = parse_delivery_time(delivery_time_str)
         
-        # Convert to UTC for Uber Direct API
-        if scheduled_delivery_time.tzinfo is None:
-            # Assume local time, convert to UTC
-            local_tz = pytz.timezone('America/Chicago')  # Adjust to your timezone
-            scheduled_delivery_time = local_tz.localize(scheduled_delivery_time)
+        # Parse the user's requested time (returns datetime in local timezone)
+        user_requested_time = parse_delivery_time(delivery_time_str)
         
-        pickup_ready_time = scheduled_delivery_time.astimezone(pytz.UTC)
+        # ✅ CRITICAL FIX: Ensure we're working in Chicago timezone consistently
+        chicago_tz = pytz.timezone('America/Chicago')
         
-        # Format as ISO 8601 UTC timestamp
-        pickup_ready_dt = pickup_ready_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        # If the parsed time is naive (no timezone), assume it's Chicago time
+        if user_requested_time.tzinfo is None:
+            # This is a naive datetime - assume it's in Chicago timezone
+            chicago_time = chicago_tz.localize(user_requested_time)
+            print(f"🕐 Localized naive time to Chicago: {chicago_time.strftime('%I:%M %p %Z')}")
+        else:
+            # Convert any timezone-aware datetime to Chicago time first
+            chicago_time = user_requested_time.astimezone(chicago_tz)
+            print(f"🕐 Converted to Chicago time: {chicago_time.strftime('%I:%M %p %Z')}")
+        
+        # Now convert Chicago time to UTC for Uber API
+        utc_time = chicago_time.astimezone(pytz.UTC)
+        pickup_ready_dt = utc_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
         
         print(f"🕐 User requested delivery time: {delivery_time_str}")
-        print(f"🕐 Scheduled pickup time (UTC): {pickup_ready_dt}")
+        print(f"🕐 Chicago time: {chicago_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
+        print(f"🕐 UTC time for Uber: {utc_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
+        print(f"🕐 Uber API timestamp: {pickup_ready_dt}")
         
         # Validate that the time is at least 20 minutes in the future
         utc_now = datetime.now(pytz.UTC)
         min_delivery_time = utc_now + timedelta(minutes=20)
         
-        if pickup_ready_time < min_delivery_time:
+        if utc_time < min_delivery_time:
             print(f"⚠️ Requested time is too soon, adjusting to minimum 20 minutes from now")
-            pickup_ready_time = min_delivery_time
-            pickup_ready_dt = pickup_ready_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-            print(f"🕐 Adjusted pickup time (UTC): {pickup_ready_dt}")
+            utc_time = min_delivery_time
+            pickup_ready_dt = utc_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+            print(f"🕐 Adjusted UTC time: {utc_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
+            print(f"🕐 Adjusted API timestamp: {pickup_ready_dt}")
         
         payload = {
             "quote_id": quote_id,
@@ -485,28 +491,20 @@ class UberDirectClient:
             "pickup_business_name": restaurant,
             "pickup_address": pickup_address,
             "pickup_notes": pickup_notes,
-            
             "dropoff_name": "Pangea Group Order",
             "dropoff_phone_number": primary_contact,
             "dropoff_address": dropoff_address,
             "dropoff_notes": f"Group delivery for {len(group_members)} students - Meet at main entrance",
-            
             "manifest_items": manifest_items,
-            
             "manifest_reference": f"PANGEA-{group_data.get('group_id', 'unknown')}",
             "manifest_total_value": len(group_members) * 1500,  # $15 per person estimated
-            
             "deliverable_action": "deliverable_action_meet_at_door",
             "undeliverable_action": "return",
-            
             "requires_dropoff_signature": False,
             "requires_id": False,
-            
-            # ✅ FIX: Use properly formatted UTC timestamp
+            # ✅ FIXED: Properly calculated UTC timestamp
             "pickup_ready_dt": pickup_ready_dt,
-            
             "tip": 300,  # $3 tip
-            
             "idempotency_key": str(uuid.uuid4())
         }
         
@@ -594,6 +592,10 @@ class UberDirectClient:
 
     def _notify_group_about_delivery(self, group_data: Dict, delivery_data: Dict):
         """Notify all group members about delivery status"""
+        
+        # FIX: Suppress immediate notification - only delayed notification will be sent
+        print(f"🕐 Suppressing immediate delivery notification - only delayed notification will be sent")
+        return
         
         # Check if this is a scheduled delivery that hasn't started yet
         delivery_time_str = group_data.get('delivery_time', 'now')

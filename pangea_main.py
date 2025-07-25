@@ -126,149 +126,173 @@ def get_user_preferences(phone_number: str) -> Dict:
     except Exception as e:
         return {'error': f'Failed to retrieve preferences: {str(e)}'}
 
-def cleanup_stale_active_orders():
-    """Clean up stale active orders that should have been removed"""
+def cleanup_all_user_data(user_phone: str):
+    """Clean up ALL old data for a user when they make a new food request"""
+    print(f"🧹 Cleaning up all old data for {user_phone}")
+    
     try:
-        # Remove orders older than 2 hours
-        cutoff_time = datetime.now() - timedelta(hours=2)
+        # 1. Remove from ANY active groups (fake or real matches)
+        user_groups = db.collection('active_groups')\
+                       .where('members', 'array_contains', user_phone)\
+                       .get()
         
-        stale_orders = db.collection('active_orders')\
-                        .where('status', '==', 'looking_for_group')\
-                        .where('created_at', '<', cutoff_time)\
-                        .get()
+        for group in user_groups:
+            group.reference.delete()
+            print(f"🗑️ Removed user from group: {group.id}")
         
-        for order in stale_orders:
+        # 2. Remove their active orders
+        user_orders = db.collection('active_orders')\
+                       .where('user_phone', '==', user_phone)\
+                       .get()
+        
+        for order in user_orders:
             order.reference.delete()
-            print(f"🗑️ Cleaned up stale active order: {order.id}")
+            print(f"🗑️ Removed active order: {order.id}")
+        
+        # 3. Clear their order session
+        try:
+            db.collection('order_sessions').document(user_phone).delete()
+            print(f"🗑️ Cleared order session")
+        except:
+            pass  # OK if no session exists
+        
+        # 4. Cancel any pending negotiations
+        pending_negotiations = db.collection('negotiations')\
+                               .where('to_user', '==', user_phone)\
+                               .where('status', '==', 'pending')\
+                               .get()
+        
+        for neg in pending_negotiations:
+            neg.reference.update({'status': 'cancelled_new_request'})
+            print(f"🗑️ Cancelled pending negotiation: {neg.id}")
             
+        print(f"✅ Complete cleanup finished for {user_phone}")
+        
     except Exception as e:
-        print(f"❌ Cleanup failed: {e}")
+        print(f"❌ Cleanup failed for {user_phone}: {e}")
 
 # Replace find_potential_matches function with direct calls
 def find_potential_matches(
-    restaurant_preference: str,
-    location: str, 
-    time_window: str,
-    requesting_user: str,
-    flexibility_score: float = 0.5
+   restaurant_preference: str,
+   location: str, 
+   time_window: str,
+   requesting_user: str,
+   flexibility_score: float = 0.5
 ) -> List[Dict]:
-    """Find compatible users for group food orders using database filtering."""
-    
-    print(f"🔍 SEARCHING:")
-    print(f"   Looking for: '{restaurant_preference}' at '{location}' ({time_window})")
-    print(f"   Excluding: {requesting_user}")
-    
-    # FIRST: Clean up stale orders
-    cleanup_stale_active_orders()
-    
-    # Add delay for spontaneous matching to allow database writes to complete
-    import time
-    time.sleep(1.5)
-    print(f"⏱️ Added search delay for spontaneous matching reliability")
-    
-    try:
-        matches = []
-        
-        # Query database for potential candidates
-        orders_ref = db.collection('active_orders')
-        similar_orders = orders_ref.where('location', '==', location)\
-                                  .where('status', '==', 'looking_for_group')\
-                                  .where('user_phone', '!=', requesting_user)\
-                                  .limit(10).get()
-        
-        print(f"📊 Found {len(similar_orders)} potential orders in database")
-        
-        # Filter out old orders with MORE AGGRESSIVE filtering
-        current_time = datetime.now()
-        filtered_orders = []
+   """Find compatible users for group food orders using database filtering."""
+   
+   print(f"🔍 SEARCHING:")
+   print(f"   Looking for: '{restaurant_preference}' at '{location}' ({time_window})")
+   print(f"   Excluding: {requesting_user}")
+   
+   # Add delay for spontaneous matching to allow database writes to complete
+   import time
+   time.sleep(1.5)
+   print(f"⏱️ Added search delay for spontaneous matching reliability")
+   
+   try:
+       matches = []
+       
+       # Query database for potential candidates
+       orders_ref = db.collection('active_orders')
+       similar_orders = orders_ref.where('location', '==', location)\
+                                 .where('status', '==', 'looking_for_group')\
+                                 .where('user_phone', '!=', requesting_user)\
+                                 .limit(10).get()
+       
+       print(f"📊 Found {len(similar_orders)} potential orders in database")
+       
+       # Filter out old orders with MORE AGGRESSIVE filtering
+       current_time = datetime.now()
+       filtered_orders = []
 
-        for order in similar_orders:
-            order_data = order.to_dict()
-            order_time = order_data.get('created_at')
-            order_time_pref = order_data.get('time_requested', 'flexible')
-            
-            # Safety check: prevent self-matching
-            if order_data.get('user_phone') == requesting_user:
-                print(f"   🚫 Skipping self-match for {requesting_user}")
-                continue
-            
-            # Skip very old orders
-            if order_time:
-                try:
-                    # Handle timezone differences by converting both to naive datetime
-                    if hasattr(order_time, 'tzinfo') and order_time.tzinfo is not None:
-                        order_time = order_time.replace(tzinfo=None)
-                    
-                    if hasattr(current_time, 'tzinfo') and current_time.tzinfo is not None:
-                        current_time = current_time.replace(tzinfo=None)
-                    
-                    time_diff = current_time - order_time
-                    
-                    # FIXED: More aggressive cleanup - ANY order older than 30 minutes is stale
-                    if time_diff > timedelta(minutes=30):
-                        print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago (user: {order_data.get('user_phone')})")
-                        continue
-                        
-                    # ADDITIONAL: Skip orders from different meal periods
-                    order_hour = order_time.hour
-                    current_hour = current_time.hour
-                    
-                    # If order is from a different meal period (more than 4 hours apart), skip it
-                    hour_diff = abs(current_hour - order_hour)
-                    if hour_diff > 4 and hour_diff < 20:  # Avoid midnight wraparound issues
-                        print(f"   🍽️ Skipping order from different meal period: {order_hour}:00 vs {current_hour}:00")
-                        continue
-                        
-                except Exception as e:
-                    print(f"   ⚠️ Error comparing times, skipping problematic order: {e}")
-                    continue  # Skip problematic orders instead of including them
-            else:
-                # No timestamp - this is suspicious, skip it
-                print(f"   ❌ Skipping order with no timestamp: {order_data}")
-                continue
-            
-            filtered_orders.append(order)
-        
-        print(f"📊 After aggressive time filtering: {len(filtered_orders)} potential orders")
-        
-        # Use calculate_compatibility to score each candidate
-        for order in filtered_orders:
-            order_data = order.to_dict()
-            print(f"   Checking: {order_data}")
-            
-            # Call calculate_compatibility using .invoke() method for @tool decorated function
-            compatibility_score = calculate_compatibility.invoke({
-                "user1_restaurant": restaurant_preference,
-                "user1_time": time_window,
-                "user2_restaurant": order_data.get('restaurant', ''),
-                "user2_time": order_data.get('time_requested', 'flexible'),
-                "user1_phone": requesting_user,
-                "user2_phone": order_data['user_phone']
-            })
-            
-            # Only include matches above threshold
-            if compatibility_score >= 0.3:
-                match = {
-                    'user_phone': order_data['user_phone'],
-                    'restaurant': order_data['restaurant'],
-                    'location': order_data['location'],
-                    'time_requested': order_data['time_requested'],
-                    'compatibility_score': compatibility_score,
-                    'user_flexibility': order_data.get('flexibility_score', 0.5)
-                }
-                matches.append(match)
-                print(f"   ✅ MATCH: {match}")
-            else:
-                print(f"   ❌ No match: score {compatibility_score}")
-        
-        # Sort by compatibility score (best matches first)
-        matches.sort(key=lambda x: x['compatibility_score'], reverse=True)
-        print(f"🎯 Final matches: {len(matches[:3])}")
-        return matches[:3]  # Return top 3 matches
-        
-    except Exception as e:
-        print(f"❌ Matching failed: {e}")
-        return []
+       for order in similar_orders:
+           order_data = order.to_dict()
+           order_time = order_data.get('created_at')
+           order_time_pref = order_data.get('time_requested', 'flexible')
+           
+           # Safety check: prevent self-matching
+           if order_data.get('user_phone') == requesting_user:
+               print(f"   🚫 Skipping self-match for {requesting_user}")
+               continue
+           
+           # Skip very old orders
+           if order_time:
+               try:
+                   # Handle timezone differences by converting both to naive datetime
+                   if hasattr(order_time, 'tzinfo') and order_time.tzinfo is not None:
+                       order_time = order_time.replace(tzinfo=None)
+                   
+                   if hasattr(current_time, 'tzinfo') and current_time.tzinfo is not None:
+                       current_time = current_time.replace(tzinfo=None)
+                   
+                   time_diff = current_time - order_time
+                   
+                   # FIXED: More aggressive cleanup - ANY order older than 30 minutes is stale
+                   if time_diff > timedelta(minutes=30):
+                       print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago (user: {order_data.get('user_phone')})")
+                       continue
+                       
+                   # ADDITIONAL: Skip orders from different meal periods
+                   order_hour = order_time.hour
+                   current_hour = current_time.hour
+                   
+                   # If order is from a different meal period (more than 4 hours apart), skip it
+                   hour_diff = abs(current_hour - order_hour)
+                   if hour_diff > 4 and hour_diff < 20:  # Avoid midnight wraparound issues
+                       print(f"   🍽️ Skipping order from different meal period: {order_hour}:00 vs {current_hour}:00")
+                       continue
+                       
+               except Exception as e:
+                   print(f"   ⚠️ Error comparing times, skipping problematic order: {e}")
+                   continue  # Skip problematic orders instead of including them
+           else:
+               # No timestamp - this is suspicious, skip it
+               print(f"   ❌ Skipping order with no timestamp: {order_data}")
+               continue
+           
+           filtered_orders.append(order)
+       
+       print(f"📊 After aggressive time filtering: {len(filtered_orders)} potential orders")
+       
+       # Use calculate_compatibility to score each candidate
+       for order in filtered_orders:
+           order_data = order.to_dict()
+           print(f"   Checking: {order_data}")
+           
+           # Call calculate_compatibility using .invoke() method for @tool decorated function
+           compatibility_score = calculate_compatibility.invoke({
+               "user1_restaurant": restaurant_preference,
+               "user1_time": time_window,
+               "user2_restaurant": order_data.get('restaurant', ''),
+               "user2_time": order_data.get('time_requested', 'flexible'),
+               "user1_phone": requesting_user,
+               "user2_phone": order_data['user_phone']
+           })
+           
+           # Only include matches above threshold
+           if compatibility_score >= 0.3:
+               match = {
+                   'user_phone': order_data['user_phone'],
+                   'restaurant': order_data['restaurant'],
+                   'location': order_data['location'],
+                   'time_requested': order_data['time_requested'],
+                   'compatibility_score': compatibility_score,
+                   'user_flexibility': order_data.get('flexibility_score', 0.5)
+               }
+               matches.append(match)
+               print(f"   ✅ MATCH: {match}")
+           else:
+               print(f"   ❌ No match: score {compatibility_score}")
+       
+       # Sort by compatibility score (best matches first)
+       matches.sort(key=lambda x: x['compatibility_score'], reverse=True)
+       print(f"🎯 Final matches: {len(matches[:3])}")
+       return matches[:3]  # Return top 3 matches
+       
+   except Exception as e:
+       print(f"❌ Matching failed: {e}")
+       return []
 
 
 @tool
@@ -1768,7 +1792,13 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
                           .where('status', '==', 'pending_responses')\
                           .limit(1).get()
         
-        if len(pending_negotiations) > 0 or len(pending_groups) > 0:
+        # ALSO check for 'forming' status groups in case of race condition
+        forming_groups = db.collection('active_groups')\
+                          .where('members', 'array_contains', user_phone)\
+                          .where('status', '==', 'forming')\
+                          .limit(1).get()
+        
+        if len(pending_negotiations) > 0 or len(pending_groups) > 0 or len(forming_groups) > 0:
             # This user has a pending group invitation (either type)
             message_lower = last_message.lower().strip()
             if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
@@ -1908,20 +1938,17 @@ Let me reach out to their AI friends and see if we can form a group. I'll get ba
     return state
 
 def analyze_spontaneous_request_node(state: PangeaState) -> PangeaState:
-    """Agent analyzes spontaneous food request with better extraction"""
-    
-    user_message = state['messages'][-1].content
-    print(f"🔍 User said: '{user_message}'")
-    
-    # CLEAR ANY OLD ORDER SESSION since this is a new request
-    try:
-        db.collection('order_sessions').document(state['user_phone']).delete()
-        print(f"🗑️ Cleared old order session for new request: {state['user_phone']}")
-    except Exception as e:
-        print(f"⚠️ No old session to clear: {e}")
-    
-    # Extract request data using Claude
-    analysis_prompt = f"""
+   """Agent analyzes spontaneous food request with better extraction"""
+   
+   user_message = state['messages'][-1].content
+   user_phone = state['user_phone']
+   print(f"🔍 User said: '{user_message}'")
+   
+   # 🧹 CLEAN SLATE: Remove ALL old data for this user when they make a new request
+   cleanup_all_user_data(user_phone)
+   
+   # Extract request data using Claude
+   analysis_prompt = f"""
 You are a smart location-matching agent. Extract information from this food request:
 
 User message: "{user_message}"
@@ -1961,71 +1988,67 @@ IMPORTANT: For time, preserve the EXACT user intent. Don't convert to generic te
 Return ONLY this JSON format:
 {{"restaurant": "exact match from list", "location": "exact match from list", "time_preference": "PRESERVE EXACT USER TIME"}}
 """
-    
-    response = anthropic_llm.invoke([HumanMessage(content=analysis_prompt)])
-    try:
-        request_data = json.loads(response.content.strip())
-        print(f"✅ Agent extracted: {request_data}")
-    except Exception as e:
-        print(f"❌ Agent extraction failed: {e}")
-        request_data = {"restaurant": "any", "location": "Richard J Daley Library", "time_preference": "now"}
-    
-    state['current_request'] = request_data
-    state['conversation_stage'] = 'spontaneous_matching'
-    
-    # CRITICAL FIX: Search BEFORE creating our order to avoid race conditions
-    print(f"🔍 IMMEDIATE SEARCH before creating order for {state['user_phone']}")
-    
-    # First, clean up old orders from ALL users
-    cleanup_stale_active_orders()
-    
-    # Search immediately to see if there are existing matches
-    existing_matches = find_potential_matches(
-        restaurant_preference=request_data.get('restaurant', ''),
-        location=request_data.get('location', ''),
-        time_window=request_data.get('time_preference', 'now'),
-        requesting_user=state['user_phone']
-    )
-    
-    print(f"🔍 Found {len(existing_matches)} existing matches before creating order")
-    
-    # CLEAN UP OLD ACTIVE ORDERS FOR THIS USER
-    try:
-        old_orders = db.collection('active_orders')\
-                      .where('user_phone', '==', state['user_phone'])\
-                      .where('status', '==', 'looking_for_group')\
-                      .get()
-        
-        for old_order in old_orders:
-            old_order.reference.delete()
-            print(f"🗑️ Removed old active order for {state['user_phone']}")
-    except Exception as e:
-        print(f"❌ Failed to clean old orders: {e}")
-    
-    # CREATE THE NEW ACTIVE ORDER with immediate processing flag
-    try:
-        order_doc_data = {
-            'user_phone': state['user_phone'],
-            'restaurant': request_data.get('restaurant', ''),
-            'location': request_data.get('location', ''),
-            'time_requested': request_data.get('time_preference', 'now'),
-            'status': 'looking_for_group',
-            'created_at': datetime.now(),
-            'flexibility_score': 0.5,
-            'has_existing_matches': len(existing_matches) > 0
-        }
-        
-        db.collection('active_orders').add(order_doc_data)
-        print(f"✅ Created active order for {state['user_phone']} - Restaurant: {request_data.get('restaurant')}, Location: {request_data.get('location')}, Time: {request_data.get('time_preference')}")
-        
-        # Store existing matches in state for immediate processing
-        state['potential_matches'] = existing_matches
-        
-    except Exception as e:
-        print(f"❌ Failed to create active order: {e}")
-    
-    return state
-
+   
+   response = anthropic_llm.invoke([HumanMessage(content=analysis_prompt)])
+   try:
+       request_data = json.loads(response.content.strip())
+       print(f"✅ Agent extracted: {request_data}")
+   except Exception as e:
+       print(f"❌ Agent extraction failed: {e}")
+       request_data = {"restaurant": "any", "location": "Richard J Daley Library", "time_preference": "now"}
+   
+   state['current_request'] = request_data
+   state['conversation_stage'] = 'spontaneous_matching'
+   
+   # CRITICAL FIX: Search BEFORE creating our order to avoid race conditions
+   print(f"🔍 IMMEDIATE SEARCH before creating order for {state['user_phone']}")
+   
+   # Search immediately to see if there are existing matches
+   existing_matches = find_potential_matches(
+       restaurant_preference=request_data.get('restaurant', ''),
+       location=request_data.get('location', ''),
+       time_window=request_data.get('time_preference', 'now'),
+       requesting_user=state['user_phone']
+   )
+   
+   print(f"🔍 Found {len(existing_matches)} existing matches before creating order")
+   
+   # CLEAN UP OLD ACTIVE ORDERS FOR THIS USER
+   try:
+       old_orders = db.collection('active_orders')\
+                     .where('user_phone', '==', state['user_phone'])\
+                     .where('status', '==', 'looking_for_group')\
+                     .get()
+       
+       for old_order in old_orders:
+           old_order.reference.delete()
+           print(f"🗑️ Removed old active order for {state['user_phone']}")
+   except Exception as e:
+       print(f"❌ Failed to clean old orders: {e}")
+   
+   # CREATE THE NEW ACTIVE ORDER with immediate processing flag
+   try:
+       order_doc_data = {
+           'user_phone': state['user_phone'],
+           'restaurant': request_data.get('restaurant', ''),
+           'location': request_data.get('location', ''),
+           'time_requested': request_data.get('time_preference', 'now'),
+           'status': 'looking_for_group',
+           'created_at': datetime.now(),
+           'flexibility_score': 0.5,
+           'has_existing_matches': len(existing_matches) > 0
+       }
+       
+       db.collection('active_orders').add(order_doc_data)
+       print(f"✅ Created active order for {state['user_phone']} - Restaurant: {request_data.get('restaurant')}, Location: {request_data.get('location')}, Time: {request_data.get('time_preference')}")
+       
+       # Store existing matches in state for immediate processing
+       state['potential_matches'] = existing_matches
+       
+   except Exception as e:
+       print(f"❌ Failed to create active order: {e}")
+   
+   return state
 
 # REPLACE realtime_search_node function with this:
 
@@ -2698,6 +2721,7 @@ def should_continue_negotiating(state: PangeaState) -> str:
         return "wait_for_responses"
     
     user_phone = state['user_phone']
+    
     
     # CRITICAL FIX: Check if user is already in an ACTIVE group (not just pending)
     try:
@@ -3576,7 +3600,17 @@ def sms_webhook():
                 # Order processor couldn't handle it, fall back to main system
                 print(f"🔄 Order processor couldn't handle message, falling back to main system")
         
-        # 2. For users without active sessions, check if it's a new food request
+        # 2. Check if message is a group response (YES/NO)
+        message_lower = message_body.lower().strip()
+        group_responses = ['yes', 'y', 'no', 'n', 'sure', 'ok', 'pass', 'nah']
+        
+        if message_lower in group_responses:
+            print(f"🎯 DETECTED GROUP RESPONSE: '{message_body}' - routing directly to main system")
+            result = handle_incoming_sms(from_number, message_body)
+            print(f"✅ Main system processed group response: {result.get('conversation_stage', 'unknown')}")
+            return '', 200
+        
+        # 3. For users without active sessions, check if it's a new food request
         if not existing_session and is_new_food_request(message_body):
             print(f"🆕 New food request detected, routing to main Pangea system")
             # Route new food requests directly to main system
@@ -3584,7 +3618,7 @@ def sms_webhook():
             print(f"✅ Main system processed new request: {result.get('conversation_stage', 'unknown')}")
             return '', 200
         
-        # 3. For users without sessions and non-food messages, try order processor first (might be payment/order details)
+        # 4. For users without sessions and non-food messages, try order processor first (might be payment/order details)
         if not existing_session:
             print(f"🔍 No session found, checking if order processor can handle non-food message")
             order_result = process_order_message(from_number, message_body)
@@ -3594,7 +3628,7 @@ def sms_webhook():
                 print(f"✅ Order processed: {order_result.get('order_stage', 'unknown')}")
                 return '', 200
         
-        # 4. Default fallback to main Pangea system
+        # 5. Default fallback to main Pangea system
         print(f"🔄 Routing to main Pangea system as final fallback")
         result = handle_incoming_sms(from_number, message_body)
         print(f"✅ Main system processed: {result.get('conversation_stage', 'unknown')}")

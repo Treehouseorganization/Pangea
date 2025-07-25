@@ -123,6 +123,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         'delivery_time': delivery_time,
         'order_stage': 'need_order_number',
         'pickup_location': RESTAURANTS.get(restaurant, {}).get('address', 'Campus'),
+        'delivery_location': 'Richard J Daley Library',  # FIX: Add delivery location
         'payment_link': get_payment_link(group_size),
         'order_session_id': str(uuid.uuid4()),
         'created_at': datetime.now(),
@@ -551,49 +552,58 @@ def create_order_graph():
 # ADD these new functions to pangea_order_processor.py (around line 50, before start_order_process)
 
 def is_new_food_request(message: str) -> bool:
-    """Use Claude Opus 4 to intelligently detect if message is food-related vs general question"""
-    
-    from langchain_anthropic import ChatAnthropic
-    from langchain_core.messages import HumanMessage
-    import os
-    
-    # Use same Claude Opus 4 model as main system
-    anthropic_llm = ChatAnthropic(
-        model="claude-opus-4-20250514",
-        api_key=os.getenv('ANTHROPIC_API_KEY'),
-    )
-    
-    classification_prompt = f"""
-    Classify this message into one of these categories:
+   """Use Claude Opus 4 to intelligently detect if message is food-related vs general question"""
+   
+   from langchain_anthropic import ChatAnthropic
+   from langchain_core.messages import HumanMessage
+   import os
+   
+   # CRITICAL FIX: Handle YES/NO responses to group invitations
+   message_lower = message.lower().strip()
+   group_response_keywords = ['yes', 'y', 'no', 'n', 'sure', 'ok', 'pass', 'nah']
+   
+   # If it's a simple group response, let main system handle it (NOT order processor)
+   if message_lower in group_response_keywords:
+       print(f"🎯 Detected group response: '{message}' - routing to main system")
+       return True  # Route to main system to handle group responses
+   
+   # Use same Claude Opus 4 model as main system
+   anthropic_llm = ChatAnthropic(
+       model="claude-opus-4-20250514",
+       api_key=os.getenv('ANTHROPIC_API_KEY'),
+   )
+   
+   classification_prompt = f"""
+   Classify this message into one of these categories:
 
-    Message: "{message}"
+   Message: "{message}"
 
-    Categories:
-    - general_question: Non-food related questions, greetings, general conversation, help requests
-    - new_food_request: User wants to order food, mentions restaurants, craving food
-    - order_continuation: User providing details for existing order (name, payment, order number, contact info, "my name is", "call me")
+   Categories:
+   - general_question: Non-food related questions, greetings, general conversation, help requests
+   - new_food_request: User wants to order food, mentions restaurants, craving food
+   - order_continuation: User providing details for existing order (name, payment, order number, contact info, "my name is", "call me")
 
-    Return only the category name.
-    """
-    
-    try:
-        response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
-        classification = response.content.strip().lower()
-        
-        # If it's a general question, treat as "new request" to bypass order processor
-        if classification == "general_question":
-            return True
-        elif classification == "new_food_request":
-            return True
-        else:  # order_continuation
-            return False
-            
-    except Exception as e:
-        print(f"Error in message classification: {e}")
-        # Fallback to simple keyword detection
-        message_lower = message.lower().strip()
-        order_keywords = ['my order number', 'order #', 'pay', 'payment', 'my name is']
-        return not any(keyword in message_lower for keyword in order_keywords)
+   Return only the category name.
+   """
+   
+   try:
+       response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
+       classification = response.content.strip().lower()
+       
+       # If it's a general question, treat as "new request" to bypass order processor
+       if classification == "general_question":
+           return True
+       elif classification == "new_food_request":
+           return True
+       else:  # order_continuation
+           return False
+           
+   except Exception as e:
+       print(f"Error in message classification: {e}")
+       # Fallback to simple keyword detection
+       message_lower = message.lower().strip()
+       order_keywords = ['my order number', 'order #', 'pay', 'payment', 'my name is']
+       return not any(keyword in message_lower for keyword in order_keywords)
 
 def clear_old_order_session(phone_number: str):
     """Clear user's old order session"""
@@ -613,11 +623,24 @@ def schedule_delayed_delivery_notifications(group_data: Dict, delivery_result: D
         time.sleep(50)
         
         restaurant = group_data.get('restaurant', 'your restaurant')
+        
+        # FIX: Get the actual dropoff location name and address
+        dropoff_location_name = group_data.get('location', 'campus')
+        
+        # Get the actual dropoff address from the DROPOFFS dictionary
+        try:
+            from pangea_locations import DROPOFFS
+            dropoff_address = DROPOFFS.get(dropoff_location_name, {}).get('address', dropoff_location_name)
+        except ImportError:
+            # Fallback if import fails
+            dropoff_address = dropoff_location_name
+        
         tracking_url = delivery_info.get('tracking_url', '')
         delivery_id = delivery_info.get('delivery_id', 'N/A')
         
         message = f"""🚚 Your {restaurant} delivery is on the way!
 
+📍 Delivery to: {dropoff_address}
 📱 Track your order: {tracking_url}
 📦 Delivery ID: {delivery_id}
 
@@ -640,6 +663,7 @@ Your driver will contact you when they arrive! 🎉"""
         print(f"⏰ Scheduled 50s delayed notification for {user_phone}")
 
 
+
 def schedule_delayed_triggered_notifications(group_data: Dict, delivery_result: Dict):
     """
     Schedule 50-second delayed DELIVERY TRIGGERED notifications for scheduled deliveries
@@ -649,7 +673,26 @@ def schedule_delayed_triggered_notifications(group_data: Dict, delivery_result: 
         time.sleep(50)
         
         restaurant = group_info.get('restaurant')
-        location = group_info.get('location')
+        
+        # FIX: Get the actual dropoff location name and address
+        dropoff_location_name = group_info.get('delivery_location') or group_info.get('location')
+        
+        # Get the actual dropoff address from the DROPOFFS dictionary
+        try:
+            from pangea_locations import DROPOFFS
+            dropoff_address = DROPOFFS.get(dropoff_location_name, {}).get('address', dropoff_location_name)
+        except ImportError:
+            # Fallback if import fails
+            dropoff_address = dropoff_location_name
+        
+        # Get restaurant pickup address
+        try:
+            from pangea_locations import RESTAURANTS
+            pickup_address = restaurant  # FIX: Just use restaurant name instead of full address
+        except ImportError:
+            # Fallback if import fails
+            pickup_address = restaurant
+        
         tracking_url = delivery_info.get('tracking_url', '')
         delivery_id = delivery_info.get('delivery_id', '')
         
@@ -657,11 +700,11 @@ def schedule_delayed_triggered_notifications(group_data: Dict, delivery_result: 
 
 Your {restaurant} group order is now being processed!
 
-📍 Pickup: {restaurant}
-📍 Dropoff: {location}
+📍 Pickup: {pickup_address}
+📍 Dropoff: {dropoff_address}
 🆔 Delivery ID: {delivery_id[:8]}...
 
-The driver will pick up all individual orders and deliver them to {location}. 
+The driver will pick up all individual orders and deliver them to {dropoff_address}. 
 
 📱 Track delivery: {tracking_url}
 
@@ -682,6 +725,7 @@ I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
         thread.daemon = True  # Don't block program exit
         thread.start()
         print(f"⏰ Scheduled 50s delayed triggered notification for {user_phone}")
+
 
 
 def check_group_completion_and_trigger_delivery(user_phone: str):
@@ -740,7 +784,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
             # Build group data with individual order details
             group_data = {
                 'restaurant': session.get('restaurant'),
-                'location': session.get('pickup_location'),
+                'pickup_location': session.get('pickup_location'),  # FIX: Add pickup_location
+                'delivery_location': session.get('delivery_location'),  # FIX: Add delivery_location
                 'delivery_time': session.get('delivery_time', 'now'),
                 'members': [member['user_phone'] for member in members_who_paid],
                 'group_id': group_id,
@@ -794,6 +839,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
             
     except Exception as e:
         print(f"❌ Error checking group completion: {e}")
+
 
 def notify_group_about_delivery_creation(group_data: Dict, delivery_result: Dict):
     """Notify all group members that delivery has been triggered"""
