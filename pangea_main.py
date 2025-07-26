@@ -2125,7 +2125,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
             'created_by': state['user_phone'],
             'restaurant': state['current_request'].get('restaurant', 'local restaurant'),
             'delivery_location': state['current_request'].get('delivery_location', 'campus'),
-            'delivery_time': state['current_request'].get('delivery_time', 'ASAP'),
+            'delivery_time': state['current_request'].get('time_preference', 'ASAP'),
             'invitations_sent': sorted_phones,
             'responses_received': [],
             'match_type': 'perfect_match',
@@ -2138,7 +2138,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         
         # Send SMS invitations to both users
         restaurant = state['current_request'].get('restaurant', 'local restaurant')
-        delivery_time = state['current_request'].get('delivery_time', 'ASAP')
+        delivery_time = state['current_request'].get('time_preference', 'ASAP')
         delivery_location = state['current_request'].get('delivery_location', 'campus')
         
         for phone in sorted_phones:
