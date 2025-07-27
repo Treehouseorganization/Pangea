@@ -1830,11 +1830,11 @@ def classify_message_intent_node(state: PangeaState) -> PangeaState:
     Message: "{last_message}"
     
     Options:
-    - spontaneous_order: User wants food now/soon
+    - spontaneous_order: User wants food now/soon (e.g., "I want pizza", "ordering lunch", "hungry for burgers")
     - morning_response: Response to "where will you be today" question  
     - preference_update: User updating their food preferences
     - group_response: Response to a group invitation
-    - general_question: Non-food related questions, greetings, help requests
+    - general_question: Questions ABOUT the service, help requests, greetings (e.g., "what restaurants are available?", "how does this work?", "hello")
     
     Return only the classification.
     """
@@ -1997,6 +1997,40 @@ Return ONLY this JSON format:
        print(f"❌ Agent extraction failed: {e}")
        request_data = {"restaurant": "any", "location": "Richard J Daley Library", "time_preference": "now"}
    
+   # VALIDATE: Check if we have required information
+   missing_info = []
+   
+   # Check if restaurant/food is missing or too generic
+   restaurant = request_data.get('restaurant', '').lower()
+   if restaurant in ['any', '', 'food', 'something'] or not restaurant:
+       missing_info.append('restaurant')
+   
+   # Check if location is missing or defaulted
+   location = request_data.get('location', '')
+   if location == 'Richard J Daley Library' and 'library' not in user_message.lower() and 'daley' not in user_message.lower():
+       # This was likely a default, not user-specified
+       if not any(loc_word in user_message.lower() for loc_word in ['library', 'daley', 'student center', 'sce', 'scw', 'university hall', 'student services']):
+           missing_info.append('location')
+   
+   # If information is missing, ask for clarification
+   if missing_info:
+       state['conversation_stage'] = 'incomplete_request'
+       state['missing_info'] = missing_info
+       state['partial_request'] = request_data
+       
+       # Generate a helpful message asking for missing information
+       if 'restaurant' in missing_info and 'location' in missing_info:
+           clarification = "I'd love to help you order food! Could you tell me:\n\n1️⃣ What restaurant/food do you want?\n2️⃣ Where should it be delivered?\n\nExample: \"I want Chipotle delivered to the library\""
+       elif 'restaurant' in missing_info:
+           clarification = f"Great! I can help with delivery to {location}. What restaurant or food are you craving?\n\nAvailable: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks"
+       elif 'location' in missing_info:
+           clarification = f"Perfect! {restaurant} sounds good. Where would you like it delivered?\n\nAvailable locations:\n• Richard J Daley Library\n• Student Center East\n• Student Center West\n• Student Services Building\n• University Hall"
+       
+       send_friendly_message(state['user_phone'], clarification, message_type="clarification")
+       state['messages'].append(AIMessage(content=clarification))
+       return state
+   
+   # If we have all required info, continue with normal flow
    state['current_request'] = request_data
    state['conversation_stage'] = 'spontaneous_matching'
    
@@ -3015,6 +3049,93 @@ I can help you find some lunch buddies! 🍜"""
     
     return state
 
+def handle_incomplete_request_node(state: PangeaState) -> PangeaState:
+    """
+    Handle messages when user provides missing information for incomplete requests.
+    Re-analyzes the user's message with the stored partial request data.
+    """
+    user_phone = state['user_phone']
+    user_message = state['messages'][-1].content
+    
+    print(f"🔄 Handling incomplete request follow-up from {user_phone}")
+    
+    # Get stored missing info and partial request
+    missing_info = state.get('missing_info', [])
+    partial_request = state.get('partial_request', {})
+    
+    print(f"📝 Missing info: {missing_info}")
+    print(f"📝 Partial request: {partial_request}")
+    
+    # Re-analyze the user's message with Claude to extract the missing information
+    try:
+        llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.1)
+        
+        analysis_prompt = f"""
+        The user previously made an incomplete food order request. We're missing: {', '.join(missing_info)}.
+        
+        Previous partial request: {partial_request}
+        
+        User's new message: "{user_message}"
+        
+        Please extract ONLY the missing information from their new message and update the partial request.
+        
+        Available restaurants: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks
+        Available locations: Richard J Daley Library, Student Center East, Student Center West, University Hall, Student Services Building
+        
+        Return JSON with:
+        {{
+            "updated_request": {{updated complete request with new info}},
+            "still_missing": [list of any info still missing],
+            "interpretation": "brief explanation of what you extracted"
+        }}
+        """
+        
+        response = llm.invoke(analysis_prompt)
+        import json
+        result = json.loads(response.content)
+        
+        updated_request = result.get('updated_request', {})
+        still_missing = result.get('still_missing', [])
+        interpretation = result.get('interpretation', '')
+        
+        print(f"🤖 Claude interpretation: {interpretation}")
+        print(f"📊 Updated request: {updated_request}")
+        print(f"❓ Still missing: {still_missing}")
+        
+        # If we still have missing info, ask for clarification again
+        if still_missing:
+            missing_text = ', '.join(still_missing)
+            clarification = f"Thanks! I still need to know: {missing_text}. Could you provide that?"
+            
+            send_friendly_message(user_phone, clarification, message_type="clarification")
+            state['messages'].append(AIMessage(content=clarification))
+            state['missing_info'] = still_missing
+            state['partial_request'] = updated_request
+            
+            # Stay in incomplete_request state
+            return state
+            
+        # We have all the info! Continue with normal flow
+        state['current_request'] = updated_request
+        state['conversation_stage'] = 'spontaneous_matching'
+        
+        # Clear the incomplete request data
+        if 'missing_info' in state:
+            del state['missing_info']
+        if 'partial_request' in state:
+            del state['partial_request']
+            
+        print(f"✅ Request completed! Moving to matching flow: {updated_request}")
+        
+        return state
+        
+    except Exception as e:
+        print(f"❌ Error processing incomplete request: {e}")
+        
+        # Fallback: treat as new request
+        state['conversation_stage'] = 'spontaneous_order'
+        return state
+
 # ===== MAIN LANGGRAPH WITH 2025 ENHANCEMENTS =====
 def create_pangea_graph():
     """
@@ -3041,6 +3162,7 @@ def create_pangea_graph():
     workflow.add_node("wait_for_responses", wait_for_responses_node)
     workflow.add_node("handle_order_continuation", handle_order_continuation_node)
     workflow.add_node("faq_answered", faq_answered_node) 
+    workflow.add_node("handle_incomplete_request", handle_incomplete_request_node)
     
     # ADD NEW GROUP RESPONSE NODES
     workflow.add_node("handle_group_yes", handle_group_response_yes_node)
@@ -3065,6 +3187,7 @@ def create_pangea_graph():
             "proactive_group_no": "handle_proactive_group_no",
              "order_continuation": "handle_order_continuation",
             "faq_answered": "faq_answered",  # ← ADD THIS LINE# NEW: Handle NO to proactive notification
+            "incomplete_request": "handle_incomplete_request",
         }
     )
     
@@ -3076,6 +3199,17 @@ def create_pangea_graph():
     # Enhanced spontaneous agent flow with learning
     workflow.add_edge("analyze_spontaneous", "realtime_search")
     workflow.add_edge("realtime_search", "negotiate")
+    
+    # Handle incomplete request flow - route based on conversation_stage
+    workflow.add_conditional_edges(
+        "handle_incomplete_request",
+        lambda state: state.get('conversation_stage', 'incomplete_request'),
+        {
+            "spontaneous_matching": "realtime_search",
+            "incomplete_request": END,  # Stay in incomplete state if still missing info
+            "spontaneous_order": "analyze_spontaneous"  # Fallback to re-analyze
+        }
+    )
     workflow.add_conditional_edges(
         "negotiate",
         should_continue_negotiating,

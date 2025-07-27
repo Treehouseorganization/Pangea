@@ -65,7 +65,7 @@ class OrderState(TypedDict):
     user_phone: str
     group_id: str
     restaurant: str
-    order_stage: str  # "need_order_number", "ready_to_pay", "payment_initiated"
+    order_stage: str  # "need_order_number", "need_order_description", "ready_to_pay", "payment_initiated"
     pickup_location: str
     group_size: int
     payment_link: str
@@ -181,6 +181,9 @@ def classify_order_intent_node(state: OrderState) -> OrderState:
     if current_stage == 'need_order_number':
         state['order_stage'] = "collect_order_number"
         return state
+    elif current_stage == 'need_order_description':
+        state['order_stage'] = "collect_order_description"
+        return state
     elif current_stage == 'ready_to_pay':
         state['order_stage'] = "redirect_to_payment"
         return state
@@ -261,22 +264,57 @@ def collect_order_number_node(state: OrderState) -> OrderState:
         if order_description:
             session['order_description'] = order_description
             
-        if order_number or customer_name:
-            session['order_stage'] = 'ready_to_pay'
-        else:
-            # Couldn't extract valid info
-            message = f"""I couldn't find an order number or name in that message. 
+        # Enhanced validation - check what's missing
+        missing_items = []
+        if not (order_number or customer_name):
+            missing_items.append("identifier")
+        if not order_description or order_description.lower().strip() in ['', 'food', 'meal', 'order']:
+            missing_items.append("description")
+            
+        if missing_items:
+            # Store what we have so far
+            session['missing_order_info'] = missing_items
+            if 'identifier' not in missing_items:
+                # We have identifier but missing description
+                session['order_stage'] = 'need_order_description'
+            else:
+                # Missing identifier (and possibly description)
+                session['order_stage'] = 'need_order_number'
+                
+            update_order_session(user_phone, session)
+            
+            # Craft message based on what's missing
+            if set(missing_items) == {'identifier', 'description'}:
+                message = f"""I need both your order details and what you ordered.
+
+Please provide:
+• Your order confirmation number (like "ABC123" or "#4567") OR your name
+• What you ordered (like "Big Mac meal, large fries, Coke")
+
+This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
+            elif 'identifier' in missing_items:
+                message = f"""I couldn't find an order number or name in that message.
 
 Please provide:
 • Your order confirmation number (like "ABC123" or "#4567")
 • Your name if there's no order number (like "John Smith")
-• What you ordered (like "Big Mac meal")
+
+This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
+            else:  # missing only description
+                message = f"""I have your order info but need to know what you ordered.
+
+Please tell me what food items you ordered (like "Big Mac meal, large fries, Coke").
 
 This helps me coordinate pickup with {session.get('restaurant', 'the restaurant')}!"""
             
             send_friendly_message(user_phone, message, message_type="order_update")
             state['messages'].append(AIMessage(content=message))
             return state
+        
+        # All required info provided
+        session['order_stage'] = 'ready_to_pay'
+        if 'missing_order_info' in session:
+            del session['missing_order_info']
         
         # Successfully got order info
         update_order_session(user_phone, session)
@@ -361,6 +399,109 @@ Try something like "Order #123" or "My name is John"."""
     send_friendly_message(user_phone, message, message_type="order_update")
     check_group_completion_and_trigger_delivery(user_phone)
     state['messages'].append(AIMessage(content=message))
+    return state
+
+def collect_order_description_node(state: OrderState) -> OrderState:
+    """Collect missing order description when we already have identifier"""
+    
+    user_phone = state['user_phone']
+    user_message = state['messages'][-1].content
+    session = get_user_order_session(user_phone)
+    
+    print(f"🍕 Collecting missing order description from {user_phone}")
+    print(f"📝 User message: {user_message}")
+    
+    try:
+        # Use Claude to extract order description
+        llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.1)
+        
+        extraction_prompt = f"""
+        The user already provided their order identifier but we need their food order description.
+        
+        User message: "{user_message}"
+        Restaurant: {session.get('restaurant', 'unknown')}
+        
+        Extract the food order description from their message. Look for:
+        - Specific food items (Big Mac, Chipotle bowl, etc.)
+        - Meal details (large fries, no pickles, etc.)
+        - Drinks or sides
+        
+        Return JSON with:
+        {{
+            "order_description": "detailed description of what they ordered",
+            "confidence": "high/medium/low"
+        }}
+        
+        If you can't find clear food items, return empty order_description.
+        """
+        
+        response = llm.invoke(extraction_prompt)
+        import json
+        result = json.loads(response.content)
+        
+        order_description = result.get('order_description', '').strip()
+        confidence = result.get('confidence', 'low')
+        
+        print(f"🤖 Extracted description: '{order_description}' (confidence: {confidence})")
+        
+        # Validate the extracted description
+        if order_description and confidence in ['high', 'medium'] and len(order_description) > 5:
+            # Valid description found
+            session['order_description'] = order_description
+            session['order_stage'] = 'ready_to_pay'
+            if 'missing_order_info' in session:
+                del session['missing_order_info']
+                
+            update_order_session(user_phone, session)
+            
+            payment_amount = get_payment_amount(session.get('group_size', 2))
+            identifier = session.get('order_number') or session.get('customer_name', 'your order')
+            
+            message = f"""Perfect! I've got your order details for {session.get('restaurant')}! ✅
+
+Order: {order_description}
+Identifier: {identifier}
+
+Your payment share: {payment_amount}
+
+Reply "pay" when ready to complete your order! 💳"""
+            
+            send_friendly_message(user_phone, message, message_type="order_update")
+            state['messages'].append(AIMessage(content=message))
+            
+            # Check if group is complete
+            check_group_completion_and_trigger_delivery(user_phone)
+            
+        else:
+            # Still need clearer description
+            message = f"""I need more details about what you ordered.
+
+Please tell me specifically what food items you got from {session.get('restaurant', 'the restaurant')}:
+• Main item (like "Big Mac meal" or "Chicken bowl")
+• Size/modifications (like "large fries" or "no onions")
+• Drinks or sides
+
+Example: "Big Mac meal with large fries and a Coke" """
+            
+            send_friendly_message(user_phone, message, message_type="order_update")
+            state['messages'].append(AIMessage(content=message))
+            
+    except Exception as e:
+        print(f"❌ Error extracting order description: {e}")
+        
+        # Fallback message
+        message = f"""I need to know what you ordered from {session.get('restaurant', 'the restaurant')}.
+
+Please tell me what food items you got:
+• Main item (like "Big Mac meal" or "Chicken bowl") 
+• Size/modifications (like "large" or "no pickles")
+• Drinks or sides
+
+This helps me coordinate pickup!"""
+        
+        send_friendly_message(user_phone, message, message_type="order_update")
+        state['messages'].append(AIMessage(content=message))
+    
     return state
 
 def handle_need_order_first_node(state: OrderState) -> OrderState:
@@ -529,6 +670,7 @@ def create_order_graph():
     # Add nodes
     workflow.add_node("classify_order_intent", classify_order_intent_node)
     workflow.add_node("collect_order_number", collect_order_number_node)
+    workflow.add_node("collect_order_description", collect_order_description_node)
     workflow.add_node("handle_payment_request", handle_payment_request_node)
     workflow.add_node("handle_redirect_to_payment", handle_redirect_to_payment_node)
     workflow.add_node("handle_need_order_first", handle_need_order_first_node)
@@ -540,6 +682,7 @@ def create_order_graph():
         route_order_flow,
         {
             "collect_order_number": "collect_order_number",
+            "collect_order_description": "collect_order_description",
             "payment_request": "handle_payment_request",
             "redirect_to_payment": "handle_redirect_to_payment",
             "need_order_first": "handle_need_order_first",
@@ -549,6 +692,7 @@ def create_order_graph():
     
     # All nodes end the workflow
     workflow.add_edge("collect_order_number", END)
+    workflow.add_edge("collect_order_description", END)
     workflow.add_edge("handle_payment_request", END)
     workflow.add_edge("handle_redirect_to_payment", END)
     workflow.add_edge("handle_need_order_first", END)
@@ -599,9 +743,9 @@ def is_new_food_request(message: str) -> bool:
        response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
        classification = response.content.strip().lower()
        
-       # If it's a general question, treat as "new request" to bypass order processor
+       # If it's a general question, don't treat as new food request - let it be handled by FAQ system
        if classification == "general_question":
-           return True
+           return False
        elif classification == "new_food_request":
            return True
        else:  # order_continuation
