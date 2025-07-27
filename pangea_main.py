@@ -1873,7 +1873,7 @@ def route_based_on_intent(state: PangeaState) -> str:
 # ===== WORKFLOW: PROMPT CHAINING (Morning Check-ins) =====
 
 def process_morning_response_node(state: PangeaState) -> PangeaState:
-    """Process user's morning response and find matches"""
+    """Process user's morning response and find matches - ENHANCED for multiple restaurants"""
     
     user_response = state['messages'][-1].content
     
@@ -1893,47 +1893,217 @@ def process_morning_response_node(state: PangeaState) -> PangeaState:
     
     state['current_request'] = preferences
     
-    # Find matches
-    matches = find_potential_matches(
-        preferences.get('food_preferences', [''])[0],
-        preferences.get('location', ''),
-        preferences.get('time_preference', 'lunch time'),
-        state['user_phone']
-    )
+    # 🔥 NEW: Search for matches across ALL preferred restaurants
+    all_matches = []
+    food_preferences = preferences.get('food_preferences', ['any'])
     
-    state['potential_matches'] = matches
+    print(f"🔍 Searching for matches across {len(food_preferences)} restaurants: {food_preferences}")
+    
+    for restaurant in food_preferences:
+        print(f"   Searching for {restaurant} matches...")
+        
+        restaurant_matches = find_potential_matches(
+            restaurant_preference=restaurant,
+            location=preferences.get('location', ''),
+            time_window=preferences.get('time_preference', 'lunch time'),
+            requesting_user=state['user_phone']
+        )
+        
+        # Add restaurant context to each match
+        for match in restaurant_matches:
+            match['searched_restaurant'] = restaurant
+        
+        all_matches.extend(restaurant_matches)
+        print(f"   Found {len(restaurant_matches)} matches for {restaurant}")
+    
+    # Remove duplicates (same user wanting multiple restaurants you also want)
+    unique_matches = []
+    seen_users = set()
+    
+    # Sort by compatibility score first
+    all_matches.sort(key=lambda x: x.get('compatibility_score', 0), reverse=True)
+    
+    for match in all_matches:
+        user_phone = match.get('user_phone')
+        if user_phone not in seen_users:
+            seen_users.add(user_phone)
+            unique_matches.append(match)
+    
+    print(f"🎯 Total unique matches across all restaurants: {len(unique_matches)}")
+    
+    state['potential_matches'] = unique_matches
     return state
 
+
 def present_morning_matches_node(state: PangeaState) -> PangeaState:
-    """Present matches to user in friendly way"""
+    """Present matches to user in friendly way - ENHANCED with restaurant choice AND Yes/No"""
     
     matches = state['potential_matches']
+    food_preferences = state['current_request'].get('food_preferences', ['food'])
     
     if not matches:
-        message = """I couldn't find anyone with similar lunch plans right now, but I'll keep looking! 
+        # Handle no matches case
+        restaurants_text = " or ".join(food_preferences) if len(food_preferences) > 1 else food_preferences[0]
+        
+        message = f"""I couldn't find anyone with similar lunch plans for {restaurants_text} right now, but I'll keep looking! 
 
 Want to tell me a specific restaurant you're craving? I might be able to find someone who's flexible! 🤔"""
-    else:
-        restaurant = state['current_request'].get('food_preferences', [''])[0]
-        message = f"""Great news! I found {len(matches)} other people interested in {restaurant}! 
-
-Let me reach out to their AI friends and see if we can form a group. I'll get back to you in just a minute! ⏰"""
         
-        # Start negotiations with other AI Friends
-        for match in matches:
+        send_friendly_message(state['user_phone'], message, message_type="morning_checkin")
+        state['messages'].append(AIMessage(content=message))
+        return state
+    
+    # 🔥 NEW: Group matches by restaurant and present options
+    matches_by_restaurant = {}
+    for match in matches:
+        restaurant = match.get('searched_restaurant', 'food')
+        if restaurant not in matches_by_restaurant:
+            matches_by_restaurant[restaurant] = []
+        matches_by_restaurant[restaurant].append(match)
+    
+    # Check if we have matches for multiple restaurants
+    if len(matches_by_restaurant) > 1:
+        # Multiple restaurant options - present choice with Yes/No
+        restaurant_options = []
+        
+        for restaurant, restaurant_matches in matches_by_restaurant.items():
+            count = len(restaurant_matches)
+            people_text = "person" if count == 1 else "people"
+            restaurant_options.append(f"• {restaurant} ({count} {people_text})")
+        
+        # Store matches for later use
+        state['matches_by_restaurant'] = matches_by_restaurant
+        
+        options_text = "\n".join(restaurant_options)
+        
+        message = f"""Great news! I found matches for multiple restaurants:
+
+{options_text}
+
+Want me to form a group? Reply:
+• YES [restaurant name] - like "YES Thai Garden"
+• NO - to skip for now
+
+Example: "YES {list(matches_by_restaurant.keys())[0]}" 🍜"""
+        
+    else:
+        # Single restaurant - present simple Yes/No
+        restaurant = list(matches_by_restaurant.keys())[0]
+        restaurant_matches = matches_by_restaurant[restaurant]
+        count = len(restaurant_matches)
+        people_text = "person" if count == 1 else "people"
+        
+        # Store matches for later use
+        state['matches_by_restaurant'] = matches_by_restaurant
+        
+        message = f"""Great news! I found {count} {people_text} interested in {restaurant}!
+
+Want me to form a group? Reply:
+• YES - to join the {restaurant} group
+• NO - to skip for now
+
+I'll coordinate with their AI friends to set it up! 🍜"""
+    
+    send_friendly_message(state['user_phone'], message, message_type="morning_checkin")
+    state['messages'].append(AIMessage(content=message))
+    return state
+
+
+def handle_morning_match_response_node(state: PangeaState) -> PangeaState:
+    """Handle user's YES/NO response to morning matches with restaurant choice"""
+    
+    user_response = state['messages'][-1].content.strip().lower()
+    matches_by_restaurant = state.get('matches_by_restaurant', {})
+    
+    if not matches_by_restaurant:
+        message = "I don't have any active match options for you right now. Try making a new food request!"
+        send_friendly_message(state['user_phone'], message, message_type="error")
+        state['messages'].append(AIMessage(content=message))
+        return state
+    
+    # Check for NO response
+    if 'no' in user_response or user_response.strip() == 'n':
+        message = "No worries! Maybe next time. I'll keep an eye out for other opportunities for you! 👍"
+        send_friendly_message(state['user_phone'], message, message_type="general")
+        state['messages'].append(AIMessage(content=message))
+        
+        # Clear the stored matches
+        if 'matches_by_restaurant' in state:
+            del state['matches_by_restaurant']
+        
+        return state
+    
+    # Check for YES response
+    if 'yes' in user_response or user_response.strip() == 'y':
+        chosen_restaurant = None
+        chosen_matches = None
+        
+        # If only one restaurant option, use it
+        if len(matches_by_restaurant) == 1:
+            chosen_restaurant = list(matches_by_restaurant.keys())[0]
+            chosen_matches = matches_by_restaurant[chosen_restaurant]
+        else:
+            # Multiple restaurants - try to extract which one they chose
+            for restaurant_name, restaurant_matches in matches_by_restaurant.items():
+                if restaurant_name.lower() in user_response:
+                    chosen_restaurant = restaurant_name
+                    chosen_matches = restaurant_matches
+                    break
+        
+        if not chosen_restaurant:
+            # Couldn't determine which restaurant for multiple options
+            restaurant_names = list(matches_by_restaurant.keys())
+            message = f"""I see you want to join a group! Which restaurant would you prefer?
+
+Reply "YES [restaurant name]":
+{chr(10).join(f'• YES {name}' for name in restaurant_names)}
+
+Example: "YES {restaurant_names[0]}" 🍜"""
+            
+            send_friendly_message(state['user_phone'], message, message_type="clarification")
+            state['messages'].append(AIMessage(content=message))
+            return state
+        
+        # Valid choice - start negotiations for chosen restaurant
+        count = len(chosen_matches)
+        people_text = "person" if count == 1 else "people"
+        
+        message = f"""Perfect! I'll set up your {chosen_restaurant} group with {count} other {people_text}! 
+
+Let me reach out to their AI friends and coordinate the details. I'll get back to you shortly! ⏰"""
+        
+        # Start negotiations for chosen restaurant
+        for match in chosen_matches:
             negotiation_id = str(uuid.uuid4())
             negotiate_with_other_ai(
                 match['user_phone'],
                 {
-                    'restaurant': restaurant,
+                    'restaurant': chosen_restaurant,
                     'location': state['current_request'].get('location'),
                     'time': state['current_request'].get('time_preference'),
                     'requesting_user': state['user_phone']
                 },
                 negotiation_id
             )
+        
+        send_friendly_message(state['user_phone'], message, message_type="morning_group_forming")
+        state['messages'].append(AIMessage(content=message))
+        
+        # Clear the stored matches
+        if 'matches_by_restaurant' in state:
+            del state['matches_by_restaurant']
+        
+        return state
     
-    send_friendly_message(state['user_phone'], message, message_type="morning_checkin")
+    # Unclear response
+    message = """I didn't catch that! Please reply:
+• YES - to join a group
+• NO - to skip for now
+
+Or if you have multiple restaurant options, specify which one:
+• YES [restaurant name] - like "YES Thai Garden" """
+    
+    send_friendly_message(state['user_phone'], message, message_type="clarification")
     state['messages'].append(AIMessage(content=message))
     return state
 
