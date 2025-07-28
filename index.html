@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pangea - Your AI Friend That Saves 90% On Food Delivery</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Brandon+Grotesque:wght@300;400;500;600;700;900&family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -13,33 +13,34 @@
         }
 
         :root {
-            --primary-beige: #F5F1EB;
-            --accent-terracotta: #D4926B;
-            --sage-green: #8B9D83;
-            --deep-black: #000000;
-            --cream-white: #FEFCF8;
-            --warm-gray: #8B7D6B;
-            --charcoal: #1A1A1A;
+            --this-is-us-gold: #FCB711;
+            --warm-white: #FFFFFF;
+            --pure-black: #000000;
+            --soft-gray: #F8F8F8;
+            --text-gray: #666666;
+            --light-gray: #E8E8E8;
+            --accent-green: #6B8E5A;
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             line-height: 1.6;
-            color: var(--deep-black);
-            background-color: var(--cream-white);
+            color: var(--pure-black);
+            background-color: var(--warm-white);
+            font-weight: 400;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 0 20px;
+            padding: 0 40px;
         }
 
-        /* Header */
+        /* Header - Clean and Minimal */
         header {
-            background: var(--cream-white);
-            padding: 20px 0;
-            border-bottom: 1px solid var(--primary-beige);
+            background: var(--warm-white);
+            padding: 30px 0;
+            border-bottom: 1px solid var(--light-gray);
         }
 
         nav {
@@ -51,236 +52,291 @@
         .logo {
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-size: 24px;
-            font-weight: 900;
-            color: var(--deep-black);
+            gap: 15px;
+            font-family: 'Brandon Grotesque', 'Inter', sans-serif;
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--this-is-us-gold);
+            letter-spacing: 1px;
         }
 
         .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--accent-terracotta), var(--sage-green));
-            border-radius: 8px;
+            width: 45px;
+            height: 45px;
+            background: var(--pure-black);
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 20px;
+            font-size: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
 
         .nav-links {
             display: flex;
-            gap: 30px;
+            gap: 40px;
             list-style: none;
         }
 
         .nav-links a {
             text-decoration: none;
-            color: var(--warm-gray);
+            color: var(--text-gray);
             font-weight: 500;
-            transition: color 0.3s;
+            font-size: 16px;
+            transition: color 0.3s ease;
         }
 
         .nav-links a:hover {
-            color: var(--accent-terracotta);
+            color: var(--this-is-us-gold);
         }
 
         .cta-button {
-            background: var(--deep-black);
-            color: var(--cream-white);
-            padding: 12px 24px;
-            border-radius: 25px;
+            background: var(--pure-black);
+            color: var(--warm-white);
+            padding: 14px 28px;
+            border-radius: 30px;
             text-decoration: none;
             font-weight: 600;
-            transition: all 0.3s;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            border: 2px solid var(--pure-black);
         }
 
         .cta-button:hover {
-            background: var(--accent-terracotta);
-            transform: translateY(-2px);
+            background: var(--this-is-us-gold);
+            border-color: var(--this-is-us-gold);
+            transform: translateY(-1px);
         }
 
-        /* Hero Section */
+        /* Hero Section - This Is Us Style */
         .hero {
-            background: var(--primary-beige);
-            padding: 80px 0;
+            background: var(--warm-white);
+            padding: 100px 0 120px;
             text-align: center;
         }
 
         .hero h1 {
+            font-family: 'Brandon Grotesque', 'Inter', sans-serif;
             font-size: 3.5rem;
-            font-weight: 900;
-            color: var(--deep-black);
+            font-weight: 300;
+            color: var(--this-is-us-gold);
             margin-bottom: 30px;
             line-height: 1.1;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .hero h1 .light {
+            font-weight: 300;
+        }
+
+        .hero h1 .bold {
+            font-weight: 900;
+        }
+
+        .hero h1 .black {
+            color: var(--pure-black);
+        }
+
+        .hero .tagline {
+            font-family: 'Brandon Grotesque', 'Inter', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 300;
+            color: var(--pure-black);
+            margin-bottom: 30px;
+            line-height: 1.1;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }
 
         .hero .subtitle {
             font-size: 1.3rem;
-            color: var(--warm-gray);
+            color: var(--text-gray);
             margin-bottom: 50px;
             max-width: 800px;
             margin-left: auto;
             margin-right: auto;
+            font-weight: 400;
+            line-height: 1.5;
         }
 
         .hero-cta {
-            background: var(--accent-terracotta);
-            color: var(--cream-white);
-            padding: 18px 40px;
+            background: var(--this-is-us-gold);
+            color: var(--warm-white);
+            padding: 20px 50px;
             border-radius: 50px;
             text-decoration: none;
             font-weight: 700;
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             display: inline-block;
-            transition: all 0.3s;
-            box-shadow: 0 10px 30px rgba(212, 146, 107, 0.3);
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 25px rgba(252, 183, 17, 0.3);
+            letter-spacing: 0.5px;
         }
 
         .hero-cta:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 15px 40px rgba(212, 146, 107, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 35px rgba(252, 183, 17, 0.4);
         }
 
-        /* How It Works */
-        .how-it-works {
-            padding: 80px 0;
-            background: var(--cream-white);
+        /* Clean Sections */
+        .section {
+            padding: 100px 0;
+            background: var(--warm-white);
+        }
+
+        .section.alt {
+            background: var(--soft-gray);
         }
 
         .section-title {
             text-align: center;
-            font-size: 2.5rem;
-            font-weight: 900;
-            margin-bottom: 60px;
-            color: var(--deep-black);
+            font-family: 'Brandon Grotesque', 'Inter', sans-serif;
+            font-size: 3rem;
+            font-weight: 300;
+            margin-bottom: 80px;
+            color: var(--pure-black);
+            letter-spacing: 1px;
         }
 
+        .section-title .accent {
+            color: var(--this-is-us-gold);
+            font-weight: 700;
+        }
+
+        /* How It Works - Minimal and Clean */
         .steps {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 40px;
-            margin-bottom: 60px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 60px;
+            margin-bottom: 80px;
         }
 
         .step {
             text-align: center;
-            padding: 40px 30px;
-            border-radius: 20px;
-            background: white;
-            border: 2px solid var(--primary-beige);
-            transition: all 0.3s;
-        }
-
-        .step:hover {
-            transform: translateY(-5px);
-            border-color: var(--accent-terracotta);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 50px 30px;
         }
 
         .step-number {
-            width: 60px;
-            height: 60px;
-            background: var(--accent-terracotta);
+            width: 80px;
+            height: 80px;
+            background: var(--this-is-us-gold);
             color: white;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 900;
-            font-size: 1.5rem;
-            margin: 0 auto 20px;
+            font-weight: 300;
+            font-size: 2rem;
+            margin: 0 auto 30px;
+            font-family: 'Brandon Grotesque', sans-serif;
         }
 
         .step h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 15px;
-            color: var(--deep-black);
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--pure-black);
+            letter-spacing: 0.5px;
         }
 
         .step p {
-            color: var(--warm-gray);
+            color: var(--text-gray);
             font-size: 1.1rem;
+            line-height: 1.6;
+            font-weight: 400;
         }
 
-        /* Chat Example */
+        /* Chat Example - Elegant */
         .chat-example {
-            background: var(--primary-beige);
-            padding: 60px 30px;
+            background: var(--warm-white);
+            padding: 60px 40px;
             border-radius: 20px;
-            max-width: 600px;
+            max-width: 700px;
             margin: 0 auto;
+            border: 1px solid var(--light-gray);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
         }
 
         .chat-header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 40px;
         }
 
         .chat-header h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--deep-black);
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--pure-black);
             margin-bottom: 10px;
         }
 
         .message {
-            background: white;
-            padding: 20px;
+            background: var(--soft-gray);
+            padding: 25px;
             border-radius: 15px;
-            margin-bottom: 15px;
-            border-left: 4px solid var(--sage-green);
-            font-style: italic;
-            color: var(--charcoal);
+            margin-bottom: 20px;
+            border-left: 4px solid var(--this-is-us-gold);
+            font-style: normal;
+            color: var(--pure-black);
+            font-size: 1rem;
+            line-height: 1.5;
         }
 
-        /* Pricing Section */
+        /* Pricing - Clean and Bold */
         .pricing {
-            padding: 80px 0;
-            background: var(--deep-black);
-            color: var(--cream-white);
+            padding: 100px 0;
+            background: var(--pure-black);
+            color: var(--warm-white);
             text-align: center;
         }
 
         .pricing .section-title {
-            color: var(--cream-white);
+            color: var(--warm-white);
+        }
+
+        .pricing .section-title .accent {
+            color: var(--this-is-us-gold);
         }
 
         .pricing-comparison {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 40px;
-            max-width: 800px;
+            gap: 60px;
+            max-width: 900px;
             margin: 0 auto;
         }
 
         .pricing-card {
-            padding: 40px 30px;
+            padding: 50px 40px;
             border-radius: 20px;
-            border: 2px solid var(--charcoal);
+            border: 1px solid #333;
         }
 
         .before {
-            background: var(--charcoal);
+            background: #1a1a1a;
         }
 
         .after {
-            background: var(--accent-terracotta);
-            transform: scale(1.05);
+            background: var(--this-is-us-gold);
+            transform: scale(1.02);
+            color: var(--pure-black);
         }
 
         .pricing-card h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 20px;
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 30px;
         }
 
         .price {
-            font-size: 3rem;
-            font-weight: 900;
-            margin-bottom: 10px;
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
         }
 
         .old-price {
@@ -289,206 +345,219 @@
         }
 
         .savings {
-            background: var(--sage-green);
+            background: var(--accent-green);
             color: white;
-            padding: 10px 20px;
+            padding: 12px 25px;
             border-radius: 50px;
             font-weight: 700;
             display: inline-block;
-            margin-top: 20px;
+            margin-top: 25px;
+            font-size: 1rem;
         }
 
-        /* CTA Section */
+        /* Final CTA - Elegant */
         .final-cta {
-            padding: 80px 0;
-            background: var(--primary-beige);
+            padding: 100px 0;
+            background: var(--soft-gray);
             text-align: center;
         }
 
         .phone-number {
-            background: var(--deep-black);
-            color: var(--cream-white);
-            padding: 20px 40px;
+            background: var(--pure-black);
+            color: var(--warm-white);
+            padding: 25px 50px;
             border-radius: 15px;
-            font-size: 2rem;
-            font-weight: 900;
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 700;
             display: inline-block;
-            margin-bottom: 30px;
-            letter-spacing: 2px;
+            margin-bottom: 40px;
+            letter-spacing: 3px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
         }
 
-        /* Signup Form */
+        /* Signup Form - Clean */
         .signup-form {
-            background: white;
-            padding: 40px;
+            background: var(--warm-white);
+            padding: 50px;
             border-radius: 20px;
             max-width: 500px;
-            margin: 40px auto 0;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            margin: 60px auto 0;
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--light-gray);
         }
 
         .signup-form h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--deep-black);
-            margin-bottom: 20px;
+            font-family: 'Brandon Grotesque', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--pure-black);
+            margin-bottom: 30px;
             text-align: center;
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
 
         .form-group label {
             display: block;
             font-weight: 600;
-            color: var(--deep-black);
-            margin-bottom: 8px;
+            color: var(--pure-black);
+            margin-bottom: 10px;
+            font-size: 1rem;
         }
 
         .form-group input {
             width: 100%;
-            padding: 12px 15px;
-            border: 2px solid var(--primary-beige);
-            border-radius: 10px;
+            padding: 15px 20px;
+            border: 2px solid var(--light-gray);
+            border-radius: 12px;
             font-size: 1rem;
-            transition: border-color 0.3s;
+            transition: border-color 0.3s ease;
+            background: var(--warm-white);
         }
 
         .form-group input:focus {
             outline: none;
-            border-color: var(--accent-terracotta);
+            border-color: var(--this-is-us-gold);
         }
 
         .signup-button {
             width: 100%;
-            background: var(--accent-terracotta);
-            color: var(--cream-white);
-            padding: 15px 30px;
+            background: var(--this-is-us-gold);
+            color: var(--warm-white);
+            padding: 18px 35px;
             border: none;
-            border-radius: 10px;
-            font-size: 1.1rem;
+            border-radius: 12px;
+            font-size: 1.2rem;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
+            font-family: 'Brandon Grotesque', sans-serif;
         }
 
         .signup-button:hover {
-            background: var(--sage-green);
-            transform: translateY(-2px);
+            background: var(--accent-green);
+            transform: translateY(-1px);
         }
 
         .signup-button:disabled {
-            background: var(--warm-gray);
+            background: var(--text-gray);
             cursor: not-allowed;
             transform: none;
         }
 
-        .success-message {
-            background: var(--sage-green);
-            color: white;
-            padding: 15px;
-            border-radius: 10px;
+        .success-message, .error-message {
+            padding: 20px;
+            border-radius: 12px;
             text-align: center;
-            margin-top: 20px;
+            margin-top: 25px;
             display: none;
+            font-weight: 500;
+        }
+
+        .success-message {
+            background: var(--accent-green);
+            color: white;
         }
 
         .error-message {
             background: #ef4444;
             color: white;
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            margin-top: 20px;
-            display: none;
         }
 
-        /* Responsive */
+        /* Footer */
+        footer {
+            background: var(--pure-black);
+            color: var(--warm-white);
+            padding: 60px 0;
+            text-align: center;
+        }
+
+        footer .logo {
+            justify-content: center;
+            margin-bottom: 25px;
+            color: var(--this-is-us-gold);
+        }
+
+        footer p {
+            color: var(--text-gray);
+            font-size: 1rem;
+        }
+
+        /* Responsive Design */
         @media (max-width: 768px) {
             .container {
-                padding: 0 15px;
+                padding: 0 20px;
             }
             
             .hero {
-                padding: 60px 0;
+                padding: 80px 0 100px;
             }
             
             .hero h1 {
-                font-size: 2.2rem;
+                font-size: 2.8rem;
                 line-height: 1.2;
-                margin-bottom: 20px;
+                margin-bottom: 15px;
+            }
+            
+            .hero .tagline {
+                font-size: 2.8rem;
+                margin-bottom: 30px;
             }
             
             .hero .subtitle {
                 font-size: 1.1rem;
-                margin-bottom: 40px;
+                margin-bottom: 50px;
                 padding: 0 10px;
             }
             
             .hero-cta {
-                padding: 15px 30px;
-                font-size: 1.1rem;
+                padding: 18px 40px;
+                font-size: 1.2rem;
+            }
+            
+            .steps {
+                grid-template-columns: 1fr;
+                gap: 50px;
             }
             
             .pricing-comparison {
                 grid-template-columns: 1fr;
-                gap: 20px;
+                gap: 40px;
             }
             
             .nav-links {
                 display: none;
             }
             
-            .steps {
-                grid-template-columns: 1fr;
-                gap: 30px;
-            }
-            
-            .step {
-                padding: 30px 20px;
+            .section {
+                padding: 80px 0;
             }
             
             .section-title {
-                font-size: 2rem;
-                margin-bottom: 40px;
-                line-height: 1.2;
-            }
-            
-            .how-it-works {
-                padding: 60px 0;
-            }
-            
-            .pricing {
-                padding: 60px 0;
-            }
-            
-            .final-cta {
-                padding: 60px 0;
+                font-size: 2.2rem;
+                margin-bottom: 60px;
             }
             
             .phone-number {
-                font-size: 1.5rem;
-                padding: 15px 25px;
-                letter-spacing: 1px;
+                font-size: 1.8rem;
+                padding: 20px 35px;
+                letter-spacing: 2px;
             }
             
             .chat-example {
-                padding: 40px 20px;
+                padding: 40px 25px;
                 margin: 0 10px;
             }
             
-            .message {
-                padding: 15px;
-                font-size: 0.95rem;
-            }
-            
             .pricing-card {
-                padding: 30px 20px;
+                padding: 40px 30px;
             }
             
             .price {
-                font-size: 2.5rem;
+                font-size: 3rem;
             }
             
             .after {
@@ -498,7 +567,11 @@
         
         @media (max-width: 480px) {
             .hero h1 {
-                font-size: 1.8rem;
+                font-size: 2.2rem;
+            }
+            
+            .hero .tagline {
+                font-size: 2.2rem;
             }
             
             .hero .subtitle {
@@ -506,36 +579,29 @@
             }
             
             .section-title {
-                font-size: 1.7rem;
+                font-size: 1.8rem;
             }
             
             .phone-number {
-                font-size: 1.2rem;
-                padding: 12px 20px;
+                font-size: 1.4rem;
+                padding: 15px 25px;
+                letter-spacing: 1px;
             }
             
             .step h3 {
-                font-size: 1.3rem;
+                font-size: 1.5rem;
             }
             
             .step p {
                 font-size: 1rem;
             }
             
-            .chat-header h3 {
-                font-size: 1.3rem;
-            }
-            
-            .message {
-                font-size: 0.9rem;
-            }
-            
             .pricing-card h3 {
-                font-size: 1.3rem;
+                font-size: 1.5rem;
             }
             
             .price {
-                font-size: 2rem;
+                font-size: 2.5rem;
             }
         }
     </style>
@@ -558,17 +624,18 @@
 
     <section class="hero">
         <div class="container">
-            <h1>Your AI Friend That Saves 90% On Food Delivery By Texting You</h1>
+            <h1>Your <span class="emphasis">AI FRIEND</span> That Saves</h1>
+            <p class="tagline">90% On Food Delivery By Texting You</p>
             <p class="subtitle">
                 Your AI friend talks to you, while also talking to everyone else's AI friend to coordinate 
                 group food orders anywhere, anytime on campus making delivery 90% more affordable.
             </p>
-            <p style="font-size: 1.1rem; color: var(--warm-gray); margin-bottom: 40px; font-style: italic;">
+            <p style="font-size: 1.1rem; color: var(--text-gray); margin-bottom: 40px; font-style: italic;">
                 <strong>It's like having a friend who's constantly coordinating food orders for you and saving you money, except it never sleeps and knows everyone on campus.</strong>
             </p>
             <a href="#start" class="hero-cta">Text To Start Saving 90%</a>
 
-            <!-- Signup Form - Moved to top -->
+            <!-- Signup Form -->
             <div class="signup-form">
                 <h3>Sign Up Now</h3>
                 <form id="signupForm">
@@ -590,9 +657,9 @@
         </div>
     </section>
 
-    <section class="how-it-works" id="how-it-works">
+    <section class="section" id="how-it-works">
         <div class="container">
-            <h2 class="section-title">How It Works</h2>
+            <h2 class="section-title">How <span class="accent">It Works</span></h2>
             <div class="steps">
                 <div class="step">
                     <div class="step-number">1</div>
@@ -630,7 +697,7 @@
 
     <section class="pricing" id="pricing">
         <div class="container">
-            <h2 class="section-title">The Price Difference Is Incredible</h2>
+            <h2 class="section-title">The Price <span class="accent">Difference</span> Is Incredible</h2>
             <div class="pricing-comparison">
                 <div class="pricing-card before">
                     <h3>Ordering Alone</h3>
@@ -648,14 +715,14 @@
         </div>
     </section>
 
-    <section class="final-cta" id="start">
+    <section class="final-cta section alt" id="start">
         <div class="container">
-            <h2 class="section-title">Ready To Save 90% On Every Food Order?</h2>
-            <p style="font-size: 1.2rem; margin-bottom: 40px; color: var(--warm-gray);">
+            <h2 class="section-title">Ready To <span class="accent">Save 90%</span> On Every Food Order?</h2>
+            <p style="font-size: 1.3rem; margin-bottom: 50px; color: var(--text-gray); font-weight: 400;">
                 Text this number to get started with your AI food coordination friend:
             </p>
             <div class="phone-number">+18443118208</div>
-            <p style="color: var(--warm-gray); margin-top: 30px;">
+            <p style="color: var(--text-gray); margin-top: 40px; font-size: 1.1rem;">
                 Just text "I want pizza at Campus Center" or any food craving to start saving immediately.
             </p>
         </div>
@@ -700,13 +767,13 @@
         });
     </script>
 
-    <footer style="background: var(--deep-black); color: var(--cream-white); padding: 40px 0; text-align: center;">
+    <footer>
         <div class="container">
-            <div class="logo" style="justify-content: center; margin-bottom: 20px;">
+            <div class="logo">
                 <div class="logo-icon">🍽️</div>
                 <span>PANGEA</span>
             </div>
-            <p style="color: var(--warm-gray);">Making food delivery affordable for every college student, everywhere.</p>
+            <p>Making food delivery affordable for every college student, everywhere.</p>
         </div>
     </footer>
 </body>
