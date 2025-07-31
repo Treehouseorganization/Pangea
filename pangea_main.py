@@ -1635,6 +1635,10 @@ def send_friendly_message(phone_number: str, message: str, message_type: str = "
 def enhance_message_with_context(message: str, message_type: str, user_history: Dict) -> str:
     """Use Claude 4 to enhance messages with personalization and context"""
     
+    # Skip enhancement for FAQ messages - they're already context-aware
+    if message_type == "faq":
+        return message
+    
     # Get user's name or create friendly identifier
     user_name = user_history.get('preferences', {}).get('name', 'friend')
     past_orders = len(user_history.get('successful_matches', []))
@@ -3315,10 +3319,22 @@ def faq_answered_node(state: PangeaState) -> PangeaState:
     user_phone = state['user_phone']
     user_message = state['messages'][-1].content.lower()
     
+    # Check if user is new or existing
+    user_doc = db.collection('users').document(user_phone).get()
+    is_new_user = not user_doc.exists
+    
+    # Check for active order session to understand context
+    try:
+        from pangea_order_processor import get_user_order_session
+        has_active_session = bool(get_user_order_session(user_phone))
+    except:
+        has_active_session = False
+    
     # Determine what kind of FAQ this is and respond appropriately
     if 'restaurant' in user_message or 'food' in user_message or 'available' in user_message:
-        # Restaurant availability question
-        message = """🍽️ Available restaurants for group delivery:
+        # Restaurant availability question - context-aware response
+        if is_new_user:
+            message = """🍽️ Available restaurants for group delivery:
 
 • McDonald's 🍟
 • Chipotle 🌯  
@@ -3329,6 +3345,28 @@ def faq_answered_node(state: PangeaState) -> PangeaState:
 Just tell me what you're craving and I'll find you lunch buddies to split the delivery fee! 
 
 Example: "I want Chipotle delivered to the library at 1pm" """
+        else:
+            # Existing user - more direct response
+            if has_active_session:
+                message = """🍽️ Available restaurants for your next order:
+
+• McDonald's 🍟
+• Chipotle 🌯  
+• Chick-fil-A 🐔
+• Portillo's 🥩
+• Starbucks ☕️
+
+What are you thinking for your next order? 🤔"""
+            else:
+                message = """🍽️ Available restaurants right now:
+
+• McDonald's 🍟
+• Chipotle 🌯  
+• Chick-fil-A 🐔
+• Portillo's 🥩
+• Starbucks ☕️
+
+What sounds good? Just tell me what you want and where! 😊"""
         
     elif 'location' in user_message or 'where' in user_message:
         # Location question
