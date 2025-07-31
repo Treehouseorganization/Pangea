@@ -2594,6 +2594,17 @@ Return ONLY this JSON format:
        if not any(loc_word in user_message.lower() for loc_word in ['library', 'daley', 'student center', 'sce', 'scw', 'university hall', 'student services']):
            missing_info.append('location')
    
+   # Check if time is missing or defaulted to generic values
+   time_preference = request_data.get('time_preference', '').lower()
+   has_time_keywords = any(time_word in user_message.lower() for time_word in [
+       'now', 'soon', 'asap', 'immediately', 'right now', 'lunch', 'dinner', 'breakfast',
+       ':', 'pm', 'am', 'minutes', 'hour', 'later', 'tonight', 'today', 'tomorrow'
+   ])
+   
+   # If no time keywords found in original message, ask for clarification
+   if not has_time_keywords:
+       missing_info.append('time')
+   
    # If information is missing, ask for clarification
    if missing_info:
        state['conversation_stage'] = 'incomplete_request'
@@ -2601,12 +2612,20 @@ Return ONLY this JSON format:
        state['partial_request'] = request_data
        
        # Generate a helpful message asking for missing information
-       if 'restaurant' in missing_info and 'location' in missing_info:
+       if 'restaurant' in missing_info and 'location' in missing_info and 'time' in missing_info:
+           clarification = "I'd love to help you order food! Could you tell me:\n\n1️⃣ What restaurant/food do you want?\n2️⃣ Where should it be delivered?\n3️⃣ When do you want it delivered?\n\nExample: \"I want Chipotle delivered to the library at 2pm\""
+       elif 'restaurant' in missing_info and 'location' in missing_info:
            clarification = "I'd love to help you order food! Could you tell me:\n\n1️⃣ What restaurant/food do you want?\n2️⃣ Where should it be delivered?\n\nExample: \"I want Chipotle delivered to the library\""
+       elif 'restaurant' in missing_info and 'time' in missing_info:
+           clarification = f"Great! I can help with delivery to {location}. Could you tell me:\n\n1️⃣ What restaurant or food are you craving?\n2️⃣ When do you want it delivered?\n\nAvailable restaurants: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks\nExample: \"McDonald's right now\" or \"Chipotle at 3pm\""
+       elif 'location' in missing_info and 'time' in missing_info:
+           clarification = f"Perfect! {restaurant} sounds good. Could you tell me:\n\n1️⃣ Where would you like it delivered?\n2️⃣ When do you want it delivered?\n\nAvailable locations:\n• Richard J Daley Library\n• Student Center East\n• Student Center West\n• Student Services Building\n• University Hall\n\nExample: \"Library at 2pm\" or \"Student Center now\""
        elif 'restaurant' in missing_info:
            clarification = f"Great! I can help with delivery to {location}. What restaurant or food are you craving?\n\nAvailable: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks"
        elif 'location' in missing_info:
            clarification = f"Perfect! {restaurant} sounds good. Where would you like it delivered?\n\nAvailable locations:\n• Richard J Daley Library\n• Student Center East\n• Student Center West\n• Student Services Building\n• University Hall"
+       elif 'time' in missing_info:
+           clarification = f"Great! {restaurant} to {location} sounds perfect! When would you like it delivered?\n\n• Right now\n• Specific time (like \"2pm\" or \"5:30pm\")\n• General time (like \"lunch\" or \"dinner\")\n\nJust let me know your preference!"
        
        send_friendly_message(state['user_phone'], clarification, message_type="clarification")
        state['messages'].append(AIMessage(content=clarification))
