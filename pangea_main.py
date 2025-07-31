@@ -1755,104 +1755,490 @@ def extract_learning_insights(phone_number: str, interaction_data: Dict) -> Dict
     except:
         return {"insights_extraction": "failed"}
 
-# ===== ROUTING PATTERN =====
-def classify_message_intent_node(state: PangeaState) -> PangeaState:
-    """Anthropic's Routing pattern - classify input and direct to specialized task"""
+# ===== UNIFIED INTELLIGENT ROUTER =====
+@tool
+def intelligent_router(phone_number: str, new_message: str) -> Dict:
+    """
+    Unified AI-powered router that uses full conversation context to dynamically
+    route to any appropriate tool/function based on user message and state
+    """
+    # Get comprehensive user context
+    try:
+        user_doc = db.collection('users').document(phone_number).get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        # Main system context
+        conversation_stage = user_data.get('conversation_stage', 'new')
+        missing_info = user_data.get('missing_info', [])
+        partial_request = user_data.get('partial_request', {})
+        recent_messages = user_data.get('recent_messages', [])
+        pending_group_invites = user_data.get('pending_group_invites', [])
+        user_preferences = user_data.get('preferences', {})
+        
+        # Order session context
+        from pangea_order_processor import get_user_order_session
+        order_session = get_user_order_session(phone_number)
+        
+    except Exception as e:
+        print(f"⚠️ Error getting user context: {e}")
+        user_data = {}
+        conversation_stage = 'new'
+        missing_info = []
+        partial_request = {}
+        recent_messages = []
+        pending_group_invites = []
+        user_preferences = {}
+        order_session = {}
+    
+    routing_prompt = f"""You are Pangea's unified intelligent router for a food delivery matching service. Your job is to analyze user messages and route them to the correct handler based on the FOOD ORDERING FLOW.
+
+COMPREHENSIVE CONTEXT:
+- Phone: {phone_number}
+- Conversation stage: {conversation_stage}
+- Missing info needed: {missing_info}
+- Partial food request: {partial_request}
+- Recent messages: {recent_messages[-3:] if recent_messages else []}
+- Pending group invites: {pending_group_invites}
+- User preferences: {user_preferences}
+- Active order session: {bool(order_session)}
+- Order session details: {order_session.get('order_stage', 'none') if order_session else 'none'}
+
+NEW MESSAGE: "{new_message}"
+
+PANGEA FOOD ORDERING FLOW:
+1. User makes spontaneous food request ("I want McDonald's", "craving pizza")
+2. System extracts: restaurant, location, time (now vs later)
+3. If missing info → ask for it via handle_incomplete_request
+4. If complete → search for group matches
+5. If group found → user gets invited, responds yes/no
+6. If no group → solo order process begins
+7. User places individual order and provides order details
+8. Payment and delivery coordination
+
+AVAILABLE ROUTING OPTIONS:
+
+MAIN FOOD MATCHING SYSTEM:
+- "start_fresh_request" - NEW food craving/restaurant request (clear old data)
+- "continue_food_matching" - Complete request ready for group matching
+- "handle_incomplete_request" - User filling in missing info (restaurant/location/time)
+- "group_response_yes" - User accepted group invitation (YES/sure/ok)
+- "group_response_no" - User declined group invitation (NO/pass/nah)
+- "morning_response" - Response to morning location/preference prompt
+- "preference_update" - Updating food/location preferences
+- "general_conversation" - FAQ, help, non-food chat
+
+ORDER FULFILLMENT SYSTEM:
+- "collect_order_number" - User providing order confirmation/name after placing order
+- "collect_order_description" - User providing what they ordered
+- "handle_payment_request" - User wants to pay (texted "PAY")
+- "redirect_to_payment" - Remind about payment options
+- "need_order_first" - User trying to pay without order details
+
+ROUTING DECISION TREE:
+
+1. ACTIVE ORDER SESSION (user already in order fulfillment):
+   - "pay"/"payment" → handle_payment_request
+   - Order numbers/names → collect_order_number
+   - Food descriptions → collect_order_description
+   - New food request → start_fresh_request (clear session)
+
+2. INCOMPLETE FOOD REQUEST (conversation_stage='incomplete_request'):
+   - User providing restaurant name → handle_incomplete_request
+   - User providing location → handle_incomplete_request  
+   - User providing time → handle_incomplete_request
+   - Completely new request → start_fresh_request
+
+3. PENDING GROUP INVITES:
+   - "yes"/"sure"/"ok" → group_response_yes
+   - "no"/"pass"/"nah" → group_response_no
+
+4. NEW FOOD REQUESTS:
+   - "I want [food/restaurant]" → start_fresh_request
+   - "craving [food]" → start_fresh_request
+   - "hungry for [food]" → start_fresh_request
+
+5. OTHER:
+   - Questions about service → general_conversation
+   - Morning greeting responses → morning_response
+
+Return JSON with:
+{{
+    "action": "[routing_option]",
+    "handler": "[specific_function_to_call]", 
+    "reasoning": "detailed explanation of routing decision",
+    "confidence": 0.95,
+    "context_used": ["list", "of", "context", "factors", "considered"]
+}}"""
+    
+    try:
+        llm = ChatAnthropic(model="claude-opus-4-20250514", temperature=0.1, max_tokens=4096)
+        response = llm.invoke([HumanMessage(content=routing_prompt)])
+        response_text = response.content.strip()
+        
+        print(f"🤖 Raw Claude response: {response_text[:200]}...")
+        
+        # Clean up response - remove any markdown formatting
+        if '```json' in response_text:
+            # Extract JSON from markdown code block
+            start = response_text.find('{')
+            end = response_text.rfind('}') + 1
+            response_text = response_text[start:end]
+        elif '```' in response_text:
+            # Remove any code block markers
+            response_text = response_text.replace('```', '').strip()
+        
+        # Try to find JSON in the response if it doesn't start with {
+        if not response_text.startswith('{'):
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                response_text = json_match.group()
+        
+        print(f"🔍 Cleaned response for parsing: {response_text[:100]}...")
+        result = json.loads(response_text)
+        
+        print(f"🎯 Intelligent Router Decision:")
+        print(f"   Action: {result['action']}")
+        print(f"   Handler: {result.get('handler', 'default')}")
+        print(f"   Confidence: {result.get('confidence', '?')}")
+        print(f"   Reasoning: {result.get('reasoning', '')}")
+        print(f"   Context: {result.get('context_used', [])}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Intelligent router failed: {e}")
+        # Intelligent fallback based on context and keywords
+        message_lower = new_message.lower().strip()
+        
+        print(f"🔄 Using fallback routing logic:")
+        print(f"   Conversation stage: {conversation_stage}")
+        print(f"   Missing info: {missing_info}")
+        print(f"   Has partial request: {bool(partial_request)}")
+        print(f"   Order session: {bool(order_session)}")
+        print(f"   Pending invites: {bool(pending_group_invites)}")
+        
+        # Priority 1: Handle incomplete requests (user responding with missing info)
+        if conversation_stage == 'incomplete_request' and missing_info and partial_request:
+            fallback_action = "handle_incomplete_request"
+            print(f"   🎯 Detected incomplete request follow-up")
+            
+        # Priority 2: Order session handling
+        elif order_session:
+            if any(word in message_lower for word in ['pay', 'payment']):
+                fallback_action = "handle_payment_request"
+                print(f"   💳 Detected payment request")
+            else:
+                fallback_action = "collect_order_number"
+                print(f"   📋 Detected order continuation")
+                
+        # Priority 3: Group responses
+        elif pending_group_invites:
+            if any(word in message_lower for word in ['yes', 'y', 'sure', 'ok']):
+                fallback_action = "group_response_yes"
+                print(f"   ✅ Detected group YES response")
+            elif any(word in message_lower for word in ['no', 'n', 'pass', 'nah']):
+                fallback_action = "group_response_no"
+                print(f"   ❌ Detected group NO response")
+            else:
+                fallback_action = "general_conversation" 
+                print(f"   💬 Detected general conversation")
+                
+        # Priority 4: New food requests
+        elif any(word in message_lower for word in ['want', 'craving', 'hungry', 'order', 'get', 'need']):
+            fallback_action = "start_fresh_request"
+            print(f"   🍔 Detected new food request")
+            
+        # Priority 5: Morning responses
+        elif conversation_stage == 'morning_greeting_sent':
+            fallback_action = "morning_response"
+            print(f"   🌅 Detected morning response")
+            
+        # Default: General conversation
+        else:
+            fallback_action = "general_conversation"
+            print(f"   💬 Defaulting to general conversation")
+            
+        return {
+            "action": fallback_action,
+            "handler": "fallback_routing",
+            "reasoning": f"Router failed, using context fallback: {fallback_action}",
+            "confidence": 0.3,
+            "context_used": ["fallback_keywords", "conversation_stage", "context_analysis"]
+        }
+
+def route_message_intelligently(phone_number: str, message_body: str):
+    """
+    Main routing function that uses intelligent_router and dispatches to appropriate handlers
+    """
+    # Get routing decision from AI
+    routing_decision = intelligent_router.invoke({
+        "phone_number": phone_number, 
+        "new_message": message_body
+    })
+    
+    action = routing_decision.get('action')
+    
+    # Import necessary modules
+    from pangea_order_processor import process_order_message, get_user_order_session
+    
+    # Dispatch to appropriate handler based on router decision
+    if action in ['collect_order_number', 'collect_order_description', 'handle_payment_request', 'redirect_to_payment', 'need_order_first']:
+        # Route to order processor system
+        print(f"🔄 Routing to order processor: {action}")
+        order_result = process_order_message(phone_number, message_body)
+        return {'system': 'order_processor', 'result': order_result, 'routing_decision': routing_decision}
+        
+    elif action == 'start_fresh_request' and get_user_order_session(phone_number):
+        # Clear old order session before starting fresh request
+        print(f"🗑️ Clearing old order session before fresh request")
+        from pangea_order_processor import clear_old_order_session
+        clear_old_order_session(phone_number)
+        # Then route to main system
+        main_result = handle_incoming_sms(phone_number, message_body)
+        return {'system': 'main_pangea', 'result': main_result, 'routing_decision': routing_decision}
+        
+    else:
+        # Route to main Pangea system for all other actions
+        # This includes: handle_incomplete_request, group_response_yes/no, continue_food_matching, 
+        # morning_response, preference_update, general_conversation, etc.
+        print(f"🔄 Routing to main Pangea system: {action}")
+        main_result = handle_incoming_sms(phone_number, message_body)
+        return {'system': 'main_pangea', 'result': main_result, 'routing_decision': routing_decision}
+
+def unified_claude_router_node(state: PangeaState) -> PangeaState:
+    """Legacy node - kept for compatibility but should use unified router instead"""
     
     last_message = state['messages'][-1].content
     user_phone = state['user_phone']
     
-    # FIRST: Check if user has active order session - this takes priority
+    # Get system state for Claude's decision
+    system_state = get_system_state_for_claude(user_phone, state)
+    
+    # Use Claude to make routing decision
+    routing_decision = get_claude_routing_decision(user_phone, last_message, state, system_state)
+    
+    # Update state based on Claude's decision
+    state['conversation_stage'] = routing_decision['action']
+    
+    # Extract any data Claude found
+    if routing_decision.get('extracted_data'):
+        state['current_request'].update(routing_decision['extracted_data'])
+    
+    # Handle missing info
+    if routing_decision.get('missing_info'):
+        state['missing_info'] = routing_decision['missing_info']
+        state['partial_request'] = routing_decision.get('partial_request', {})
+    
+    # Store Claude's response message but don't send it automatically
+    # Let the main flow handle messaging to avoid duplicates
+    if routing_decision.get('response_message'):
+        state['claude_response_message'] = routing_decision['response_message']
+    
+    return state
+
+
+
+def get_claude_routing_decision(user_phone: str, message: str, state: PangeaState, system_state: Dict) -> Dict:
+    """Use Claude to make intelligent routing decisions with platform context"""
+    
+    routing_prompt = f"""
+You are the intelligent router for Pangea, an AI-powered food delivery coordination system for college students.
+
+PLATFORM GOALS & CONTEXT:
+- Help students find "lunch buddies" to split delivery fees and save money
+- Create groups of 2-3 people ordering from the same restaurant to the same campus location
+- Provide a friendly, conversational AI experience that feels like texting a helpful friend
+- Match users based on restaurant preference, delivery location, and timing
+- Handle the entire process: matching → group formation → individual ordering → payment coordination
+
+USER EXPERIENCE PRINCIPLES:
+- Be helpful and proactive, not pushy
+- Make group ordering feel social and fun
+- Respect "no" responses and offer alternatives when appropriate
+- Keep conversations natural and brief
+- Always prioritize user autonomy - they can decline any group invitation
+
+CURRENT SITUATION:
+USER MESSAGE: "{message}"
+
+SYSTEM STATE:
+- Is New User: {system_state['is_new_user']}
+- Has Active Order Session: {system_state['has_active_order_session']}
+- Has Pending Group Invitation: {system_state['has_pending_group_invitation']}
+- Has Pending Negotiation: {system_state['has_pending_negotiation']}
+- Has Pending Proactive Notification: {system_state['has_pending_proactive_notification']}
+- Current Request: {system_state['current_request']}
+- Conversation Stage: {system_state['conversation_stage']}
+- Search Attempts: {system_state['search_attempts']}
+
+AVAILABLE ACTIONS & WHEN TO USE THEM:
+- welcome_new_user: First-time users need onboarding and explanation of how Pangea works
+- order_continuation: User has active group and is providing order details (confirmation numbers, payment, etc.)
+- group_response_yes: User accepts a group invitation - they want to join others for delivery
+- group_response_no: User declines a group invitation - handle gracefully, maybe offer alternatives
+- proactive_group_yes: User accepts when we proactively suggested joining an existing group
+- proactive_group_no: User declines proactive group suggestion
+- spontaneous_order: User wants to order food right now - start the matching process
+- incomplete_request: User mentioned food but missing key details (restaurant or location)
+- faq_answered: User has questions about how the service works, pricing, restaurants, etc.
+- morning_response: User responding to morning check-in about lunch plans
+
+ROUTING PRIORITY (most important rules first):
+1. New users ALWAYS get welcome_new_user first - they need to understand the platform
+2. Users with active order sessions discussing order details → order_continuation
+3. YES/NO responses when they have pending invitations → group_response_yes/no
+4. Food requests (mentions restaurants/hunger) without active session → spontaneous_order
+5. Incomplete food requests (mentioned food but missing restaurant/location) → incomplete_request
+6. Service questions → faq_answered
+
+CONTEXT CLUES FOR BETTER ROUTING:
+- "I want [restaurant]" or "hungry for [food]" = spontaneous_order
+- "Order #123" or "my name is..." = order_continuation (if they have active session)
+- "Yes" or "No" = group responses (check for pending invitations first)
+- "How does this work?" or "What restaurants?" = faq_answered
+- Mentions food but unclear restaurant/location = incomplete_request
+
+AVAILABLE RESTAURANTS: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks
+AVAILABLE LOCATIONS: Richard J Daley Library, Student Center East, Student Center West, Student Services Building, University Hall
+
+RESPONSE FORMAT:
+Return JSON with contextual understanding:
+{{
+    "action": "chosen_action",
+    "confidence": "high/medium/low",
+    "reasoning": "why you chose this action considering platform goals",
+    "extracted_data": {{
+        "restaurant": "exact restaurant name if mentioned",
+        "location": "exact location name if mentioned",
+        "time_preference": "user's time preference if mentioned"
+    }},
+    "missing_info": ["restaurant", "location"] if incomplete food request,
+    "response_message": "friendly, contextual message if needed (optional)"
+}}
+
+Remember: You're helping create a social, money-saving food experience. Route with both technical accuracy AND user experience in mind.
+"""
+
     try:
-        session = db.collection('order_sessions').document(user_phone).get()
-        if session.exists:
-            # User has active order session, send to order processor
-            state['conversation_stage'] = "order_continuation"
-            return state
+        response = anthropic_llm.invoke([HumanMessage(content=routing_prompt)])
+        response_text = response.content.strip()
+        
+        # Clean JSON response
+        if '```json' in response_text:
+            start = response_text.find('{')
+            end = response_text.rfind('}') + 1
+            response_text = response_text[start:end]
+        elif '```' in response_text:
+            response_text = response_text.replace('```', '').strip()
+        
+        # Extract JSON if wrapped in other text
+        if not response_text.startswith('{'):
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                response_text = json_match.group()
+        
+        decision = json.loads(response_text)
+        
+        # Validate required fields
+        if 'action' not in decision:
+            raise ValueError("Missing required 'action' field")
+        
+        print(f"🤖 Claude routing decision: {decision['action']} (confidence: {decision.get('confidence', 'unknown')})")
+        print(f"   Reasoning: {decision.get('reasoning', 'No reasoning provided')}")
+        
+        return decision
+        
     except Exception as e:
-        print(f"Error checking order session: {e}")
+        print(f"❌ Claude routing failed: {e}")
+        # Fallback logic with same robustness
+        return get_fallback_routing_decision(message, system_state)
+
+def get_system_state_for_claude(user_phone: str, state: PangeaState) -> Dict:
+    """Get system state for Claude's routing decision"""
     
-    # Check if first-time user
+    # Check if user exists
     user_doc = db.collection('users').document(user_phone).get()
-    if not user_doc.exists:
-        state['conversation_stage'] = "welcome_new_user"
-        return state
+    is_new_user = not user_doc.exists
     
-    # SECOND: Check if this is a response to a group invitation
+    # Check for active order session
     try:
-        # Check for old negotiation-based invitations
+        from pangea_order_processor import get_user_order_session
+        has_active_order_session = bool(get_user_order_session(user_phone))
+    except:
+        has_active_order_session = False
+    
+    # Check for pending invitations
+    has_pending_negotiation = False
+    has_pending_group_invitation = False
+    has_pending_proactive_notification = False
+    
+    try:
+        # Check negotiations
         pending_negotiations = db.collection('negotiations')\
                                .where('to_user', '==', user_phone)\
                                .where('status', '==', 'pending')\
                                .limit(1).get()
+        has_pending_negotiation = len(pending_negotiations) > 0
         
-        # Check for new perfect match group invitations  
+        # Check groups
         pending_groups = db.collection('active_groups')\
                           .where('members', 'array_contains', user_phone)\
-                          .where('status', '==', 'pending_responses')\
+                          .where('status', 'in', ['pending_responses', 'forming'])\
                           .limit(1).get()
+        has_pending_group_invitation = len(pending_groups) > 0
         
-        # ALSO check for 'forming' status groups in case of race condition
-        forming_groups = db.collection('active_groups')\
-                          .where('members', 'array_contains', user_phone)\
-                          .where('status', '==', 'forming')\
-                          .limit(1).get()
+        # Check proactive notifications
+        proactive_notification = check_pending_proactive_notifications(user_phone)
+        has_pending_proactive_notification = bool(proactive_notification)
         
-        if len(pending_negotiations) > 0 or len(pending_groups) > 0 or len(forming_groups) > 0:
-            # This user has a pending group invitation (either type)
-            message_lower = last_message.lower().strip()
-            if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
-                state['conversation_stage'] = "group_response_yes"
-                return state
-            elif 'no' in message_lower or 'n' == message_lower or 'pass' in message_lower or 'nah' in message_lower:
-                state['conversation_stage'] = "group_response_no"
-                return state
     except Exception as e:
-        print(f"Error checking pending invitations: {e}")
+        print(f"Error checking system state: {e}")
     
-    # THIRD: Check if this is a response to proactive group notifications
-    proactive_notification = check_pending_proactive_notifications(user_phone)
-    if proactive_notification:
-        message_lower = last_message.lower().strip()
-        if 'yes' in message_lower or 'y' == message_lower or 'sure' in message_lower or 'ok' in message_lower:
-            state['conversation_stage'] = "proactive_group_yes"
-            state['proactive_notification_data'] = proactive_notification
-            return state
-        elif 'no' in message_lower or 'n' == message_lower or 'pass' in message_lower or 'nah' in message_lower:
-            state['conversation_stage'] = "proactive_group_no"
-            state['proactive_notification_data'] = proactive_notification
-            return state
+    return {
+        'is_new_user': is_new_user,
+        'has_active_order_session': has_active_order_session,
+        'has_pending_negotiation': has_pending_negotiation,
+        'has_pending_group_invitation': has_pending_group_invitation,
+        'has_pending_proactive_notification': has_pending_proactive_notification,
+        'current_request': state.get('current_request', {}),
+        'conversation_stage': state.get('conversation_stage', 'initial'),
+        'search_attempts': state.get('search_attempts', 0),
+        'conversation_length': len(state.get('messages', []))
+    }
+
+def get_fallback_routing_decision(message: str, system_state: Dict) -> Dict:
+    """Simple fallback when Claude fails"""
     
-    # If not a group response, use LLM to classify intent
-    classification_prompt = f"""
-    Classify this message intent for a food delivery matching service:
+    message_lower = message.lower().strip()
     
-    Message: "{last_message}"
+    if system_state['is_new_user']:
+        return {"action": "welcome_new_user", "confidence": "high"}
     
-    Options:
-    - spontaneous_order: User wants food now/soon (e.g., "I want pizza", "ordering lunch", "hungry for burgers")
-    - morning_response: Response to "where will you be today" question  
-    - preference_update: User updating their food preferences
-    - group_response: Response to a group invitation
-    - general_question: Questions ABOUT the service, help requests, greetings (e.g., "what restaurants are available?", "how does this work?", "hello")
+    if system_state['has_active_order_session']:
+        return {"action": "order_continuation", "confidence": "high"}
     
-    Return only the classification.
-    """
+    if system_state['has_pending_group_invitation'] or system_state['has_pending_negotiation']:
+        if message_lower in ['yes', 'y', 'sure', 'ok']:
+            return {"action": "group_response_yes", "confidence": "high"}
+        elif message_lower in ['no', 'n', 'pass', 'nah']:
+            return {"action": "group_response_no", "confidence": "high"}
     
-    response = anthropic_llm.invoke([HumanMessage(content=classification_prompt)])
-    intent = response.content.strip().lower()
+    if system_state['has_pending_proactive_notification']:
+        if message_lower in ['yes', 'y', 'sure', 'ok']:
+            return {"action": "proactive_group_yes", "confidence": "high"}
+        elif message_lower in ['no', 'n', 'pass', 'nah']:
+            return {"action": "proactive_group_no", "confidence": "high"}
     
-    # If it's a general question OR no clear intent is found, try FAQ fallback
-    if intent == 'general_question' or intent not in ['spontaneous_order', 'morning_response', 'preference_update', 'group_response', 'general_question']:
-        faq_answer = answer_faq_question(last_message)
-        if faq_answer and not faq_answer.lower().startswith("sorry"):
-            send_friendly_message(user_phone, faq_answer, message_type="general")
-            state['messages'].append(AIMessage(content=faq_answer))
-            state['conversation_stage'] = "faq_answered"
-            return state
+    # Check for food requests
+    food_keywords = ['want', 'order', 'hungry', 'food', 'lunch', 'dinner', 'mcdonald', 'chipotle', 'starbucks']
+    if any(keyword in message_lower for keyword in food_keywords):
+        return {"action": "start_fresh_request", "confidence": "medium"}
     
-    state['conversation_stage'] = intent
-    return state
+    return {"action": "faq_answered", "confidence": "low"}
+
+
 
 def handle_order_continuation_node(state: PangeaState) -> PangeaState:
     """Handle messages that should go to order processor"""
@@ -2198,6 +2584,17 @@ Return ONLY this JSON format:
        
        send_friendly_message(state['user_phone'], clarification, message_type="clarification")
        state['messages'].append(AIMessage(content=clarification))
+       
+       # Save incomplete request data to database for persistence between webhook calls
+       print(f"💾 SAVING to database: missing_info={missing_info}, partial_request={request_data}")
+       db.collection('users').document(state['user_phone']).update({
+           'conversation_stage': 'incomplete_request',
+           'missing_info': missing_info,
+           'partial_request': request_data,
+           'last_updated': firestore.SERVER_TIMESTAMP
+       })
+       print(f"✅ Successfully saved incomplete request data to database")
+       
        return state
    
    # If we have all required info, continue with normal flow
@@ -3229,9 +3626,22 @@ def handle_incomplete_request_node(state: PangeaState) -> PangeaState:
     
     print(f"🔄 Handling incomplete request follow-up from {user_phone}")
     
-    # Get stored missing info and partial request
-    missing_info = state.get('missing_info', [])
-    partial_request = state.get('partial_request', {})
+    # Load missing info and partial request from database (don't rely on state)
+    try:
+        user_doc = db.collection('users').document(user_phone).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            missing_info = user_data.get('missing_info', [])
+            partial_request = user_data.get('partial_request', {})
+            print(f"📂 HANDLE_INCOMPLETE loaded from DB: missing_info={missing_info}, partial_request={partial_request}")
+        else:
+            missing_info = []
+            partial_request = {}
+            print(f"📂 HANDLE_INCOMPLETE: No data in DB")
+    except Exception as e:
+        print(f"❌ HANDLE_INCOMPLETE DB load error: {e}")
+        missing_info = []
+        partial_request = {}
     
     print(f"📝 Missing info: {missing_info}")
     print(f"📝 Partial request: {partial_request}")
@@ -3282,6 +3692,14 @@ def handle_incomplete_request_node(state: PangeaState) -> PangeaState:
             state['missing_info'] = still_missing
             state['partial_request'] = updated_request
             
+            # Save updated incomplete request data to database
+            db.collection('users').document(user_phone).update({
+                'conversation_stage': 'incomplete_request',
+                'missing_info': still_missing,
+                'partial_request': updated_request,
+                'last_updated': firestore.SERVER_TIMESTAMP
+            })
+            
             # Stay in incomplete_request state
             return state
             
@@ -3289,11 +3707,19 @@ def handle_incomplete_request_node(state: PangeaState) -> PangeaState:
         state['current_request'] = updated_request
         state['conversation_stage'] = 'spontaneous_matching'
         
-        # Clear the incomplete request data
+        # Clear the incomplete request data from state and database
         if 'missing_info' in state:
             del state['missing_info']
         if 'partial_request' in state:
             del state['partial_request']
+            
+        # Clear from database too
+        db.collection('users').document(user_phone).update({
+            'conversation_stage': 'spontaneous_matching',
+            'missing_info': firestore.DELETE_FIELD,
+            'partial_request': firestore.DELETE_FIELD,
+            'last_updated': firestore.SERVER_TIMESTAMP
+        })
             
         print(f"✅ Request completed! Moving to matching flow: {updated_request}")
         
@@ -3319,7 +3745,7 @@ def create_pangea_graph():
     workflow = StateGraph(PangeaState)
     
     # Add all nodes with enhanced functionality
-    workflow.add_node("classify_intent", classify_message_intent_node)
+    workflow.add_node("unified_router", unified_claude_router_node)
     workflow.add_node("welcome_new_user", welcome_new_user_node)
     workflow.add_node("morning_greeting", morning_greeting_node)
     workflow.add_node("process_morning_response", process_morning_response_node)
@@ -3343,8 +3769,8 @@ def create_pangea_graph():
     
     # Enhanced conditional routing with Claude 4 reasoning and group response handling
     workflow.add_conditional_edges(
-        "classify_intent",
-        route_based_on_intent,
+        "unified_router",
+        lambda state: state['conversation_stage'],
         {
             "welcome_new_user": "welcome_new_user",
             "morning_response": "process_morning_response", 
@@ -3366,8 +3792,15 @@ def create_pangea_graph():
     workflow.add_edge("present_morning_matches", END)
     workflow.add_edge("faq_answered", END)
     
-    # Enhanced spontaneous agent flow with learning
-    workflow.add_edge("analyze_spontaneous", "realtime_search")
+    # Enhanced spontaneous agent flow with conditional routing
+    workflow.add_conditional_edges(
+        "analyze_spontaneous",
+        lambda state: state.get('conversation_stage', 'spontaneous_matching'),
+        {
+            "incomplete_request": END,  # Stop and wait for user to provide missing info
+            "spontaneous_matching": "realtime_search"  # Proceed with search if complete
+        }
+    )
     workflow.add_edge("realtime_search", "negotiate")
     
     # Handle incomplete request flow - route based on conversation_stage
@@ -3403,7 +3836,7 @@ def create_pangea_graph():
     workflow.add_edge("handle_proactive_group_no", END) # NEW: Proactive group NO ends workflow
     workflow.add_edge("handle_order_continuation", END)
     # Set entry point
-    workflow.set_entry_point("classify_intent")
+    workflow.set_entry_point("unified_router")
 
     # Terminal FAQ answered node
     
@@ -3696,20 +4129,45 @@ Let me know if you need any help!"""
 def handle_incoming_sms(phone_number: str, message_body: str):
     """Handle incoming SMS and route through LangGraph"""
     
-    # Initialize state
+    # Load existing conversation context from database
+    try:
+        user_doc = db.collection('users').document(phone_number).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            conversation_stage = user_data.get('conversation_stage', 'initial')
+            missing_info = user_data.get('missing_info', [])
+            partial_request = user_data.get('partial_request', {})
+            user_preferences = user_data.get('preferences', {})
+            print(f"📂 LOADED from database: stage={conversation_stage}, missing_info={missing_info}, partial_request={partial_request}")
+        else:
+            conversation_stage = 'initial'
+            missing_info = []
+            partial_request = {}
+            user_preferences = {}
+            print(f"📂 No existing user data found, starting fresh")
+    except Exception as e:
+        print(f"⚠️ Error loading conversation context: {e}")
+        conversation_stage = 'initial'
+        missing_info = []
+        partial_request = {}
+        user_preferences = {}
+    
+    # Initialize state with loaded context
     initial_state = PangeaState(
         messages=[HumanMessage(content=message_body)],
         user_phone=phone_number,
-        user_preferences={},
+        user_preferences=user_preferences,
         current_request={},
         potential_matches=[],
         active_negotiations=[],
         final_group=None,
-        conversation_stage="initial",
+        conversation_stage=conversation_stage,
         search_attempts=0,
         rejection_data=None,
         alternative_suggestions=[],
-        proactive_notification_data=None
+        proactive_notification_data=None,
+        missing_info=missing_info,
+        partial_request=partial_request
     )
     
     # Run through LangGraph
@@ -3876,68 +4334,39 @@ app = Flask(__name__)
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
-    """Handle incoming SMS from Twilio with proper routing between order processor and main system"""
+    """Handle incoming SMS from Twilio using unified intelligent router"""
     try:
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
         
         print(f"📱 SMS from {from_number}: {message_body}")
         
-        # Import the classification function from order processor
-        from pangea_order_processor import is_new_food_request, get_user_order_session
+        # Use unified intelligent router for all messages
+        print(f"🎯 Using unified intelligent router to analyze: '{message_body}'")
+        routing_result = route_message_intelligently(from_number, message_body)
         
-        # Strategy: Check for existing order sessions FIRST, then route new requests appropriately
+        # Log routing decision
+        system = routing_result.get('system', 'unknown')
+        decision = routing_result.get('routing_decision', {})
+        action = decision.get('action', 'unknown')
+        confidence = decision.get('confidence', 'unknown')
         
-        # 1. Check if user has an existing order session (priority routing to order processor)
-        existing_session = get_user_order_session(from_number)
+        print(f"✅ Routed to {system} with action '{action}' (confidence: {confidence})")
         
-        if existing_session:
-            print(f"🔄 User has existing order session, routing to order processor first")
-            # Try order processor first for users with active sessions
-            order_result = process_order_message(from_number, message_body)
-            
-            if order_result is not None:
-                # Message was successfully processed by order system
-                print(f"✅ Order processed: {order_result.get('order_stage', 'unknown')}")
-                return '', 200
+        # Check if routing was successful
+        result = routing_result.get('result')
+        if result is not None:
+            if system == 'order_processor':
+                print(f"📋 Order processor result: {result.get('order_stage', 'unknown') if hasattr(result, 'get') else 'processed'}")
             else:
-                # Order processor couldn't handle it, fall back to main system
-                print(f"🔄 Order processor couldn't handle message, falling back to main system")
-        
-        # 2. Check if message is a group response (YES/NO)
-        message_lower = message_body.lower().strip()
-        group_responses = ['yes', 'y', 'no', 'n', 'sure', 'ok', 'pass', 'nah']
-        
-        if message_lower in group_responses:
-            print(f"🎯 DETECTED GROUP RESPONSE: '{message_body}' - routing directly to main system")
-            result = handle_incoming_sms(from_number, message_body)
-            print(f"✅ Main system processed group response: {result.get('conversation_stage', 'unknown')}")
+                print(f"🍜 Main system result: {result.get('conversation_stage', 'unknown') if hasattr(result, 'get') else 'processed'}")
             return '', 200
-        
-        # 3. For users without active sessions, check if it's a new food request
-        if not existing_session and is_new_food_request(message_body):
-            print(f"🆕 New food request detected, routing to main Pangea system")
-            # Route new food requests directly to main system
-            result = handle_incoming_sms(from_number, message_body)
-            print(f"✅ Main system processed new request: {result.get('conversation_stage', 'unknown')}")
+        else:
+            print(f"⚠️ No result from routing, falling back to main system")
+            fallback_result = handle_incoming_sms(from_number, message_body)
+            print(f"✅ Fallback to main system: {fallback_result.get('conversation_stage', 'unknown')}")
             return '', 200
-        
-        # 4. For users without sessions and non-food messages, try order processor first (might be payment/order details)
-        if not existing_session:
-            print(f"🔍 No session found, checking if order processor can handle non-food message")
-            order_result = process_order_message(from_number, message_body)
             
-            if order_result is not None:
-                # Message was processed by order system (e.g., payment, order details)
-                print(f"✅ Order processed: {order_result.get('order_stage', 'unknown')}")
-                return '', 200
-        
-        # 5. Default fallback to main Pangea system
-        print(f"🔄 Routing to main Pangea system as final fallback")
-        result = handle_incoming_sms(from_number, message_body)
-        print(f"✅ Main system processed: {result.get('conversation_stage', 'unknown')}")
-        
-        return '', 200
     except Exception as e:
         print(f"❌ Error in SMS webhook: {e}")
         # Fallback to main system on error
