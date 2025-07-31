@@ -1838,28 +1838,40 @@ ORDER FULFILLMENT SYSTEM:
 - "redirect_to_payment" - Remind about payment options
 - "need_order_first" - User trying to pay without order details
 
-ROUTING DECISION TREE:
+ROUTING DECISION TREE (IN PRIORITY ORDER):
 
-1. ACTIVE ORDER SESSION (user already in order fulfillment):
-   - "pay"/"payment" → handle_payment_request
-   - Order numbers/names → collect_order_number
-   - Food descriptions → collect_order_description
-   - New food request → start_fresh_request (clear session)
+1. NEW FOOD REQUESTS (HIGHEST PRIORITY - always start fresh):
+   - "I want [food/restaurant]" → start_fresh_request
+   - "craving [food]" → start_fresh_request  
+   - "hungry for [food]" → start_fresh_request
+   - Messages with restaurant + location + time → start_fresh_request
+   - Messages with "delivery" or "delivered" + restaurant → start_fresh_request
+   - Any comprehensive food request with multiple details → start_fresh_request
+   
+   IMPORTANT: If a message contains restaurant name AND delivery details (location/time), 
+   this is ALWAYS a new food request regardless of any active order session. 
+   Even if user also includes name/order details/food items, if restaurant+location+time 
+   are present, treat as start_fresh_request.
+   Example: "I want McDonald's delivered to the library at 10pm my name is Jake and I ordered a Big Mac" = start_fresh_request
+   
+   NOTE: Only route to collect_order_description when user provides ONLY food items/names 
+   without restaurant+location context in an active order session.
 
-2. INCOMPLETE FOOD REQUEST (conversation_stage='incomplete_request'):
+2. PENDING GROUP INVITES:
+   - "yes"/"sure"/"ok" → group_response_yes
+   - "no"/"pass"/"nah" → group_response_no
+
+3. INCOMPLETE FOOD REQUEST (conversation_stage='incomplete_request'):
    - User providing restaurant name → handle_incomplete_request
    - User providing location → handle_incomplete_request  
    - User providing time → handle_incomplete_request
    - Completely new request → start_fresh_request
 
-3. PENDING GROUP INVITES:
-   - "yes"/"sure"/"ok" → group_response_yes
-   - "no"/"pass"/"nah" → group_response_no
-
-4. NEW FOOD REQUESTS:
-   - "I want [food/restaurant]" → start_fresh_request
-   - "craving [food]" → start_fresh_request
-   - "hungry for [food]" → start_fresh_request
+4. ACTIVE ORDER SESSION (user already in order fulfillment):
+   - "pay"/"payment" → handle_payment_request
+   - Order numbers/names → collect_order_number
+   - Food descriptions (without restaurant/location) → collect_order_description
+   - New food request → start_fresh_request (clear session)
 
 5. OTHER:
    - Questions about service → general_conversation
@@ -4161,9 +4173,25 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
     solo_group_id = f"solo_{str(uuid.uuid4())}"
     delivery_time = state['current_request'].get('time_preference', 'now')
     
-    # CONTEXT-AWARE MESSAGE: Uses specific details already provided by user
+    # CONTEXT-AWARE MESSAGE: Check if user already provided order details
+    last_message = state['messages'][-1].content if state.get('messages') else ""
     time_context = f" around {delivery_time}" if delivery_time != 'now' else ""
-    combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee! Since you already told me you want {restaurant} at {location} for {delivery_time}, all you need to do now is place your order and come back with your confirmation details.
+    
+    # Check if user already mentioned ordering/ordered something
+    already_ordered = any(phrase in last_message.lower() for phrase in [
+        'ordered', 'i ordered', 'my order', 'order is', 'got a', 'getting a', 'big mac', 'quarter pounder', 'chicken nuggets', 'fries'
+    ])
+    
+    if already_ordered:
+        # User already provided order details - skip ordering instructions
+        combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee!
+
+Since you've already got your order sorted, all you need to do is text "pay" and I'll get your food delivered for just $3.50 instead of the full delivery fee 🙌
+
+Just text: **pay**"""
+    else:
+        # Standard message with ordering instructions
+        combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee! Since you already told me you want {restaurant} at {location} for {delivery_time}, all you need to do now is place your order and come back with your confirmation details.
 
 Your share will only be $2.50-$3.50 instead of the full delivery fee 🙌
 
@@ -4216,6 +4244,75 @@ Let me know if you need help!"""
         )
         
         print(f"✅ Started solo order process for {user_phone} - {restaurant} at {delivery_time}")
+        
+        # Extract order details from original message if provided
+        if already_ordered:
+            try:
+                from langchain_anthropic import ChatAnthropic
+                from langchain_core.messages import HumanMessage
+                
+                extraction_prompt = f"""
+                The user provided order details in their message. Extract the information:
+                
+                User message: "{last_message}"
+                
+                Extract:
+                1. Customer name (if available)
+                2. What they ordered (food items)
+                
+                Return JSON with:
+                - "customer_name": name or null
+                - "order_description": what they ordered or null
+                
+                Examples:
+                - "my name is Jake and I ordered a Big Mac" → {{"customer_name": "Jake", "order_description": "Big Mac"}}
+                - "I'm Sarah, got chicken nuggets" → {{"customer_name": "Sarah", "order_description": "chicken nuggets"}}
+                """
+                
+                llm = ChatAnthropic(model="claude-opus-4-20250514", temperature=0.1, max_tokens=500)
+                response = llm.invoke([HumanMessage(content=extraction_prompt)])
+                response_text = response.content.strip()
+                print(f"🔍 Raw extraction response: {response_text}")
+                
+                # Clean up response - remove any markdown formatting
+                if '```json' in response_text:
+                    # Extract JSON from markdown code block
+                    start = response_text.find('{')
+                    end = response_text.rfind('}') + 1
+                    response_text = response_text[start:end]
+                elif '```' in response_text:
+                    # Remove any code block markers
+                    response_text = response_text.replace('```', '').strip()
+                
+                # Try to find JSON in the response if it doesn't start with {
+                if not response_text.startswith('{'):
+                    import re
+                    json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                    if json_match:
+                        response_text = json_match.group()
+                
+                print(f"🔍 Cleaned extraction response: {response_text}")
+                extracted_data = json.loads(response_text)
+                
+                # Update order session with extracted details
+                from pangea_order_processor import update_order_session, get_user_order_session
+                current_session = get_user_order_session(user_phone)
+                
+                if extracted_data.get('customer_name'):
+                    current_session['customer_name'] = extracted_data['customer_name']
+                if extracted_data.get('order_description'):
+                    current_session['order_description'] = extracted_data['order_description']
+                
+                # If we have both name/identifier and food description, mark as ready to pay
+                if (extracted_data.get('customer_name') and extracted_data.get('order_description')):
+                    current_session['order_stage'] = 'ready_to_pay'
+                    print(f"✅ Extracted order details: {extracted_data['customer_name']} - {extracted_data['order_description']}")
+                
+                update_order_session(user_phone, current_session)
+                
+            except Exception as extraction_error:
+                print(f"❌ Failed to extract order details: {extraction_error}")
+                # Continue anyway - extraction failure shouldn't break the flow
         
         # FIXED: Call update_user_memory tool properly
         try:
