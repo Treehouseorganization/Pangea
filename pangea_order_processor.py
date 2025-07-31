@@ -437,7 +437,23 @@ def collect_order_description_node(state: OrderState) -> OrderState:
         
         response = llm.invoke(extraction_prompt)
         import json
-        result = json.loads(response.content)
+        import re
+        
+        # Extract JSON from the response (handle cases where Claude adds extra text)
+        response_text = response.content.strip()
+        print(f"🤖 Raw Claude response: {response_text}")
+        
+        # Try to find JSON in the response
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group()
+            result = json.loads(json_text)
+        else:
+            # Fallback: treat the whole response as the order description
+            result = {
+                "order_description": response_text,
+                "confidence": "medium"
+            }
         
         order_description = result.get('order_description', '').strip()
         confidence = result.get('confidence', 'low')
