@@ -2216,8 +2216,18 @@ def get_fallback_routing_decision(message: str, system_state: Dict) -> Dict:
     if system_state['is_new_user']:
         return {"action": "welcome_new_user", "confidence": "high"}
     
+    # Check for FAQ questions before assuming order continuation
+    faq_keywords = ['restaurant', 'available', 'location', 'where', 'cost', 'price', 'how', 'work', 'help']
+    if any(keyword in message_lower for keyword in faq_keywords):
+        return {"action": "faq_answered", "confidence": "medium"}
+    
     if system_state['has_active_order_session']:
-        return {"action": "order_continuation", "confidence": "high"}
+        # Only route to order continuation if it looks like order-related content
+        order_keywords = ['pay', 'payment', 'order', 'name', 'confirmation', 'number']
+        if any(keyword in message_lower for keyword in order_keywords):
+            return {"action": "order_continuation", "confidence": "high"}
+        # Otherwise, treat as general conversation that might be FAQ
+        return {"action": "faq_answered", "confidence": "low"}
     
     if system_state['has_pending_group_invitation'] or system_state['has_pending_negotiation']:
         if message_lower in ['yes', 'y', 'sure', 'ok']:
@@ -3301,10 +3311,72 @@ def wait_for_responses_node(state: PangeaState) -> PangeaState:
 
 # ─── FAQ terminal node ────────────────────────────────────────────────
 def faq_answered_node(state: PangeaState) -> PangeaState:
-    """
-    Terminal step after answering a general FAQ.
-    Does nothing except return the state unchanged.
-    """
+    """Handle FAQ questions and send informative responses"""
+    user_phone = state['user_phone']
+    user_message = state['messages'][-1].content.lower()
+    
+    # Determine what kind of FAQ this is and respond appropriately
+    if 'restaurant' in user_message or 'food' in user_message or 'available' in user_message:
+        # Restaurant availability question
+        message = """🍽️ Available restaurants for group delivery:
+
+• McDonald's 🍟
+• Chipotle 🌯  
+• Chick-fil-A 🐔
+• Portillo's 🥩
+• Starbucks ☕️
+
+Just tell me what you're craving and I'll find you lunch buddies to split the delivery fee! 
+
+Example: "I want Chipotle delivered to the library at 1pm" """
+        
+    elif 'location' in user_message or 'where' in user_message:
+        # Location question
+        message = """📍 Available delivery locations:
+
+• Richard J Daley Library
+• Student Center East
+• Student Center West  
+• Student Services Building
+• University Hall
+
+Just mention your preferred spot when ordering! 🎯"""
+
+    elif 'cost' in user_message or 'price' in user_message or 'pay' in user_message:
+        # Pricing question
+        message = """💰 Pricing is simple:
+
+When matched with others: Split the delivery fee (usually $2.50-$3.50 per person)
+Solo orders: Full delivery fee (~$7-10)
+
+You only pay the delivery fee - order your own food directly from the restaurant! 🍕"""
+
+    elif 'work' in user_message or 'how' in user_message:
+        # How it works question
+        message = """🤝 Here's how Pangea works:
+
+1. Tell me what restaurant + location + time you want
+2. I'll find students with similar orders
+3. If matched: Split delivery fees ($2.50-3.50 each)
+4. Everyone orders their own food from the restaurant
+5. One shared delivery brings everyone's orders!
+
+Try: "I want McDonald's at the library at 2pm" 🚀"""
+
+    else:
+        # General help
+        message = """👋 I'm your AI food delivery buddy!
+
+I help UIC students save money by matching you with others for shared deliveries.
+
+Available restaurants: McDonald's, Chipotle, Chick-fil-A, Portillo's, Starbucks
+
+Just tell me: "I want [restaurant] delivered to [location] at [time]"
+
+Questions? Ask about restaurants, locations, pricing, or how it works! 😊"""
+
+    send_friendly_message(user_phone, message, message_type="faq")
+    state['messages'].append(AIMessage(content=message))
     return state
 
 # REPLACE the should_continue_negotiating function in pangea_main.py with this fixed version:
