@@ -4107,16 +4107,20 @@ Let me know if you need help!"""
         
         print(f"✅ Started solo order process for {user_phone} - {restaurant} at {delivery_time}")
         
-        # FIXED: Call update_user_memory with correct parameters
-        update_user_memory(
-            user_phone,
-            {
-                "interaction_type": "fake_match_solo_order",
-                "restaurant": restaurant,
-                "location": location,
-                "timestamp": datetime.now(),
-            }
-        )
+        # FIXED: Call update_user_memory tool properly
+        try:
+            update_user_memory.invoke({
+                "phone_number": user_phone,
+                "interaction_data": {
+                    "interaction_type": "fake_match_solo_order",
+                    "restaurant": restaurant,
+                    "location": location,
+                    "timestamp": datetime.now(),
+                }
+            })
+        except Exception as memory_error:
+            print(f"❌ Failed to update user memory: {memory_error}")
+            # Continue anyway - memory update failure shouldn't break the flow
         
     except Exception as e:
         print(f"❌ Failed to start solo order process: {e}")

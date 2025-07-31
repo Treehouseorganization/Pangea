@@ -704,7 +704,7 @@ def create_order_graph():
 
 # ADD these new functions to pangea_order_processor.py (around line 50, before start_order_process)
 
-def is_new_food_request(message: str) -> bool:
+def is_new_food_request(message: str, phone_number: str = None) -> bool:
    """Use Claude Opus 4 to intelligently detect if message is food-related vs general question"""
    
    from langchain_anthropic import ChatAnthropic
@@ -719,6 +719,16 @@ def is_new_food_request(message: str) -> bool:
    if message_lower in group_response_keywords:
        print(f"🎯 Detected group response: '{message}' - routing to main system")
        return True  # Route to main system to handle group responses
+   
+   # CONTEXT FIX: Check if user has active order session
+   active_session = None
+   if phone_number:
+       active_session = get_user_order_session(phone_number)
+   
+   # If there's an active order session, food mentions are likely order continuation
+   if active_session:
+       print(f"🔄 Active order session exists - treating food mentions as order continuation")
+       return False
    
    # Use same Claude Opus 4 model as main system
    anthropic_llm = ChatAnthropic(
@@ -1031,7 +1041,7 @@ def process_order_message(phone_number: str, message_body: str):
     """Main function to process order-related messages"""
     
     # FIRST: Check if this is a new food request
-    if is_new_food_request(message_body):
+    if is_new_food_request(message_body, phone_number):
         print(f"🆕 Detected new food request from {phone_number}: {message_body}")
         # Clear any old order session
         clear_old_order_session(phone_number)
