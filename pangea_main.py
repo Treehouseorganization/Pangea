@@ -4051,18 +4051,19 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
     solo_group_id = f"solo_{str(uuid.uuid4())}"
     delivery_time = state['current_request'].get('time_preference', 'now')
     
-    # COMBINED MESSAGE: Match announcement + Order instructions
-    combined_message = f"""Hey! 👋 Great news - found someone nearby who's also craving {restaurant}, so you can split the delivery fee!
+    # CONTEXT-AWARE MESSAGE: Uses specific details already provided by user
+    time_context = f" around {delivery_time}" if delivery_time != 'now' else ""
+    combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee! Since you already told me you want {restaurant} at {location} for {delivery_time}, all you need to do now is place your order and come back with your confirmation details.
 
-Your share will only be $2.50-$3.50 instead of the full amount. Pretty sweet deal 🙌
+Your share will only be $2.50-$3.50 instead of the full delivery fee 🙌
 
-**Quick steps to get your food:**
-1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order AND what you ordered
+**Quick steps:**
+1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery  
+2. Come back here with your confirmation number/name AND what you ordered
 
-Once everyone's ready, your payment will be $3.50 💳
+Once you're ready, your payment will be $3.50 💳
 
-Let me know if you need any help!"""
+Let me know if you need help!"""
     
     # Send the COMBINED message
     send_friendly_message(user_phone, combined_message, message_type="general")
@@ -4106,10 +4107,10 @@ Let me know if you need any help!"""
         
         print(f"✅ Started solo order process for {user_phone} - {restaurant} at {delivery_time}")
         
-        # FIXED: Call update_user_memory directly (not .invoke())
+        # FIXED: Call update_user_memory with correct parameters
         update_user_memory(
-            phone_number=user_phone,
-            interaction_data={
+            user_phone,
+            {
                 "interaction_type": "fake_match_solo_order",
                 "restaurant": restaurant,
                 "location": location,
