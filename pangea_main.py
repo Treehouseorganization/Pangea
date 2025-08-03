@@ -4738,6 +4738,7 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 app = Flask(__name__)
 
 @app.route('/webhook', methods=['POST'])      # To this
+@app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
     """Handle incoming SMS from Twilio using unified intelligent router"""
     try:
