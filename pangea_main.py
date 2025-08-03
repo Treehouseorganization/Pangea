@@ -4737,7 +4737,7 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 # ===== FLASK WEBHOOK SERVER =====
 app = Flask(__name__)
 
-@app.route('/webhook/sms', methods=['POST'])
+@app.route('/webhook', methods=['POST'])      # To this
 def sms_webhook():
     """Handle incoming SMS from Twilio using unified intelligent router"""
     try:
@@ -4790,4 +4790,4 @@ def health_check():
 if __name__ == "__main__":
     print("🍜 Starting Pangea AI Friend System...")
     print("Ready to receive SMS messages!")
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)  # Use PORT env var
