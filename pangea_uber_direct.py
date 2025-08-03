@@ -109,9 +109,9 @@ def parse_delivery_time(time_str: str) -> datetime:
     
     for meal, hour in meal_times.items():
         if meal in time_str.lower():
-            target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            target_time = chicago_now.replace(hour=hour, minute=0, second=0, microsecond=0)
             # If the time has passed today, schedule for tomorrow
-            if target_time <= now:
+            if target_time <= chicago_now:
                 target_time += timedelta(days=1)
             return target_time
     
@@ -166,17 +166,17 @@ def parse_delivery_time(time_str: str) -> datetime:
                     pass
             
             # Create target time
-            target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
             # If the time has passed today, schedule for tomorrow
-            if target_time <= now:
+            if target_time <= chicago_now:
                 target_time += timedelta(days=1)
                 
             return target_time
     
     # Default fallback: 30 minutes from now
     print(f"⚠️ Could not parse time '{time_str}', defaulting to 30 minutes from now")
-    return now + timedelta(minutes=30)
+    return chicago_now + timedelta(minutes=30)
 
 class UberDirectClient:
     """Uber Direct API client for Pangea food delivery"""
