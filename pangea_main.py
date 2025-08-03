@@ -1643,15 +1643,19 @@ def enhance_message_with_context(message: str, message_type: str, user_history: 
     user_name = user_history.get('preferences', {}).get('name', 'friend')
     past_orders = len(user_history.get('successful_matches', []))
     
+    # Determine user status more accurately
+    is_truly_new_user = past_orders == 0 and not user_history.get('has_used_system', False)
+    
     enhancement_prompt = f"""
     Enhance this message to be more friendly and contextual:
     
     Original message: "{message}"
     Message type: {message_type}
-    User context: {past_orders} previous successful orders
+    User context: {past_orders} previous successful orders, {"new user" if is_truly_new_user else "returning user"}
     
     Make it sound like a helpful friend who knows them, but keep it brief and natural.
     Add appropriate emojis and personality. Don't be overly enthusiastic.
+    {"Do NOT treat them as a new user or mention 'first order' unless they are truly new." if not is_truly_new_user else ""}
     """
     
     try:
@@ -2782,12 +2786,30 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         db.collection('active_groups').document(group_id).set(group_data)
         print(f"✅ Created group {group_id} in Firebase with members: {sorted_phones}")
         
-        # Send SMS invitations to both users
+        # Check for users already in solo orders - silently group them instead of re-inviting
         restaurant = state['current_request'].get('restaurant', 'local restaurant')
         delivery_time = state['current_request'].get('time_preference', 'ASAP')
         delivery_location = state['current_request'].get('delivery_location', 'campus')
         
+        solo_order_users = []
+        new_users = []
+        
+        # Check which users are already in solo orders (have active order sessions)
         for phone in sorted_phones:
+            try:
+                session_ref = db.collection('order_sessions').document(phone)
+                session_doc = session_ref.get()
+                if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
+                    solo_order_users.append(phone)
+                    print(f"🔄 Found existing solo order user: {phone} - will silently group")
+                else:
+                    new_users.append(phone)
+            except Exception as e:
+                print(f"❌ Error checking solo order status for {phone}: {e}")
+                new_users.append(phone)  # Default to treating as new user
+        
+        # Send invitations only to NEW users, not existing solo order users
+        for phone in new_users:
             invitation_message = f"🍕 Perfect match found! Someone nearby wants {restaurant} delivered to {delivery_location} at {delivery_time}. Want to split the order and save on delivery? Reply YES to join or NO to pass."
             
             success = send_friendly_message(phone, invitation_message, message_type="match_found")
@@ -2795,6 +2817,46 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                 print(f"📱 Sent invitation SMS to {phone}")
             else:
                 print(f"❌ Failed to send SMS to {phone}")
+        
+        # Silently add solo order users to the group without invitations
+        for phone in solo_order_users:
+            print(f"🤝 Silently adding solo order user {phone} to group {group_id}")
+            
+            try:
+                # Get the solo user's existing session
+                from pangea_order_processor import get_user_order_session, update_order_session
+                solo_session = get_user_order_session(phone)
+                
+                if solo_session:
+                    # Check if solo user has scheduled delivery and group is immediate
+                    solo_delivery_time = solo_session.get('delivery_time', 'now')
+                    group_delivery_time = delivery_time
+                    
+                    # If solo user has scheduled delivery and group is "now", use solo user's time
+                    if solo_delivery_time != 'now' and group_delivery_time == 'ASAP':
+                        group_data['delivery_time'] = solo_delivery_time
+                        print(f"📅 Updated group delivery time to solo user's scheduled time: {solo_delivery_time}")
+                    
+                    # Update solo user's session to join the group
+                    solo_session['group_id'] = group_id
+                    solo_session['group_size'] = len(sorted_phones)
+                    solo_session['delivery_time'] = group_data['delivery_time']
+                    
+                    # Clear any scheduled delivery flags since they're now in a group
+                    if 'delivery_scheduled' in solo_session:
+                        del solo_session['delivery_scheduled']
+                    if 'scheduled_trigger_time' in solo_session:
+                        del solo_session['scheduled_trigger_time']
+                    
+                    update_order_session(phone, solo_session)
+                    print(f"✅ Updated solo user {phone} session to group {group_id}")
+                
+            except Exception as e:
+                print(f"❌ Error updating solo user {phone} session: {e}")
+        
+        # Update the group data in Firebase to include the correct delivery time
+        if solo_order_users:
+            db.collection('active_groups').document(group_id).update({'delivery_time': group_data['delivery_time']})
         
         print(f"🎉 Group {group_id} created and invitations sent to both users")
         
@@ -2832,6 +2894,79 @@ def mark_as_matched_user(state: PangeaState, creator_phone: str, group_id: str):
         # If we can't mark the user, they'll continue with normal flow
         state['group_formed'] = False
 
+def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, sorted_phones: List[str], solo_user_phone: str, new_user_phone: str):
+    """
+    Create a real group when one user has an existing solo order.
+    Solo user is silently added, only new user gets invitation.
+    """
+    try:
+        print(f"🎯 Creating group {group_id} with solo user {solo_user_phone} and new user {new_user_phone}")
+        
+        # Get delivery details from the current request
+        restaurant = state['current_request'].get('restaurant', 'local restaurant')
+        delivery_time = state['current_request'].get('time_preference', 'ASAP')
+        delivery_location = state['current_request'].get('delivery_location', 'campus')
+        
+        # Get solo user's existing session to preserve their delivery time
+        from pangea_order_processor import get_user_order_session, update_order_session
+        solo_session = get_user_order_session(solo_user_phone)
+        
+        if solo_session and solo_session.get('delivery_time') != 'now':
+            # Use solo user's scheduled delivery time for the group
+            delivery_time = solo_session.get('delivery_time')
+            print(f"📅 Using solo user's scheduled delivery time: {delivery_time}")
+        
+        # Create group data
+        group_data = {
+            'group_id': group_id,
+            'restaurant': restaurant,
+            'delivery_time': delivery_time,
+            'location': delivery_location,
+            'members': sorted_phones,
+            'creator': new_user_phone,  # New user is the "creator" for invitation tracking
+            'solo_user': solo_user_phone,  # Track who was the solo user
+            'status': 'pending_responses',
+            'created_at': datetime.now(),
+            'group_size': 2
+        }
+        
+        # Store group in Firebase
+        db.collection('active_groups').document(group_id).set(group_data)
+        print(f"✅ Created group {group_id} in Firebase with solo user silently added")
+        
+        # Send invitation ONLY to the new user
+        invitation_message = f"🍕 Perfect match found! Someone nearby wants {restaurant} delivered to {delivery_location} at {delivery_time}. Want to split the order and save on delivery? Reply YES to join or NO to pass."
+        
+        success = send_friendly_message(new_user_phone, invitation_message, message_type="match_found")
+        if success:
+            print(f"📱 Sent invitation SMS to new user {new_user_phone}")
+        else:
+            print(f"❌ Failed to send SMS to new user {new_user_phone}")
+        
+        # Update solo user's session to join the real group
+        if solo_session:
+            solo_session['group_id'] = group_id
+            solo_session['group_size'] = 2
+            solo_session['delivery_time'] = delivery_time
+            
+            # Clear any scheduled delivery flags since they're now in a group
+            if 'delivery_scheduled' in solo_session:
+                del solo_session['delivery_scheduled']
+            if 'scheduled_trigger_time' in solo_session:
+                del solo_session['scheduled_trigger_time']
+            
+            update_order_session(solo_user_phone, solo_session)
+            print(f"✅ Updated solo user {solo_user_phone} session to group {group_id}")
+        
+        # Mark new user as waiting for their own response
+        mark_as_matched_user(state, new_user_phone, group_id)
+        
+        print(f"🎉 Group {group_id} created with solo user silently added and invitation sent to new user")
+        
+    except Exception as e:
+        print(f"❌ Error creating group with solo user: {e}")
+        state['group_formed'] = False
+
 def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     """Advanced autonomous negotiation with better perfect match handling"""
     
@@ -2865,6 +3000,45 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
         print(f"📋 Current user: {state['user_phone']}")
         print(f"📋 Group creator (lower phone): {sorted_phones[0]}")
         
+        # Check if either user is already in a solo order
+        current_user_solo = False
+        matched_user_solo = False
+        
+        try:
+            # Check current user
+            session_ref = db.collection('order_sessions').document(state['user_phone'])
+            session_doc = session_ref.get()
+            if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
+                current_user_solo = True
+                
+            # Check matched user
+            session_ref = db.collection('order_sessions').document(match['user_phone'])
+            session_doc = session_ref.get()
+            if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
+                matched_user_solo = True
+        except Exception as e:
+            print(f"❌ Error checking solo order status: {e}")
+        
+        # If either user is already in a solo order, create a real group with special handling
+        if current_user_solo or matched_user_solo:
+            print(f"🤝 Solo order detected - creating real group with solo user silently added")
+            
+            # Determine who is the solo user and who is the new user
+            if matched_user_solo:
+                solo_user_phone = match['user_phone']
+                new_user_phone = state['user_phone']
+                print(f"📱 Solo user: {solo_user_phone}, New user: {new_user_phone}")
+            else:
+                solo_user_phone = state['user_phone']
+                new_user_phone = match['user_phone']
+                print(f"📱 Solo user: {solo_user_phone}, New user: {new_user_phone}")
+            
+            # Create real group with special solo handling
+            create_group_with_solo_user(state, match, deterministic_group_id, sorted_phones, solo_user_phone, new_user_phone)
+            state['group_formed'] = True
+            return state
+        
+        # Normal group invitation flow for two new users
         # Single-writer pattern: Only the user with the lower phone number creates the group
         if state['user_phone'] == sorted_phones[0]:
             print(f"👑 I am the group creator - creating group and sending invitations")

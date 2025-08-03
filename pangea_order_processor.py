@@ -136,16 +136,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
     
     payment_amount = get_payment_amount(group_size)
     
-    # Send order instructions
-    welcome_message = f"""**Quick steps to get your food:**
-1. Order directly from {restaurant} (app/website/phone) - just make sure to choose PICKUP, not delivery
-2. Come back here with your confirmation number or name for the order AND what you ordered
-
-Once everyone's ready, your payment will be {payment_amount} 💳
-
-Let me know if you need any help!"""
-    
-    send_friendly_message(user_phone, welcome_message, message_type="order_start")
+    # Send order instructions - REMOVED: duplicate message already sent in solo order trigger
     
     return session_data
 
@@ -906,6 +897,63 @@ I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
         print(f"⏰ Scheduled 50s delayed triggered notification for {user_phone}")
 
 
+def schedule_solo_delivery_trigger(group_data: Dict):
+    """
+    Schedule solo order delivery to be triggered at the specified time
+    """
+    def trigger_delivery_at_scheduled_time():
+        delivery_time = group_data.get('delivery_time', 'now')
+        
+        # Parse the delivery time and calculate delay
+        from pangea_uber_direct import parse_delivery_time
+        scheduled_datetime = parse_delivery_time(delivery_time)
+        
+        if scheduled_datetime:
+            current_time = datetime.now()
+            delay_seconds = (scheduled_datetime - current_time).total_seconds()
+            
+            if delay_seconds > 0:
+                print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
+                time.sleep(delay_seconds)
+            
+        # Trigger the delivery
+        print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
+        try:
+            from pangea_uber_direct import create_group_delivery
+            delivery_result = create_group_delivery(group_data)
+            
+            if delivery_result.get('success'):
+                print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
+                
+                # Update sessions for ALL group members to mark delivery as triggered
+                group_id = group_data.get('group_id')
+                all_members = group_data.get('members', [])
+                
+                for member_phone in all_members:
+                    session = get_user_order_session(member_phone)
+                    if session:
+                        session['delivery_triggered'] = True
+                        session['delivery_id'] = delivery_result.get('delivery_id')
+                        session['tracking_url'] = delivery_result.get('tracking_url')
+                        session['delivery_scheduled'] = False  # Clear scheduled flag
+                        update_order_session(member_phone, session)
+                        print(f"✅ Updated session for group member {member_phone}")
+                
+                # Send notifications
+                schedule_delayed_triggered_notifications(group_data, delivery_result)
+                
+            else:
+                print(f"❌ Solo delivery creation failed: {delivery_result}")
+                
+        except Exception as e:
+            print(f"❌ Solo delivery trigger error: {e}")
+    
+    # Start background thread to wait and trigger delivery
+    thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
+    thread.daemon = True
+    thread.start()
+    print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
+
 
 def check_group_completion_and_trigger_delivery(user_phone: str):
     """
@@ -968,6 +1016,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 'delivery_time': session.get('delivery_time', 'now'),
                 'members': [member['user_phone'] for member in members_who_paid],
                 'group_id': group_id,
+                'group_size': session.get('group_size', len(members_who_paid)),
                 'order_details': [
                     {
                         'user_phone': member['user_phone'],
@@ -979,7 +1028,40 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 ]
             }
             
-            # Import and trigger delivery IMMEDIATELY
+            # Check if this is a solo order with scheduled delivery time
+            delivery_time = group_data.get('delivery_time', 'now')
+            group_size = group_data.get('group_size', len(members_who_paid))
+            
+            if group_size == 1 and delivery_time != 'now':
+                # Solo order with scheduled time - delay delivery trigger
+                print(f"⏰ Solo order scheduled for {delivery_time} - scheduling delivery trigger")
+                schedule_solo_delivery_trigger(group_data)
+                
+                # Send confirmation message to user with 50-second delay
+                user_phone = members_who_paid[0]['user_phone']
+                
+                def send_delayed_solo_confirmation():
+                    time.sleep(50)  # 50-second delay
+                    from pangea_main import send_friendly_message
+                    send_friendly_message(user_phone, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="solo_payment_confirmation")
+                    print(f"✅ Sent delayed solo payment confirmation to {user_phone}")
+                
+                # Start delayed notification thread
+                thread = threading.Thread(target=send_delayed_solo_confirmation)
+                thread.daemon = True
+                thread.start()
+                print(f"⏰ Scheduled 50s delayed solo payment confirmation for {user_phone}")
+                
+                # Update session to mark as payment completed but delivery scheduled
+                for member in members_who_paid:
+                    member_session = member['session_data']
+                    member_session['delivery_scheduled'] = True
+                    member_session['scheduled_trigger_time'] = delivery_time
+                    update_order_session(member['user_phone'], member_session)
+                
+                return  # Don't trigger delivery immediately
+            
+            # Import and trigger delivery IMMEDIATELY (for "now" orders and group orders)
             try:
                 from pangea_uber_direct import create_group_delivery
                 delivery_result = create_group_delivery(group_data)

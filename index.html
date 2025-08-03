@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pangea - Your AI Friend That Saves 90% On Food Delivery</title>
+    <title>Pangea - Your AI Friend That Saves You 90% On Food Delivery</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <style>
         * {
@@ -13,13 +13,13 @@
         }
 
         :root {
-            --primary-beige: #F5F1EB;
-            --accent-terracotta: #D4926B;
-            --sage-green: #8B9D83;
-            --deep-black: #000000;
+            --chipotle-brown: #8B4513;
+            --ruby-spice: #A72913;
             --cream-white: #FEFCF8;
+            --deep-black: #000000;
             --warm-gray: #8B7D6B;
             --charcoal: #1A1A1A;
+            --light-brown: #D2B48C;
         }
 
         body {
@@ -39,7 +39,7 @@
         header {
             background: var(--cream-white);
             padding: 20px 0;
-            border-bottom: 1px solid var(--primary-beige);
+            border-bottom: 1px solid var(--light-brown);
         }
 
         nav {
@@ -51,22 +51,77 @@
         .logo {
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-size: 24px;
+            gap: 12px;
+            font-size: 28px;
             font-weight: 900;
             color: var(--deep-black);
         }
 
+        /* Pan Logo with Continents */
         .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--accent-terracotta), var(--sage-green));
-            border-radius: 8px;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--ruby-spice), var(--chipotle-brown));
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-size: 20px;
+            position: relative;
+            box-shadow: 0 4px 15px rgba(167, 41, 19, 0.3);
+        }
+
+        .pan-handle {
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 12px;
+            height: 4px;
+            background: var(--chipotle-brown);
+            border-radius: 0 4px 4px 0;
+        }
+
+        .continents {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .continent {
+            position: absolute;
+            background: var(--cream-white);
+            border-radius: 50%;
+        }
+
+        .continent-1 {
+            width: 8px;
+            height: 6px;
+            top: 4px;
+            left: 8px;
+        }
+
+        .continent-2 {
+            width: 6px;
+            height: 8px;
+            top: 12px;
+            left: 2px;
+        }
+
+        .continent-3 {
+            width: 10px;
+            height: 5px;
+            top: 15px;
+            right: 2px;
+        }
+
+        .continent-4 {
+            width: 4px;
+            height: 6px;
+            bottom: 4px;
+            left: 12px;
         }
 
         .nav-links {
@@ -83,7 +138,7 @@
         }
 
         .nav-links a:hover {
-            color: var(--accent-terracotta);
+            color: var(--ruby-spice);
         }
 
         .cta-button {
@@ -97,13 +152,13 @@
         }
 
         .cta-button:hover {
-            background: var(--accent-terracotta);
+            background: var(--ruby-spice);
             transform: translateY(-2px);
         }
 
         /* Hero Section */
         .hero {
-            background: var(--primary-beige);
+            background: linear-gradient(135deg, var(--light-brown), var(--cream-white));
             padding: 80px 0;
             text-align: center;
         }
@@ -126,7 +181,7 @@
         }
 
         .hero-cta {
-            background: var(--accent-terracotta);
+            background: var(--ruby-spice);
             color: var(--cream-white);
             padding: 18px 40px;
             border-radius: 50px;
@@ -135,12 +190,13 @@
             font-size: 1.2rem;
             display: inline-block;
             transition: all 0.3s;
-            box-shadow: 0 10px 30px rgba(212, 146, 107, 0.3);
+            box-shadow: 0 10px 30px rgba(167, 41, 19, 0.3);
         }
 
         .hero-cta:hover {
             transform: translateY(-3px);
-            box-shadow: 0 15px 40px rgba(212, 146, 107, 0.4);
+            box-shadow: 0 15px 40px rgba(167, 41, 19, 0.4);
+            background: var(--chipotle-brown);
         }
 
         /* How It Works */
@@ -169,20 +225,20 @@
             padding: 40px 30px;
             border-radius: 20px;
             background: white;
-            border: 2px solid var(--primary-beige);
+            border: 2px solid var(--light-brown);
             transition: all 0.3s;
         }
 
         .step:hover {
             transform: translateY(-5px);
-            border-color: var(--accent-terracotta);
+            border-color: var(--ruby-spice);
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
         }
 
         .step-number {
             width: 60px;
             height: 60px;
-            background: var(--accent-terracotta);
+            background: var(--ruby-spice);
             color: white;
             border-radius: 50%;
             display: flex;
@@ -207,7 +263,7 @@
 
         /* Chat Example */
         .chat-example {
-            background: var(--primary-beige);
+            background: var(--light-brown);
             padding: 60px 30px;
             border-radius: 20px;
             max-width: 600px;
@@ -231,7 +287,7 @@
             padding: 20px;
             border-radius: 15px;
             margin-bottom: 15px;
-            border-left: 4px solid var(--sage-green);
+            border-left: 4px solid var(--chipotle-brown);
             font-style: italic;
             color: var(--charcoal);
         }
@@ -267,7 +323,7 @@
         }
 
         .after {
-            background: var(--accent-terracotta);
+            background: var(--ruby-spice);
             transform: scale(1.05);
         }
 
@@ -289,7 +345,7 @@
         }
 
         .savings {
-            background: var(--sage-green);
+            background: var(--chipotle-brown);
             color: white;
             padding: 10px 20px;
             border-radius: 50px;
@@ -301,7 +357,7 @@
         /* CTA Section */
         .final-cta {
             padding: 80px 0;
-            background: var(--primary-beige);
+            background: var(--light-brown);
             text-align: center;
         }
 
@@ -349,7 +405,7 @@
         .form-group input {
             width: 100%;
             padding: 12px 15px;
-            border: 2px solid var(--primary-beige);
+            border: 2px solid var(--light-brown);
             border-radius: 10px;
             font-size: 1rem;
             transition: border-color 0.3s;
@@ -357,12 +413,12 @@
 
         .form-group input:focus {
             outline: none;
-            border-color: var(--accent-terracotta);
+            border-color: var(--ruby-spice);
         }
 
         .signup-button {
             width: 100%;
-            background: var(--accent-terracotta);
+            background: var(--ruby-spice);
             color: var(--cream-white);
             padding: 15px 30px;
             border: none;
@@ -374,7 +430,7 @@
         }
 
         .signup-button:hover {
-            background: var(--sage-green);
+            background: var(--chipotle-brown);
             transform: translateY(-2px);
         }
 
@@ -385,7 +441,7 @@
         }
 
         .success-message {
-            background: var(--sage-green);
+            background: var(--chipotle-brown);
             color: white;
             padding: 15px;
             border-radius: 10px;
@@ -494,6 +550,15 @@
             .after {
                 transform: none;
             }
+            
+            .logo {
+                font-size: 24px;
+            }
+            
+            .logo-icon {
+                width: 45px;
+                height: 45px;
+            }
         }
         
         @media (max-width: 480px) {
@@ -537,6 +602,15 @@
             .price {
                 font-size: 2rem;
             }
+            
+            .logo {
+                font-size: 20px;
+            }
+            
+            .logo-icon {
+                width: 40px;
+                height: 40px;
+            }
         }
     </style>
 </head>
@@ -544,7 +618,15 @@
     <header>
         <nav class="container">
             <div class="logo">
-                <div class="logo-icon">🍽️</div>
+                <div class="logo-icon">
+                    <div class="pan-handle"></div>
+                    <div class="continents">
+                        <div class="continent continent-1"></div>
+                        <div class="continent continent-2"></div>
+                        <div class="continent continent-3"></div>
+                        <div class="continent continent-4"></div>
+                    </div>
+                </div>
                 <span>PANGEA</span>
             </div>
             <ul class="nav-links">
@@ -703,7 +785,15 @@
     <footer style="background: var(--deep-black); color: var(--cream-white); padding: 40px 0; text-align: center;">
         <div class="container">
             <div class="logo" style="justify-content: center; margin-bottom: 20px;">
-                <div class="logo-icon">🍽️</div>
+                <div class="logo-icon">
+                    <div class="pan-handle"></div>
+                    <div class="continents">
+                        <div class="continent continent-1"></div>
+                        <div class="continent continent-2"></div>
+                        <div class="continent continent-3"></div>
+                        <div class="continent continent-4"></div>
+                    </div>
+                </div>
                 <span>PANGEA</span>
             </div>
             <p style="color: var(--warm-gray);">Making food delivery affordable for every college student, everywhere.</p>
