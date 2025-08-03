@@ -91,13 +91,13 @@ def parse_delivery_time(time_str: str) -> datetime:
     Returns:
         datetime object for the scheduled delivery time
     """
-    # Get current time in Chicago timezone
+    # Get current time in Chicago timezone for consistent handling
     chicago_tz = pytz.timezone('America/Chicago')
-    now = datetime.now(chicago_tz)
+    chicago_now = datetime.now(chicago_tz)
     
     # Handle immediate delivery
     if time_str.lower() in ['now', 'asap', 'immediately']:
-        return now + timedelta(minutes=25)  # 25 minutes from now (minimum prep time)
+        return chicago_now + timedelta(minutes=25)  # 25 minutes from now (minimum prep time)
     
     # Handle meal periods
     meal_times = {
@@ -487,15 +487,15 @@ class UberDirectClient:
         # ✅ CRITICAL FIX: Ensure we're working in Chicago timezone consistently
         chicago_tz = pytz.timezone('America/Chicago')
         
-        # If the parsed time is naive (no timezone), assume it's Chicago time
+        # Handle timezone conversion
         if user_requested_time.tzinfo is None:
             # This is a naive datetime - assume it's in Chicago timezone
             chicago_time = chicago_tz.localize(user_requested_time)
             print(f"🕐 Localized naive time to Chicago: {chicago_time.strftime('%I:%M %p %Z')}")
         else:
-            # Convert any timezone-aware datetime to Chicago time first
+            # Already timezone-aware - convert to Chicago time if needed
             chicago_time = user_requested_time.astimezone(chicago_tz)
-            print(f"🕐 Converted to Chicago time: {chicago_time.strftime('%I:%M %p %Z')}")
+            print(f"🕐 Already timezone-aware, converted to Chicago: {chicago_time.strftime('%I:%M %p %Z')}")
         
         # Now convert Chicago time to UTC for Uber API
         utc_time = chicago_time.astimezone(pytz.UTC)
