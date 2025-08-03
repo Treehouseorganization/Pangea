@@ -57,9 +57,25 @@ anthropic_llm = ChatAnthropic(
 
 # Initialize Firebase (only if not already initialized)
 if not firebase_admin._apps:
-    cred = credentials.Certificate(os.getenv('FIREBASE_SERVICE_ACCOUNT_PATH'))
-    firebase_admin.initialize_app(cred)
+    import json
+    firebase_json = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON')
+    if firebase_json:
+        try:
+            firebase_config = json.loads(firebase_json)
+            cred = credentials.Certificate(firebase_config)
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase initialized successfully")
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid Firebase JSON format: {e}")
+            raise
+        except Exception as e:
+            print(f"❌ Firebase initialization failed: {e}")
+            raise
+    else:
+        print("❌ FIREBASE_SERVICE_ACCOUNT_JSON environment variable not set")
+        raise ValueError("Firebase credentials not configured")
 db = firestore.client()
+
 
 # State for LangGraph
 class PangeaState(TypedDict):
