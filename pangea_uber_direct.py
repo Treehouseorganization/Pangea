@@ -91,7 +91,9 @@ def parse_delivery_time(time_str: str) -> datetime:
     Returns:
         datetime object for the scheduled delivery time
     """
-    now = datetime.now()
+    # Get current time in Chicago timezone
+    chicago_tz = pytz.timezone('America/Chicago')
+    now = datetime.now(chicago_tz)
     
     # Handle immediate delivery
     if time_str.lower() in ['now', 'asap', 'immediately']:
