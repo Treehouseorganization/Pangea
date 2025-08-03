@@ -2974,6 +2974,20 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             update_order_session(solo_user_phone, solo_session)
             print(f"✅ Updated solo user {solo_user_phone} session to group {group_id}")
         
+        # CRITICAL: Update solo user's order status to prevent their workflow from sending duplicate messages
+        try:
+            solo_user_doc_ref = db.collection('users').document(solo_user_phone)
+            solo_user_doc_ref.update({
+                'conversation_stage': 'matched_to_group',
+                'group_matched': True,
+                'group_id': group_id,
+                'solo_message_sent': True,  # Prevent any "no matches" messages
+                'last_updated': datetime.now()
+            })
+            print(f"🛡️ Protected solo user {solo_user_phone} from duplicate messages")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not update solo user protection flags: {e}")
+        
         # Mark new user as waiting for their own response
         mark_as_matched_user(state, new_user_phone, group_id)
         
@@ -4377,6 +4391,17 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
     if state.get('solo_message_sent'):
         print(f"🚫 Solo message already sent for {user_phone}, skipping")
         return state
+    
+    # CRITICAL: Check if user was recently matched to a group (protection against race conditions)
+    try:
+        user_doc = db.collection('users').document(user_phone).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            if user_data.get('group_matched') or user_data.get('conversation_stage') == 'matched_to_group':
+                print(f"🛡️ User {user_phone} was recently matched to a group, skipping solo message")
+                return state
+    except Exception as e:
+        print(f"⚠️ Warning: Could not check user protection flags: {e}")
     
     # Create a fake group_id for solo ordering
     solo_group_id = f"solo_{str(uuid.uuid4())}"
