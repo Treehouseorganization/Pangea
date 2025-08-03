@@ -4737,7 +4737,7 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 # ===== FLASK WEBHOOK SERVER =====
 app = Flask(__name__)
 
-@app.route('/webhook', methods=['POST']) # To this
+@app.route('/webhook', methods=['POST'])
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
     """Handle incoming SMS from Twilio using unified intelligent router"""
@@ -4750,13 +4750,13 @@ def sms_webhook():
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
         print(f"📱 SMS from {from_number}: {message_body}")
-        print(f"⏱️  Basic setup: {time.time() - start_time:.2f}s")
+        print(f"⏱️ Basic setup: {time.time() - start_time:.2f}s")
         
         # Use unified intelligent router for all messages
         print(f"🎯 Using unified intelligent router to analyze: '{message_body}'")
         checkpoint = time.time()
         routing_result = route_message_intelligently(from_number, message_body)
-        print(f"⏱️  Router completed: {time.time() - checkpoint:.2f}s")
+        print(f"⏱️ Router completed: {time.time() - checkpoint:.2f}s")
         
         # Log routing decision
         system = routing_result.get('system', 'unknown')
@@ -4778,7 +4778,7 @@ def sms_webhook():
             print(f"⚠️ No result from routing, falling back to main system")
             checkpoint = time.time()
             fallback_result = handle_incoming_sms(from_number, message_body)
-            print(f"⏱️  Fallback completed: {time.time() - checkpoint:.2f}s")
+            print(f"⏱️ Fallback completed: {time.time() - checkpoint:.2f}s")
             print(f"✅ Fallback to main system: {fallback_result.get('conversation_stage', 'unknown')}")
             print(f"✅ Total time: {time.time() - start_time:.2f}s")
             return '', 200
@@ -4787,17 +4787,7 @@ def sms_webhook():
         print(f"❌ Error in SMS webhook at {time.time() - start_time:.2f}s: {e}")
         import traceback
         print(f"❌ Full traceback: {traceback.format_exc()}")
-        # Fallback to main system on error
-        try:
-            checkpoint = time.time()
-            result = handle_incoming_sms(from_number, message_body)
-            print(f"⏱️  Error fallback completed: {time.time() - checkpoint:.2f}s")
-            print(f"✅ Error fallback to main system: {result.get('conversation_stage', 'unknown')}")
-            print(f"✅ Total time: {time.time() - start_time:.2f}s")
-            return '', 200
-        except Exception as fallback_error:
-            print(f"❌ Fallback also failed at {time.time() - start_time:.2f}s: {fallback_error}")
-            return '', 500
+        return '', 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
