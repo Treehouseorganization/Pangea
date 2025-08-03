@@ -4737,26 +4737,32 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 # ===== FLASK WEBHOOK SERVER =====
 app = Flask(__name__)
 
-@app.route('/webhook', methods=['POST'])      # To this
+@app.route('/webhook', methods=['POST']) # To this
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
     """Handle incoming SMS from Twilio using unified intelligent router"""
+    import time
+    start_time = time.time()
+    
+    print("🚨 WEBHOOK STARTED")
+    
     try:
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
-        
         print(f"📱 SMS from {from_number}: {message_body}")
+        print(f"⏱️  Basic setup: {time.time() - start_time:.2f}s")
         
         # Use unified intelligent router for all messages
         print(f"🎯 Using unified intelligent router to analyze: '{message_body}'")
+        checkpoint = time.time()
         routing_result = route_message_intelligently(from_number, message_body)
+        print(f"⏱️  Router completed: {time.time() - checkpoint:.2f}s")
         
         # Log routing decision
         system = routing_result.get('system', 'unknown')
         decision = routing_result.get('routing_decision', {})
         action = decision.get('action', 'unknown')
         confidence = decision.get('confidence', 'unknown')
-        
         print(f"✅ Routed to {system} with action '{action}' (confidence: {confidence})")
         
         # Check if routing was successful
@@ -4766,22 +4772,31 @@ def sms_webhook():
                 print(f"📋 Order processor result: {result.get('order_stage', 'unknown') if hasattr(result, 'get') else 'processed'}")
             else:
                 print(f"🍜 Main system result: {result.get('conversation_stage', 'unknown') if hasattr(result, 'get') else 'processed'}")
+            print(f"✅ Total time: {time.time() - start_time:.2f}s")
             return '', 200
         else:
             print(f"⚠️ No result from routing, falling back to main system")
+            checkpoint = time.time()
             fallback_result = handle_incoming_sms(from_number, message_body)
+            print(f"⏱️  Fallback completed: {time.time() - checkpoint:.2f}s")
             print(f"✅ Fallback to main system: {fallback_result.get('conversation_stage', 'unknown')}")
+            print(f"✅ Total time: {time.time() - start_time:.2f}s")
             return '', 200
             
     except Exception as e:
-        print(f"❌ Error in SMS webhook: {e}")
+        print(f"❌ Error in SMS webhook at {time.time() - start_time:.2f}s: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
         # Fallback to main system on error
         try:
+            checkpoint = time.time()
             result = handle_incoming_sms(from_number, message_body)
+            print(f"⏱️  Error fallback completed: {time.time() - checkpoint:.2f}s")
             print(f"✅ Error fallback to main system: {result.get('conversation_stage', 'unknown')}")
+            print(f"✅ Total time: {time.time() - start_time:.2f}s")
             return '', 200
         except Exception as fallback_error:
-            print(f"❌ Fallback also failed: {fallback_error}")
+            print(f"❌ Fallback also failed at {time.time() - start_time:.2f}s: {fallback_error}")
             return '', 500
 
 @app.route('/health', methods=['GET'])
