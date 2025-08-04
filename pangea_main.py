@@ -77,6 +77,36 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 
+@dataclass
+class UserContext:
+    """Rich context passed to all tools and functions"""
+    user_phone: str
+    conversation_history: List[Dict]
+    user_preferences: Dict
+    current_session: Dict
+    conversation_stage: str
+    urgency_level: str  # "urgent", "flexible", "scheduled"
+    personality_profile: Dict
+    
+    # Situational awareness
+    is_correction: bool = False
+    is_retry: bool = False
+    rejection_history: List[Dict] = None
+    search_reason: str = "new_request"  # Why we're searching
+    
+    def to_prompt_context(self) -> str:
+        """Format context for Claude prompts"""
+        return f"""
+        USER CONTEXT:
+        - Phone: {self.user_phone}
+        - Urgency: {self.urgency_level}
+        - Is correction: {self.is_correction}
+        - Previous rejections: {len(self.rejection_history or [])}
+        - Conversation stage: {self.conversation_stage}
+        - Preferences: {self.user_preferences}
+        """
+
+
 # State for LangGraph
 class PangeaState(TypedDict):
     messages: Annotated[List, add_messages]
@@ -111,38 +141,6 @@ def cleanup_stale_sessions():
             
     except Exception as e:
         print(f"❌ Cleanup failed: {e}")
-
-
-
-
-@dataclass
-class UserContext:
-    """Rich context passed to all tools and functions"""
-    user_phone: str
-    conversation_history: List[Dict]
-    user_preferences: Dict
-    current_session: Dict
-    conversation_stage: str
-    urgency_level: str  # "urgent", "flexible", "scheduled"
-    personality_profile: Dict
-    
-    # Situational awareness
-    is_correction: bool = False
-    is_retry: bool = False
-    rejection_history: List[Dict] = None
-    search_reason: str = "new_request"  # Why we're searching
-    
-    def to_prompt_context(self) -> str:
-        """Format context for Claude prompts"""
-        return f"""
-        USER CONTEXT:
-        - Phone: {self.user_phone}
-        - Urgency: {self.urgency_level}
-        - Is correction: {self.is_correction}
-        - Previous rejections: {len(self.rejection_history or [])}
-        - Conversation stage: {self.conversation_stage}
-        - Preferences: {self.user_preferences}
-        """
 
 
 
