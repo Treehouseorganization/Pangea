@@ -925,7 +925,12 @@ def schedule_solo_delivery_trigger(group_data: Dict):
         scheduled_datetime = parse_delivery_time(delivery_time)
         
         if scheduled_datetime:
-            current_time = datetime.now()
+            from datetime import timezone
+            # Ensure both datetimes have timezone info
+            if scheduled_datetime.tzinfo is None:
+                scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
+            
+            current_time = datetime.now(timezone.utc)
             delay_seconds = (scheduled_datetime - current_time).total_seconds()
             
             if delay_seconds > 0:

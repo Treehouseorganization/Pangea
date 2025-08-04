@@ -2936,8 +2936,13 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         delivery_location = state['current_request'].get('delivery_location', 'campus')
         
         # Get solo user's existing session to preserve their delivery time
-        from pangea_order_processor import get_user_order_session, update_order_session
-        solo_session = get_user_order_session(solo_user_phone)
+        try:
+            from pangea_order_processor import get_user_order_session, update_order_session
+            solo_session = get_user_order_session(solo_user_phone)
+            print(f"✅ Retrieved solo session for {solo_user_phone}: {solo_session.get('delivery_time', 'no time') if solo_session else 'no session'}")
+        except Exception as e:
+            print(f"⚠️ Failed to get solo session: {e}")
+            solo_session = None
         
         if solo_session and solo_session.get('delivery_time') != 'now':
             # Use solo user's scheduled delivery time for the group
