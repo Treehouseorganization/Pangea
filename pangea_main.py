@@ -1317,6 +1317,11 @@ def notify_compatible_users_of_active_groups(
 def check_user_compatibility_for_notification(user_phone: str, user_data: Dict, active_group_data: Dict, threshold: float) -> Dict:
     """Check if user should be notified about active group - smart filtering logic"""
     
+    # 0. Check if user is silently matched (solo order customer who shouldn't get notifications)
+    if user_data.get('silent_match', False):
+        print(f"🔇 Skipping {user_phone}: marked for silent matching (solo order customer)")
+        return False
+    
     # 1. Check notification fatigue (max 2 per day)
     if check_notification_fatigue(user_phone):
         return False
