@@ -2882,7 +2882,7 @@ Or if you have multiple restaurant options, specify which one:
     return state
 
 def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState:
-    """Enhanced analysis with context awareness"""
+    """Enhanced analysis with context awareness - FIXED VERSION"""
     
     user_message = state['messages'][-1].content
     user_phone = state['user_phone']
@@ -2937,11 +2937,13 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
             missing_info.append('location')
             
         if missing_info:
+            # FIXED: Use 'incomplete_request' not 'incomplete_request' 
             state['conversation_stage'] = 'incomplete_request'
             state['missing_info'] = missing_info
             state['partial_request'] = extracted_data
         else:
-            state['conversation_stage'] = 'complete_request'
+            # FIXED: Use 'spontaneous_matching' not 'complete_request'
+            state['conversation_stage'] = 'spontaneous_matching'
             
         state['messages'].append(AIMessage(content=f"Analyzed request: {extracted_data}"))
         return state
@@ -2954,11 +2956,10 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
             'location': 'library' if 'library' in user_message.lower() else '',
             'time_preference': '7pm' if '7pm' in user_message.lower() else 'now'
         }
-        state['conversation_stage'] = 'complete_request'
+        # FIXED: Use 'spontaneous_matching' not 'complete_request'
+        state['conversation_stage'] = 'spontaneous_matching'
         state['messages'].append(AIMessage(content="Analyzed request with fallback"))
         return state
-
-# REPLACE realtime_search_node function with this:
 
 def realtime_search_node_enhanced(state: PangeaState) -> PangeaState:
     """Enhanced search with full context"""
@@ -4315,7 +4316,7 @@ def handle_incomplete_request_node(state: PangeaState) -> PangeaState:
 
 # ===== MAIN LANGGRAPH WITH 2025 ENHANCEMENTS =====
 def create_pangea_graph():
-    """Enhanced workflow with conversational flexibility"""
+    """Enhanced workflow with conversational flexibility - FIXED VERSION"""
     
     workflow = StateGraph(PangeaState)
     
@@ -4380,13 +4381,14 @@ def create_pangea_graph():
     workflow.add_edge("present_morning_matches", END)
     workflow.add_edge("faq_answered", END)
     
-    # Enhanced spontaneous agent flow with conditional routing
+    # FIXED: Enhanced spontaneous agent flow with conditional routing
     workflow.add_conditional_edges(
         "analyze_spontaneous",
         lambda state: state.get('conversation_stage', 'spontaneous_matching'),
         {
-            "incomplete_request": END,
-            "spontaneous_matching": "realtime_search"
+            "incomplete_request": END,  # Will show missing info message and end
+            "spontaneous_matching": "realtime_search"  # Continue to search
+            # REMOVED: "complete_request" route that was causing the KeyError
         }
     )
     workflow.add_edge("realtime_search", "negotiate")
