@@ -2964,19 +2964,23 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         }
         
         # Store group in Firebase
+        print(f"📝 Storing group {group_id} in Firebase...")
         db.collection('active_groups').document(group_id).set(group_data)
         print(f"✅ Created group {group_id} in Firebase with solo user silently added")
         
         # Send invitation ONLY to the new user
         invitation_message = f"🍕 Perfect match found! Someone nearby wants {restaurant} delivered to {delivery_location} at {delivery_time}. Want to split the order and save on delivery? Reply YES to join or NO to pass."
         
+        print(f"📱 Sending invitation SMS to {new_user_phone}...")
         success = send_friendly_message(new_user_phone, invitation_message, message_type="match_found")
+        print(f"📤 SMS send completed with result: {success}")
         if success:
             print(f"📱 Sent invitation SMS to new user {new_user_phone}")
         else:
             print(f"❌ Failed to send SMS to new user {new_user_phone}")
         
         # Update solo user's session to join the real group
+        print(f"🔄 Updating solo user session...")
         if solo_session:
             solo_session['group_id'] = group_id
             solo_session['group_size'] = 2
