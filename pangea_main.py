@@ -2836,7 +2836,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         
         # Silently add solo order users to the group without invitations
         for phone in solo_order_users:
-            print(f"🤝 Silently adding solo order user {phone} to group {group_id}")
+            print(f"🤫 Silently adding solo order user {phone} to group {group_id} (no notification)")
             
             try:
                 # Get the solo user's existing session
@@ -2857,6 +2857,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                     solo_session['group_id'] = group_id
                     solo_session['group_size'] = len(sorted_phones)
                     solo_session['delivery_time'] = group_data['delivery_time']
+                    solo_session['silent_match'] = True  # Mark as silently matched
                     
                     # Clear any scheduled delivery flags since they're now in a group
                     if 'delivery_scheduled' in solo_session:
@@ -2865,7 +2866,18 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                         del solo_session['scheduled_trigger_time']
                     
                     update_order_session(phone, solo_session)
-                    print(f"✅ Updated solo user {phone} session to group {group_id}")
+                    print(f"✅ Updated solo user {phone} session to group {group_id} (silent match)")
+                
+                # Mark solo user as silently matched in Firebase
+                solo_user_doc_ref = db.collection('users').document(phone)
+                solo_user_doc_ref.update({
+                    'conversation_stage': 'matched_to_group',
+                    'group_matched': True,
+                    'group_id': group_id,
+                    'silent_match': True,  # Flag for silent matching - no notifications
+                    'last_updated': datetime.now()
+                })
+                print(f"🛡️ Marked solo user {phone} for silent matching")
                 
             except Exception as e:
                 print(f"❌ Error updating solo user {phone} session: {e}")
@@ -2982,9 +2994,10 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
                 'group_matched': True,
                 'group_id': group_id,
                 'solo_message_sent': True,  # Prevent any "no matches" messages
+                'silent_match': True,  # Flag for silent matching - no notifications to solo user
                 'last_updated': datetime.now()
             })
-            print(f"🛡️ Protected solo user {solo_user_phone} from duplicate messages")
+            print(f"🛡️ Protected solo user {solo_user_phone} from duplicate messages and marked for silent matching")
         except Exception as e:
             print(f"⚠️ Warning: Could not update solo user protection flags: {e}")
         
