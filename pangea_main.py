@@ -3220,6 +3220,27 @@ def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
                 
                 print(f"✅ Order process started successfully for {user_phone}")
                 
+                # Send order instructions to the user
+                try:
+                    from pangea_order_processor import get_payment_amount
+                    payment_amount = get_payment_amount(group_size)
+                    
+                    success_message = f"""Great! You're part of the {restaurant} group! 🎉
+
+**Quick steps to get your food:**
+1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery
+2. Come back here with your confirmation number or name for the order AND what you ordered
+
+Once everyone's ready, your payment will be {payment_amount} 💳
+
+Let me know if you need any help!"""
+                    
+                    send_friendly_message(user_phone, success_message, message_type="order_start")
+                    print(f"✅ Order instructions sent to {user_phone}")
+                    
+                except Exception as message_error:
+                    print(f"⚠️ Order process started but failed to send instructions: {message_error}")
+                
             except Exception as order_error:
                 print(f"❌ Error starting order process for {user_phone}: {order_error}")
                 import traceback
