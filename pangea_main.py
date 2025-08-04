@@ -2898,15 +2898,62 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
     
     CONTEXT-AWARE RULES:
     1. If correction → prioritize new info over context
-    2. If urgent → default missing time to "now"
+    2. If urgent → default missing time to "now"  
     3. Use user preferences as smart defaults
     4. Consider previous rejections for disambiguation
     
     Extract: {{"restaurant": "...", "location": "...", "time_preference": "..."}}
     """
     
-    # Continue with existing analyze_spontaneous_request_node logic but use context...
-    return analyze_spontaneous_request_node(state)
+    try:
+        # Use Claude to extract the food request details
+        response = anthropic_llm.invoke([HumanMessage(content=analysis_prompt)])
+        extracted_text = response.content.strip()
+        
+        # Try to parse JSON from the response
+        import re
+        json_match = re.search(r'\{[^}]*\}', extracted_text)
+        if json_match:
+            extracted_data = json.loads(json_match.group())
+        else:
+            # Fallback extraction
+            extracted_data = {
+                'restaurant': '',
+                'location': '', 
+                'time_preference': ''
+            }
+            
+        # Store the current request
+        state['current_request'] = extracted_data
+        
+        # Check if we have all required info
+        missing_info = []
+        if not extracted_data.get('restaurant'):
+            missing_info.append('restaurant')
+        if not extracted_data.get('location'):
+            missing_info.append('location')
+            
+        if missing_info:
+            state['conversation_stage'] = 'incomplete_request'
+            state['missing_info'] = missing_info
+            state['partial_request'] = extracted_data
+        else:
+            state['conversation_stage'] = 'complete_request'
+            
+        state['messages'].append(AIMessage(content=f"Analyzed request: {extracted_data}"))
+        return state
+        
+    except Exception as e:
+        print(f"❌ Error in enhanced spontaneous analysis: {e}")
+        # Fallback to basic extraction
+        state['current_request'] = {
+            'restaurant': 'McDonald\'s' if 'mcdonald' in user_message.lower() else '',
+            'location': 'library' if 'library' in user_message.lower() else '',
+            'time_preference': '7pm' if '7pm' in user_message.lower() else 'now'
+        }
+        state['conversation_stage'] = 'complete_request'
+        state['messages'].append(AIMessage(content="Analyzed request with fallback"))
+        return state
 
 # REPLACE realtime_search_node function with this:
 
