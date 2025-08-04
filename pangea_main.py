@@ -4969,6 +4969,18 @@ def log_interaction(phone_number: str, interaction_data: Dict):
 # ===== FLASK WEBHOOK SERVER =====
 app = Flask(__name__)
 
+# Add this root route above your existing webhook
+@app.route('/', methods=['GET'])
+def home():
+    """Root route for health checks"""
+    return {
+        'status': 'online', 
+        'service': 'Pangea AI Friend System',
+        'version': '2025.1',
+        'endpoints': ['/webhook/sms', '/health']
+    }, 200
+
+# Your existing webhook with minimal fixes
 @app.route('/webhook', methods=['POST'])
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
@@ -4983,6 +4995,11 @@ def sms_webhook():
         message_body = request.form.get('Body')
         print(f"📱 SMS from {from_number}: {message_body}")
         
+        # ADDED: Basic validation
+        if not from_number or not message_body:
+            print(f"❌ Missing required fields - From: {from_number}, Body: {message_body}")
+            return '', 400
+        
         # Use enhanced routing
         routing_result = route_message_intelligently(from_number, message_body)
         
@@ -4995,8 +5012,18 @@ def sms_webhook():
         
     except Exception as e:
         print(f"❌ Enhanced webhook error: {e}")
+        print(f"❌ ERROR TYPE: {type(e).__name__}")  # ADDED: Error type
         import traceback
         print(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        # ADDED: Try to send error message to user
+        try:
+            if 'from_number' in locals() and from_number:
+                send_friendly_message(from_number, "Sorry, I'm having technical difficulties. Please try again in a few minutes.", message_type="error")
+                print("✅ Error SMS sent to user")
+        except Exception as sms_error:
+            print(f"❌ Could not send error SMS: {sms_error}")
+        
         return '', 500
 
 @app.route('/health', methods=['GET'])
