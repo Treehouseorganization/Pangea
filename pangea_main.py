@@ -1554,14 +1554,17 @@ def update_proactive_notification_response(user_phone: str, response: str):
 def learn_from_rejection(rejecting_user: str, rejected_proposal: Dict, rejection_reason: str = None):
     """Learn from rejections to improve future matching"""
     
-    update_user_memory(rejecting_user, {
-        'interaction_type': 'proposal_rejection',
-        'rejected_restaurant': rejected_proposal.get('restaurant'),
-        'rejected_time': rejected_proposal.get('time'),
-        'rejected_location': rejected_proposal.get('location'),
-        'rejection_reason': rejection_reason or 'not_specified',
-        'timestamp': datetime.now(),
-        'proposal_compatibility_score': rejected_proposal.get('compatibility_score', 0.0)
+    update_user_memory.invoke({
+        "phone_number": rejecting_user,
+        "interaction_data": {
+            'interaction_type': 'proposal_rejection',
+            'rejected_restaurant': rejected_proposal.get('restaurant'),
+            'rejected_time': rejected_proposal.get('time'),
+            'rejected_location': rejected_proposal.get('location'),
+            'rejection_reason': rejection_reason or 'not_specified',
+            'timestamp': datetime.now(),
+            'proposal_compatibility_score': rejected_proposal.get('compatibility_score', 0.0)
+        }
     })
 
 
@@ -1595,7 +1598,7 @@ def send_friendly_message(phone_number: str, message: str, message_type: str = "
     
     try:
         # Enhance message with Claude 4's conversational abilities
-        user_history = get_user_preferences(phone_number)
+        user_history = get_user_preferences.invoke({"phone_number": phone_number})
         enhanced_message = enhance_message_with_context(message, message_type, user_history)
         
         print(f"📞 About to call Twilio API...")
@@ -4138,10 +4141,13 @@ What sounds good? 😊"""
     state['conversation_stage'] = 'welcomed'
     
     # Log welcome interaction for learning
-    update_user_memory(state['user_phone'], {
-        'interaction_type': 'welcome',
-        'restaurants_shown': RESTAURANTS,
-        'onboarding_completed': True
+    update_user_memory.invoke({
+        "phone_number": state['user_phone'],
+        "interaction_data": {
+            'interaction_type': 'welcome',
+            'restaurants_shown': RESTAURANTS,
+            'onboarding_completed': True
+        }
     })
     
     return state
@@ -4587,11 +4593,11 @@ This is going to be great! 🍜"""
         message_type="match_found"
     )
     
-    # FIXED: Call update_user_memory directly (not .invoke())
+    # Update user memory for successful group formation
     for member in all_members:
-        update_user_memory(
-            phone_number=member,
-            interaction_data={
+        update_user_memory.invoke({
+            "phone_number": member,
+            "interaction_data": {
                 'interaction_type': 'successful_group_formation',
                 'group_members': all_members,
                 'restaurant': restaurant,
@@ -4601,7 +4607,7 @@ This is going to be great! 🍜"""
                 'formation_time': datetime.now(),
                 'group_id': group_id
             }
-        )
+        })
     
     state['final_group'] = {
         'members': all_members,
