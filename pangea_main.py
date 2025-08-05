@@ -5017,9 +5017,24 @@ Then your payment will be $3.50 💳"""
         for old_order in old_orders:
             old_order.reference.delete()
             print(f"🗑️ Cleaned up old solo order for {user_phone}")
-        print(f"🔄 Leaving current order findable for future matches")
     except Exception as e:
         print(f"❌ Failed to clean up solo orders: {e}")
+
+    # Create new active_orders entry so this solo user can be found by future users
+    try:
+        active_order_data = {
+            'user_phone': user_phone,
+            'restaurant': restaurant,
+            'location': location,
+            'time_requested': delivery_time,
+            'status': 'looking_for_group',
+            'created_at': datetime.now(),
+            'flexibility_score': 0.5
+        }
+        db.collection('active_orders').add(active_order_data)
+        print(f"🔄 Created new active_orders entry for {user_phone} - now findable for future matches")
+    except Exception as e:
+        print(f"❌ Failed to create active_orders entry: {e}")
 
     # Start solo order process
     try:
