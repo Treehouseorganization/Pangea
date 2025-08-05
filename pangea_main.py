@@ -4200,12 +4200,25 @@ def should_continue_negotiating(state: PangeaState) -> str:
         print(f"⚠️ Error checking for active groups: {e}")
     
     # ALSO CHECK: If user has an active order session, they shouldn't be searching
+    # PATCH: Only block if NOT fresh request and group order (not solo) - matching multi_agent_negotiation_node logic
     try:
         from pangea_order_processor import get_user_order_session
         session = get_user_order_session(user_phone)
         if session:
-            print(f"🛑 User {user_phone} has active order session - stopping search")
-            return "wait_for_responses"
+            is_fresh_request = state.get('is_fresh_request', False)
+            group_size = session.get('group_size', 1)
+            status = session.get('status', '')
+            order_type = session.get('order_type', '')
+            
+            # Only block if NOT fresh request and group order (not solo)
+            if (not is_fresh_request
+                and group_size > 1
+                and status == 'active'
+                and order_type != 'solo'):
+                print(f"🛑 User {user_phone} has active group order (not solo) - stopping search")
+                return "wait_for_responses"
+            else:
+                print(f"✅ Fresh request or solo order detected in should_continue_negotiating - allowing search to continue")
     except Exception as e:
         print(f"⚠️ Error checking order session: {e}")
     
