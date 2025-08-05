@@ -2360,28 +2360,65 @@ def build_user_context(user_phone: str, current_message: str, routing_decision: 
 
 
 def route_message_intelligently(phone_number: str, message_body: str):
-    """Enhanced routing with full conversational support"""
-    
-    # Get routing decision from enhanced AI
-    routing_decision = intelligent_router(phone_number=phone_number, new_message=message_body)
-    
-    action = routing_decision.get('action')
-    
-    # Handle special conversational actions
-    if action in ['cancel_current_process', 'handle_correction', 'provide_clarification']:
-        # Route to main system with enhanced conversational support
-        main_result = handle_incoming_sms(phone_number, message_body)
-        return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
-    
-    # Route order-related actions to order processor
-    elif action in ['collect_order_number', 'collect_order_description', 'handle_payment_request']:
-        order_result = process_order_message(phone_number, message_body)
-        return {'system': 'order_processor', 'result': order_result, 'routing_decision': routing_decision}
-        
-    # Route everything else to main system
-    else:
-        main_result = handle_incoming_sms(phone_number, message_body)
-        return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
+    """Enhanced routing with full conversational support + deep error logging"""
+    try:
+        print(f"📨 route_message_intelligently START | phone_number={phone_number} | message_body={message_body}")
+
+        try:
+            print("🔍 Calling intelligent_router()...")
+            routing_decision = intelligent_router(phone_number=phone_number, new_message=message_body)
+            print(f"✅ intelligent_router() returned: {routing_decision}")
+        except Exception as e:
+            import traceback
+            print(f"❌ ERROR in intelligent_router: {e}")
+            traceback.print_exc()
+            raise  # bubble up
+
+        action = routing_decision.get('action')
+        print(f"📌 Routing action determined: {action}")
+
+        if action in ['cancel_current_process', 'handle_correction', 'provide_clarification']:
+            try:
+                print("📨 Routing to handle_incoming_sms()...")
+                main_result = handle_incoming_sms(phone_number, message_body)
+                print(f"✅ handle_incoming_sms() returned: {main_result}")
+                return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
+            except Exception as e:
+                import traceback
+                print(f"❌ ERROR in handle_incoming_sms: {e}")
+                traceback.print_exc()
+                raise
+
+        elif action in ['collect_order_number', 'collect_order_description', 'handle_payment_request']:
+            try:
+                print("📨 Routing to process_order_message()...")
+                order_result = process_order_message(phone_number, message_body)
+                print(f"✅ process_order_message() returned: {order_result}")
+                return {'system': 'order_processor', 'result': order_result, 'routing_decision': routing_decision}
+            except Exception as e:
+                import traceback
+                print(f"❌ ERROR in process_order_message: {e}")
+                traceback.print_exc()
+                raise
+
+        else:
+            try:
+                print("📨 Routing to handle_incoming_sms() (default)...")
+                main_result = handle_incoming_sms(phone_number, message_body)
+                print(f"✅ handle_incoming_sms() returned: {main_result}")
+                return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
+            except Exception as e:
+                import traceback
+                print(f"❌ ERROR in handle_incoming_sms (default): {e}")
+                traceback.print_exc()
+                raise
+
+    except Exception as e:
+        import traceback
+        print(f"💥 UNHANDLED ERROR in route_message_intelligently: {e}")
+        traceback.print_exc()
+        # Still raise so Flask returns 500, but now we'll see exactly where it died
+        raise
 
 def unified_claude_router_node(state: PangeaState) -> PangeaState:
     """Enhanced router node using the new flexible router"""
