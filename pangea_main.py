@@ -4893,110 +4893,136 @@ This is going to be great! 🍜"""
 
 def handle_no_matches_node(state: PangeaState) -> PangeaState:
     """
-    When no matches found, send COMBINED message and trigger order processor flow
+    When no matches found, send COMBINED message and trigger order processor flow.
+    Updated so solo message goes through if it's a NEW food request,
+    unless the user is explicitly resuming their old matched session.
+    Deduplication now considers restaurant + location + delivery_time.
     """
+    from datetime import datetime, timedelta
+
     user_phone = state['user_phone']
     restaurant = state['current_request'].get('restaurant', 'that spot')
     location = state['current_request'].get('location', 'campus')
-    
-    # Prevent multiple solo messages per request
+    delivery_time = state['current_request'].get('time_preference', 'now')
+
+    # Unique request key for deduplication
+    request_key = f"{restaurant}|{location}|{delivery_time}"
+
+    # 🆕 Resume intent detection
+    last_message = state['messages'][-1].content if state.get('messages') else ""
+    resume_phrases = [
+        "resume", "continue", "join again", "pick up where we left",
+        "same group", "previous group", "last order", "group order",
+        "rejoin", "same match"
+    ]
+    if any(phrase in last_message.lower() for phrase in resume_phrases):
+        print(f"🔄 User {user_phone} is trying to resume old match — skipping solo message")
+        return state
+
+    # 🆕 DEDUPLICATION: Prevent duplicate solo sends for same request within 5 minutes
+    try:
+        user_doc_ref = db.collection('users').document(user_phone)
+        user_doc = user_doc_ref.get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            last_request = user_data.get("last_request")
+            if isinstance(last_request, dict) and last_request.get("key") == request_key:
+                ts = last_request.get("timestamp")
+                if ts and isinstance(ts, datetime):
+                    if datetime.now() - ts < timedelta(minutes=5):
+                        print(f"🚫 Duplicate solo message prevented for {user_phone} (same request within 5 min)")
+                        return state
+    except Exception as e:
+        print(f"⚠️ Could not check last_request deduplication: {e}")
+
+    # Prevent sending twice for this request in current state
     if state.get('solo_message_sent'):
         print(f"🚫 Solo message already sent for {user_phone}, skipping")
         return state
-    
-    # CRITICAL: Check if user was recently matched to a group (protection against race conditions)
-    try:
-        user_doc = db.collection('users').document(user_phone).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            if user_data.get('group_matched') or user_data.get('conversation_stage') == 'matched_to_group':
-                print(f"🛡️ User {user_phone} was recently matched to a group, skipping solo message")
-                return state
-    except Exception as e:
-        print(f"⚠️ Warning: Could not check user protection flags: {e}")
-    
-    # Create a fake group_id for solo ordering
+
+    # Create solo group_id
     solo_group_id = f"solo_{str(uuid.uuid4())}"
-    delivery_time = state['current_request'].get('time_preference', 'now')
-    
-    # CONTEXT-AWARE MESSAGE: Check if user already provided order details
-    last_message = state['messages'][-1].content if state.get('messages') else ""
-    time_context = f" around {delivery_time}" if delivery_time != 'now' else ""
-    
-    # Check if user already mentioned ordering/ordered something
+
+    # Check if user already gave order details
     already_ordered = any(phrase in last_message.lower() for phrase in [
-        'ordered', 'i ordered', 'my order', 'order is', 'got a', 'getting a', 'big mac', 'quarter pounder', 'chicken nuggets', 'fries'
+        'ordered', 'i ordered', 'my order', 'order is', 'got a', 'getting a',
+        'big mac', 'quarter pounder', 'chicken nuggets', 'fries'
     ])
-    
+
+    # Build message
+    time_context = f" around {delivery_time}" if delivery_time != 'now' else ""
     if already_ordered:
-        # User already provided order details - skip ordering instructions
         combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee!
 
-Since you've already got your order sorted, all you need to do is text "pay" and I'll get your food delivered for just $3.50 instead of the full delivery fee 🙌
+Since you've already got your order sorted, all you need to do is text "pay" and I'll get your food delivered for $3.50 instead of the full delivery fee 🙌
 
-Just text: **pay**"""
+Text: **pay**"""
     else:
-        # Standard message with ordering instructions
-        combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee! Since you already told me you want {restaurant} at {location} for {delivery_time}, all you need to do now is place your order and come back with your confirmation details.
+        combined_message = f"""Great news! I found someone else who wants {restaurant} delivered to {location}{time_context} too, so you can split the delivery fee!
 
-Your share will only be $2.50-$3.50 instead of the full delivery fee 🙌
+Since you want {restaurant} at {location} for {delivery_time}, just place your order and come back with your confirmation details.
+
+Your share will only be $2.50–$3.50 instead of the full delivery fee 🙌
 
 **Quick steps:**
-1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery  
-2. Come back here with your confirmation number/name AND what you ordered
+1. Order directly from {restaurant} (choose PICKUP, not delivery)  
+2. Come back with your confirmation number/name AND what you ordered  
 
-Once you're ready, your payment will be $3.50 💳
+Then your payment will be $3.50 💳"""
 
-Let me know if you need help!"""
-    
-    # Send the COMBINED message
+    # Send message
     send_friendly_message(user_phone, combined_message, message_type="general")
-    
-    # Mark that solo message has been sent for this request
     state['solo_message_sent'] = True
-    
-    # Clean up only OLD active orders for this user (older than 5 minutes to allow concurrent matching)
+
+    # 🆕 Save last request in Firestore for future deduplication
     try:
-        from datetime import timedelta
+        db.collection('users').document(user_phone).update({
+            "last_request": {
+                "key": request_key,
+                "restaurant": restaurant,
+                "location": location,
+                "delivery_time": delivery_time,
+                "timestamp": datetime.now()
+            }
+        })
+        print(f"💾 Stored last_request for {user_phone}: {request_key}")
+    except Exception as e:
+        print(f"⚠️ Could not update last_request in Firestore: {e}")
+
+    # Clean up old solo orders (>5 min)
+    try:
         cutoff_time = datetime.now() - timedelta(minutes=5)
-        
         old_orders = db.collection('active_orders')\
-                      .where('user_phone', '==', user_phone)\
-                      .where('status', '==', 'looking_for_group')\
-                      .where('created_at', '<', cutoff_time)\
-                      .get()
-        
+            .where('user_phone', '==', user_phone)\
+            .where('status', '==', 'looking_for_group')\
+            .where('created_at', '<', cutoff_time)\
+            .get()
         for old_order in old_orders:
             old_order.reference.delete()
-            print(f"🗑️ Cleaned up old solo order for {user_phone} (older than 5 min)")
-        
-        # DON'T clean up current active orders - leave them findable for other users
+            print(f"🗑️ Cleaned up old solo order for {user_phone}")
         print(f"🔄 Leaving current order findable for future matches")
-            
     except Exception as e:
         print(f"❌ Failed to clean up solo orders: {e}")
-    
-    # NOW trigger the order processor flow (FIXED VERSION)
+
+    # Start solo order process
     try:
-        # FIXED: Import and call start_order_process properly
         from pangea_order_processor import start_order_process
-        
         order_session = start_order_process(
             user_phone=user_phone,
             group_id=solo_group_id,
             restaurant=restaurant,
-            group_size=1,  # Solo order (fake match)
+            group_size=1,
             delivery_time=delivery_time
         )
-        
-        print(f"✅ Started solo order process for {user_phone} - {restaurant} at {delivery_time}")
-        
-        # Extract order details from original message if provided
+        print(f"✅ Started solo order process for {user_phone}")
+
+        # If already ordered, try extracting details
         if already_ordered:
             try:
                 from langchain_anthropic import ChatAnthropic
                 from langchain_core.messages import HumanMessage
-                
+                import json, re
+
                 extraction_prompt = f"""
                 The user provided order details in their message. Extract the information:
                 
@@ -5006,79 +5032,69 @@ Let me know if you need help!"""
                 1. Customer name (if available)
                 2. What they ordered (food items)
                 
-                Return JSON with:
-                - "customer_name": name or null
-                - "order_description": what they ordered or null
-                
-                Examples:
-                - "my name is Jake and I ordered a Big Mac" → {{"customer_name": "Jake", "order_description": "Big Mac"}}
-                - "I'm Sarah, got chicken nuggets" → {{"customer_name": "Sarah", "order_description": "chicken nuggets"}}
+                Return JSON:
+                {{
+                    "customer_name": string or null,
+                    "order_description": string or null
+                }}
                 """
-                
+
                 llm = ChatAnthropic(model="claude-opus-4-20250514", temperature=0.1, max_tokens=500)
                 response = llm.invoke([HumanMessage(content=extraction_prompt)])
                 response_text = response.content.strip()
-                print(f"🔍 Raw extraction response: {response_text}")
-                
-                # Clean up response - remove any markdown formatting
+
                 if '```json' in response_text:
-                    # Extract JSON from markdown code block
                     start = response_text.find('{')
                     end = response_text.rfind('}') + 1
                     response_text = response_text[start:end]
                 elif '```' in response_text:
-                    # Remove any code block markers
                     response_text = response_text.replace('```', '').strip()
-                
-                # Try to find JSON in the response if it doesn't start with {
+
                 if not response_text.startswith('{'):
-                    import re
                     json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                     if json_match:
                         response_text = json_match.group()
-                
-                print(f"🔍 Cleaned extraction response: {response_text}")
+
                 extracted_data = json.loads(response_text)
-                
-                # Update order session with extracted details
+
                 from pangea_order_processor import update_order_session, get_user_order_session
                 current_session = get_user_order_session(user_phone)
-                
+
                 if extracted_data.get('customer_name'):
                     current_session['customer_name'] = extracted_data['customer_name']
                 if extracted_data.get('order_description'):
                     current_session['order_description'] = extracted_data['order_description']
-                
-                # If we have both name/identifier and food description, mark as ready to pay
-                if (extracted_data.get('customer_name') and extracted_data.get('order_description')):
+
+                if extracted_data.get('customer_name') and extracted_data.get('order_description'):
                     current_session['order_stage'] = 'ready_to_pay'
-                    print(f"✅ Extracted order details: {extracted_data['customer_name']} - {extracted_data['order_description']}")
-                
+
                 update_order_session(user_phone, current_session)
-                
+
+                print(f"✅ Extracted order details: {extracted_data}")
             except Exception as extraction_error:
                 print(f"❌ Failed to extract order details: {extraction_error}")
-                # Continue anyway - extraction failure shouldn't break the flow
-        
-        # Update user memory for solo order
+
+        # Update user memory
         try:
             update_user_memory(phone_number=user_phone, interaction_data={
                 "interaction_type": "fake_match_solo_order",
                 "restaurant": restaurant,
                 "location": location,
+                "delivery_time": delivery_time,
                 "timestamp": datetime.now(),
             })
         except Exception as memory_error:
             print(f"❌ Failed to update user memory: {memory_error}")
-            # Continue anyway - memory update failure shouldn't break the flow
-        
+
     except Exception as e:
         print(f"❌ Failed to start solo order process: {e}")
         import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
+        print(traceback.format_exc())
 
+    # Store message in state
     state['messages'].append(AIMessage(content=combined_message))
     return state
+
 
 # ===== TWILIO WEBHOOK HANDLER =====
 def handle_incoming_sms(phone_number: str, message_body: str):
