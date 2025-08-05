@@ -278,7 +278,6 @@ def filter_by_rejection_history(matches: List[Dict], rejection_history: List[Dic
     return filtered_matches
 
 
-@tool
 def calculate_compatibility(
     user1_restaurant: str,
     user1_time: str, 
@@ -1027,7 +1026,7 @@ def handle_group_response_no_node(state: PangeaState) -> PangeaState:
             # LEARN from rejection
             learn_from_rejection(user_phone, rejected_proposal)
             
-            # FIXED: Call get_user_preferences directly (not .invoke())
+            # Use tool pattern - let Claude decide if user preferences are needed
             user_prefs = get_user_preferences(user_phone)
             
             # ENHANCED: Use location-aware generate_counter_proposal (finds alternatives AND decides)
@@ -1595,7 +1594,7 @@ def send_friendly_message(phone_number: str, message: str, message_type: str = "
     
     try:
         # Enhance message with Claude 4's conversational abilities
-        user_history = get_user_preferences(phone_number=phone_number)
+        user_history = get_user_preferences.invoke({"phone_number": phone_number})
         enhanced_message = enhance_message_with_context(message, message_type, user_history)
         
         print(f"📞 About to call Twilio API...")
@@ -1752,7 +1751,6 @@ def extract_learning_insights(phone_number: str, interaction_data: Dict) -> Dict
         return {"insights_extraction": "failed"}
 
 # ===== UNIFIED INTELLIGENT ROUTER =====
-@tool
 def intelligent_router(phone_number: str, new_message: str) -> Dict:
     """
     Super-flexible router that handles ANY user input contextually
@@ -4149,7 +4147,7 @@ def morning_greeting_node(state: PangeaState) -> PangeaState:
     Adapts message based on user's history and preferences.
     """
     
-    user_prefs = get_user_preferences(state['user_phone'])
+    user_prefs = get_user_preferences.invoke({"phone_number": state['user_phone']})
     
     # Create personalized morning message using Claude 4
     personalization_prompt = f"""
