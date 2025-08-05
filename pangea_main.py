@@ -2989,15 +2989,15 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
 
 def realtime_search_node_enhanced(state: PangeaState) -> PangeaState:
     """Enhanced search with full context"""
-    
+
     user_context = state.get('user_context')
     if not user_context:
         user_context = build_user_context(state['user_phone'], "", {})
-    
+
     request = state['current_request']
     search_attempt = state.get('search_attempts', 0) + 1
     state['search_attempts'] = search_attempt
-    
+
     # Determine search reason
     if user_context.is_correction:
         search_reason = "correction"
@@ -3005,16 +3005,16 @@ def realtime_search_node_enhanced(state: PangeaState) -> PangeaState:
         search_reason = "retry"
     else:
         search_reason = "new_request"
-    
+
     # Use context-aware search
-    matches = find_potential_matches_contextual(
-        restaurant_preference=request.get('restaurant', ''),
-        location=request.get('location', ''),
-        time_window=request.get('time_preference', 'now'),
-        requesting_user=state['user_phone'],
-        user_context=user_context
-    )
-    
+    matches = find_potential_matches_contextual({
+        "restaurant_preference": request.get('restaurant', ''),
+        "location": request.get('location', ''),
+        "time_window": request.get('time_preference', 'now'),
+        "requesting_user": state['user_phone'],
+        "user_context": user_context
+    })
+
     state['potential_matches'] = matches
     return state
 
