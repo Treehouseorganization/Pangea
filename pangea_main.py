@@ -5019,45 +5019,62 @@ def home():
 @app.route('/webhook', methods=['POST'])
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
-    """Enhanced webhook with full conversational support"""
+    """Enhanced webhook with full conversational support + debug logging"""
     import time
+    import traceback
+
     start_time = time.time()
-    
     print("🚨 ENHANCED WEBHOOK STARTED")
-    
+
     try:
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
         print(f"📱 SMS from {from_number}: {message_body}")
-        
+
         # ADDED: Basic validation
         if not from_number or not message_body:
             print(f"❌ Missing required fields - From: {from_number}, Body: {message_body}")
             return '', 400
-        
-        # Use enhanced routing safely
-        routing_result = route_message_intelligently(from_number, message_body)
-        
-        # ✅ ADDED: Ensure routing_result is valid
-        if not isinstance(routing_result, dict) or 'routing_decision' not in routing_result:
-            print(f"⚠️ Invalid routing_result: {routing_result}")
-            handle_incoming_sms(from_number, message_body)  # fallback to basic handler
-            return '', 200
-        
+
+        # ---------------------------
+        # DEBUG WRAPPER AROUND ROUTER
+        # ---------------------------
+        try:
+            print("🔍 Calling route_message_intelligently()...")
+            routing_result = route_message_intelligently(from_number, message_body)
+            print(f"✅ route_message_intelligently() returned: {routing_result}")
+        except Exception as router_error:
+            print("❌ ERROR inside route_message_intelligently or its dependencies!")
+            print(f"❌ ERROR TYPE: {type(router_error).__name__}")
+            print(f"❌ ERROR DETAILS: {router_error}")
+            print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
+
+            # Send user-friendly fail message (won’t block webhook)
+            try:
+                send_friendly_message(
+                    from_number,
+                    "Sorry, I hit a technical problem while processing your message. Please try again later.",
+                    message_type="error"
+                )
+                print("✅ Sent error message to user after router failure.")
+            except Exception as sms_error:
+                print(f"❌ Could not send error SMS: {sms_error}")
+
+            return '', 500
+        # ---------------------------
+
         # Log the enhanced decision
         decision = routing_result.get('routing_decision', {})
         print(f"🤖 Enhanced routing: {decision.get('action')} - {decision.get('user_intent')}")
-        
+
         print(f"✅ Enhanced processing complete in {time.time() - start_time:.2f}s")
         return '', 200
-        
+
     except Exception as e:
-        print(f"❌ Enhanced webhook error: {e}")
-        print(f"❌ ERROR TYPE: {type(e).__name__}")  # ADDED: Error type
-        import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
-        
-        # ADDED: Try to send error message to user
+        print(f"❌ Unhandled webhook error: {e}")
+        print(f"❌ ERROR TYPE: {type(e).__name__}")
+        print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
+
         try:
             if 'from_number' in locals() and from_number:
                 send_friendly_message(
@@ -5068,8 +5085,9 @@ def sms_webhook():
                 print("✅ Error SMS sent to user")
         except Exception as sms_error:
             print(f"❌ Could not send error SMS: {sms_error}")
-        
+
         return '', 500
+
 
 
 @app.route('/health', methods=['GET'])
