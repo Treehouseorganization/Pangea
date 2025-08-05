@@ -230,34 +230,283 @@ def find_potential_matches_contextual(
     requesting_user: str,
     user_context: UserContext
 ) -> List[Dict]:
-    """Context-aware matching that adapts to user situation"""
-    
+    """Context-aware matching that adapts to user situation and scores matches like the old system."""
+
     print(f"🔍 CONTEXT-AWARE SEARCH for {requesting_user}:")
     print(f"   Reason: {user_context.search_reason}")
     print(f"   Urgency: {user_context.urgency_level}")
     print(f"   Is correction: {user_context.is_correction}")
-    
+
     # Adapt flexibility based on context
     if user_context.is_correction:
-        flexibility_score = 0.7  # More flexible for corrections
+        flexibility_score = 0.7
     elif user_context.urgency_level == "urgent":
-        flexibility_score = 0.8  # Very flexible for urgent
+        flexibility_score = 0.8
     elif len(user_context.rejection_history or []) > 2:
-        flexibility_score = 0.3  # Less flexible if many rejections
+        flexibility_score = 0.3
     else:
         flexibility_score = 0.5
-    
-    # Filter out previously rejected patterns
-    matches = find_potential_matches(
-        restaurant_preference, location, time_window, 
-        requesting_user, flexibility_score
+
+    # --- Start of old matching logic ---
+    print(f"🔍 SEARCHING:")
+    print(f"   Looking for: '{restaurant_preference}' at '{location}' ({time_window})")
+    print(f"   Excluding: {requesting_user}")
+
+    import time
+    from datetime import datetime, timedelta
+
+    time.sleep(1.5)
+    print(f"⏱️ Added search delay for spontaneous matching reliability")
+
+    try:
+        matches = []
+
+        # Query database
+        orders_ref = db.collection('active_orders')
+        similar_orders = orders_ref.where('location', '==', location) \
+                                   .where('status', '==', 'looking_for_group') \
+                                   .where('user_phone', '!=', requesting_user) \
+                                   .limit(10).get()
+
+        print(f"📊 Found {len(similar_orders)} potential orders in database")
+
+        # Aggressive filtering for stale or mismatched orders
+        current_time = datetime.now()
+        filtered_orders = []
+
+        for order in similar_orders:
+            order_data = order.to_dict()
+            order_time = order_data.get('created_at')
+            order_time_pref = order_data.get('time_requested', 'flexible')
+
+            if order_data.get('user_phone') == requesting_user:
+                print(f"   🚫 Skipping self-match for {requesting_user}")
+                continue
+
+            if order_time:
+                try:
+                    if hasattr(order_time, 'tzinfo') and order_time.tzinfo is not None:
+                        order_time = order_time.replace(tzinfo=None)
+                    if hasattr(current_time, 'tzinfo') and current_time.tzinfo is not None:
+                        current_time = current_time.replace(tzinfo=None)
+
+                    time_diff = current_time - order_time
+
+                    if time_diff > timedelta(minutes=30):
+                        print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago (user: {order_data.get('user_phone')})")
+                        continue
+
+                    order_hour = order_time.hour
+                    current_hour = current_time.hour
+                    hour_diff = abs(current_hour - order_hour)
+                    if hour_diff > 4 and hour_diff < 20:
+                        print(f"   🍽️ Skipping order from different meal period: {order_hour}:00 vs {current_hour}:00")
+                        continue
+
+                except Exception as e:
+                    print(f"   ⚠️ Error comparing times, skipping problematic order: {e}")
+                    continue
+            else:
+                print(f"   ❌ Skipping order with no timestamp: {order_data}")
+                continue
+
+            filtered_orders.append(order)
+
+        print(f"📊 After aggressive time filtering: {len(filtered_orders)} potential orders")
+
+        # Compatibility scoring
+        for order in filtered_orders:
+            order_data = order.to_dict()
+            print(f"   Checking: {order_data}")
+
+            compatibility_score = calculate_compatibility.invoke({
+                "user1_restaurant": restaurant_preference,
+                "user1_time": time_window,
+                "user2_restaurant": order_data.get('restaurant', ''),
+                "user2_time": order_data.get('time_requested', 'flexible'),
+                "user1_phone": requesting_user,
+                "user2_phone": order_data['user_phone']
+            })
+
+            if compatibility_score >= 0.3:
+                match = {
+                    'user_phone': order_data['user_phone'],
+                    'restaurant': order_data['restaurant'],
+                    'location': order_data['location'],
+                    'time_requested': order_data['time_requested'],
+                    'compatibility_score': compatibility_score,
+                    'user_flexibility': order_data.get('flexibility_score', flexibility_score)
+                }
+                matches.append(match)
+                print(f"   ✅ MATCH: {match}")
+            else:
+                print(f"   ❌ No match: score {compatibility_score}")
+
+        matches.sort(key=lambda x: x['compatibility_score'], reverse=True)
+
+        # Apply rejection learning
+        if user_context.rejection_history:
+            matches = filter_by_rejection_history(matches, user_context.rejection_history)
+
+        print(f"🎯 Final matches: {len(matches[:3])}")
+        return matches[:3]
+
+    except Exception as e:
+        print(f"❌ Matching failed: {e}")
+        return []
+
+
+def _match_candidates(
+    restaurant_preference: str,
+    location: str,
+    time_window: str,
+    requesting_user: str,
+    flexibility_score: float
+) -> List[Dict]:
+    """Internal helper: Runs DB query, filters, and scores potential matches."""
+    import time
+    from datetime import datetime, timedelta
+
+    print(f"🔍 SEARCHING:")
+    print(f"   Looking for: '{restaurant_preference}' at '{location}' ({time_window})")
+    print(f"   Excluding: {requesting_user}")
+
+    # Small delay for spontaneous match reliability
+    time.sleep(1.5)
+    print(f"⏱️ Added search delay for spontaneous matching reliability")
+
+    matches = []
+
+    try:
+        # Query database
+        orders_ref = db.collection('active_orders')
+        similar_orders = orders_ref.where('location', '==', location) \
+                                   .where('status', '==', 'looking_for_group') \
+                                   .where('user_phone', '!=', requesting_user) \
+                                   .limit(10).get()
+
+        print(f"📊 Found {len(similar_orders)} potential orders in database")
+
+        # Aggressive filtering
+        current_time = datetime.now()
+        filtered_orders = []
+
+        for order in similar_orders:
+            order_data = order.to_dict()
+            order_time = order_data.get('created_at')
+            order_time_pref = order_data.get('time_requested', 'flexible')
+
+            # Skip self
+            if order_data.get('user_phone') == requesting_user:
+                print(f"   🚫 Skipping self-match for {requesting_user}")
+                continue
+
+            # Skip stale or different meal period orders
+            if order_time:
+                try:
+                    if hasattr(order_time, 'tzinfo') and order_time.tzinfo:
+                        order_time = order_time.replace(tzinfo=None)
+                    if hasattr(current_time, 'tzinfo') and current_time.tzinfo:
+                        current_time = current_time.replace(tzinfo=None)
+
+                    time_diff = current_time - order_time
+                    if time_diff > timedelta(minutes=30):
+                        print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago")
+                        continue
+
+                    order_hour = order_time.hour
+                    current_hour = current_time.hour
+                    hour_diff = abs(current_hour - order_hour)
+                    if hour_diff > 4 and hour_diff < 20:
+                        print(f"   🍽️ Skipping different meal period: {order_hour}:00 vs {current_hour}:00")
+                        continue
+
+                except Exception as e:
+                    print(f"   ⚠️ Time comparison error, skipping: {e}")
+                    continue
+            else:
+                print(f"   ❌ No timestamp, skipping: {order_data}")
+                continue
+
+            filtered_orders.append(order)
+
+        print(f"📊 After filtering: {len(filtered_orders)} potential orders")
+
+        # Score candidates
+        for order in filtered_orders:
+            order_data = order.to_dict()
+            print(f"   Checking: {order_data}")
+
+            compatibility_score = calculate_compatibility.invoke({
+                "user1_restaurant": restaurant_preference,
+                "user1_time": time_window,
+                "user2_restaurant": order_data.get('restaurant', ''),
+                "user2_time": order_data.get('time_requested', 'flexible'),
+                "user1_phone": requesting_user,
+                "user2_phone": order_data['user_phone']
+            })
+
+            if compatibility_score >= 0.3:
+                match = {
+                    'user_phone': order_data['user_phone'],
+                    'restaurant': order_data['restaurant'],
+                    'location': order_data['location'],
+                    'time_requested': order_data['time_requested'],
+                    'compatibility_score': compatibility_score,
+                    'user_flexibility': order_data.get('flexibility_score', flexibility_score)
+                }
+                matches.append(match)
+                print(f"   ✅ MATCH: {match}")
+            else:
+                print(f"   ❌ No match: score {compatibility_score}")
+
+        matches.sort(key=lambda x: x['compatibility_score'], reverse=True)
+        return matches[:3]
+
+    except Exception as e:
+        print(f"❌ Matching failed: {e}")
+        return []
+
+
+@tool
+def find_potential_matches_contextual(
+    restaurant_preference: str,
+    location: str,
+    time_window: str,
+    requesting_user: str,
+    user_context: UserContext
+) -> List[Dict]:
+    """Context-aware matching that adapts to user situation and uses the helper for matching logic."""
+    print(f"🔍 CONTEXT-AWARE SEARCH for {requesting_user}:")
+    print(f"   Reason: {user_context.search_reason}")
+    print(f"   Urgency: {user_context.urgency_level}")
+    print(f"   Is correction: {user_context.is_correction}")
+
+    # Context-based flexibility
+    if user_context.is_correction:
+        flexibility_score = 0.7
+    elif user_context.urgency_level == "urgent":
+        flexibility_score = 0.8
+    elif len(user_context.rejection_history or []) > 2:
+        flexibility_score = 0.3
+    else:
+        flexibility_score = 0.5
+
+    # Get matches from helper
+    matches = _match_candidates(
+        restaurant_preference,
+        location,
+        time_window,
+        requesting_user,
+        flexibility_score
     )
-    
+
     # Apply rejection learning
     if user_context.rejection_history:
         matches = filter_by_rejection_history(matches, user_context.rejection_history)
-    
+
     return matches
+
 
 def filter_by_rejection_history(matches: List[Dict], rejection_history: List[Dict]) -> List[Dict]:
     """Filter out matches similar to previous rejections"""
