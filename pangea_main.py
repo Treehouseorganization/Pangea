@@ -3529,10 +3529,11 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
             session_data = session_doc.to_dict()
             group_size = session_data.get('group_size', 0)
             status = session_data.get('status', 'active')
-            print(f"🔍 Existing session found: group_size={group_size}, status={status}")
+            order_type = session_data.get('order_type', '').lower()
+            print(f"🔍 Existing session found: group_size={group_size}, status={status}, order_type={order_type}")
 
-            # If group size > 1 and still active → block search
-            if group_size > 1 and status == 'active':
+            # PATCH: Only block if group order (not solo/fresh)
+            if group_size > 1 and status == 'active' and order_type != 'solo':
                 print(f"🛑 User {state['user_phone']} has active group order (not solo) - stopping search")
                 return state
             else:
@@ -3653,6 +3654,7 @@ I'm working with their AI friends to confirm the group order details. Give me ab
         state['messages'].append(AIMessage(content=feedback_message))
 
     return state
+
 
 
 def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
