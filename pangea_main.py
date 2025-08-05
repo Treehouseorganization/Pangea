@@ -3516,6 +3516,7 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     # ADD DEBUG AT THE VERY TOP
     print(f"🔍 ENTERING multi_agent_negotiation_node for user: {state['user_phone']}")
     print(f"🔍 Current request: {state['current_request']}")
+    print(f"🔍 is_fresh_request: {state.get('is_fresh_request', False)}")
 
     request = state['current_request']
     matches = state['potential_matches']
@@ -3532,12 +3533,15 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
             order_type = session_data.get('order_type', '').lower()
             print(f"🔍 Existing session found: group_size={group_size}, status={status}, order_type={order_type}")
 
-            # PATCH: Only block if group order (not solo/fresh)
-            if group_size > 1 and status == 'active' and order_type != 'solo':
+            # PATCH: Only block if NOT fresh request and group order (not solo)
+            if (not state.get('is_fresh_request', False)
+                and group_size > 1
+                and status == 'active'
+                and order_type != 'solo'):
                 print(f"🛑 User {state['user_phone']} has active group order (not solo) - stopping search")
                 return state
             else:
-                print(f"✅ Solo/fresh order detected - continuing search")
+                print(f"✅ Fresh request or solo order detected - continuing search")
     except Exception as e:
         print(f"❌ Error checking active order session: {e}")
 
@@ -3654,6 +3658,7 @@ I'm working with their AI friends to confirm the group order details. Give me ab
         state['messages'].append(AIMessage(content=feedback_message))
 
     return state
+
 
 
 
