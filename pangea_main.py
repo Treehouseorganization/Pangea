@@ -3512,95 +3512,94 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
 
 def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     """Advanced autonomous negotiation with better perfect match handling"""
-    
-    # ADD THIS DEBUG AT THE VERY TOP
+
+    # ADD DEBUG AT THE VERY TOP
     print(f"🔍 ENTERING multi_agent_negotiation_node for user: {state['user_phone']}")
     print(f"🔍 Current request: {state['current_request']}")
-    
+
     request = state['current_request']
     matches = state['potential_matches']
-    
-    # Enhanced negotiation with Claude 4's planning capabilities
     negotiations = state.get('active_negotiations', [])
-    
-    # Check for perfect matches - immediately form groups without negotiation
-    perfect_matches = [match for match in matches if match.get('compatibility_score', 0) >= 0.8]
-    
+
+    # ✅ FIX: Do not block if existing session is solo/fresh order
+    try:
+        session_ref = db.collection('order_sessions').document(state['user_phone'])
+        session_doc = session_ref.get()
+        if session_doc.exists:
+            session_data = session_doc.to_dict()
+            group_size = session_data.get('group_size', 0)
+            status = session_data.get('status', 'active')
+            print(f"🔍 Existing session found: group_size={group_size}, status={status}")
+
+            # If group size > 1 and still active → block search
+            if group_size > 1 and status == 'active':
+                print(f"🛑 User {state['user_phone']} has active group order (not solo) - stopping search")
+                return state
+            else:
+                print(f"✅ Solo/fresh order detected - continuing search")
+    except Exception as e:
+        print(f"❌ Error checking active order session: {e}")
+
+    # ---------------------------
+    # PERFECT MATCH HANDLING
+    # ---------------------------
+    perfect_matches = [m for m in matches if m.get('compatibility_score', 0) >= 0.8]
+
     print(f"🔍 DEBUG: Found {len(matches)} total matches")
     for i, match in enumerate(matches):
         print(f"   Match {i+1}: score={match.get('compatibility_score', 0)}, user={match.get('user_phone')}")
     print(f"🔍 DEBUG: {len(perfect_matches)} perfect matches (>= 0.8)")
-    
+
     if perfect_matches:
-        # Perfect match found! Use single-writer pattern to prevent race conditions
-        match = perfect_matches[0]  # Take the first perfect match
-        
-        # Deterministic writer selection - only lower phone number creates the group
+        match = perfect_matches[0]
         sorted_phones = sorted([state['user_phone'], match['user_phone']])
         deterministic_group_id = f"match_{sorted_phones[0]}_{sorted_phones[1]}"
-        
+
         print(f"📋 Perfect match pair: {sorted_phones}")
-        print(f"📋 Current user: {state['user_phone']}")
         print(f"📋 Group creator (lower phone): {sorted_phones[0]}")
-        
+
         # Check if either user is already in a solo order
         current_user_solo = False
         matched_user_solo = False
-        
         try:
-            # Check current user
-            session_ref = db.collection('order_sessions').document(state['user_phone'])
-            session_doc = session_ref.get()
-            if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
+            cu_doc = db.collection('order_sessions').document(state['user_phone']).get()
+            if cu_doc.exists and cu_doc.to_dict().get('group_size') == 1:
                 current_user_solo = True
-                
-            # Check matched user
-            session_ref = db.collection('order_sessions').document(match['user_phone'])
-            session_doc = session_ref.get()
-            if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
+            mu_doc = db.collection('order_sessions').document(match['user_phone']).get()
+            if mu_doc.exists and mu_doc.to_dict().get('group_size') == 1:
                 matched_user_solo = True
         except Exception as e:
             print(f"❌ Error checking solo order status: {e}")
-        
-        # If either user is already in a solo order, create a real group with special handling
+
+        # If solo order exists → create special solo-handling group
         if current_user_solo or matched_user_solo:
             print(f"🤝 Solo order detected - creating real group with solo user silently added")
-            
-            # Determine who is the solo user and who is the new user
             if matched_user_solo:
                 solo_user_phone = match['user_phone']
                 new_user_phone = state['user_phone']
-                print(f"📱 Solo user: {solo_user_phone}, New user: {new_user_phone}")
             else:
                 solo_user_phone = state['user_phone']
                 new_user_phone = match['user_phone']
-                print(f"📱 Solo user: {solo_user_phone}, New user: {new_user_phone}")
-            
-            # Create real group with special solo handling
             create_group_with_solo_user(state, match, deterministic_group_id, sorted_phones, solo_user_phone, new_user_phone)
             state['group_formed'] = True
             return state
-        
-        # Normal group invitation flow for two new users
-        # Single-writer pattern: Only the user with the lower phone number creates the group
+
+        # Normal group creation — only lower phone creates group
         if state['user_phone'] == sorted_phones[0]:
             print(f"👑 I am the group creator - creating group and sending invitations")
             create_group_and_send_invitations(state, match, deterministic_group_id, sorted_phones)
         else:
             print(f"👤 I am the matched user - marking as matched and waiting for invitation")
             mark_as_matched_user(state, sorted_phones[0], deterministic_group_id)
-        
-        # Mark that perfect match group was handled
+
         state['group_formed'] = True
         return state
-        
-        # Removed complex transaction code - single-writer pattern is much simpler!
-    
-    # No perfect matches - proceed with negotiations for imperfect matches
+
+    # ---------------------------
+    # IMPERFECT MATCH NEGOTIATIONS
+    # ---------------------------
     for match in matches:
         negotiation_id = str(uuid.uuid4())
-        
-        # Enhanced proposal structure
         enhanced_proposal = {
             'restaurant': request.get('restaurant'),
             'primary_restaurant': request.get('restaurant'),
@@ -3618,17 +3617,16 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
                 'location': request.get('location')
             }
         }
-        
+
         print(f"🔍 DEBUG - Created proposal with restaurant: '{enhanced_proposal.get('restaurant')}'")
-        
-        # FIXED: Call negotiate_with_other_ai directly (not .invoke())
+
         result = negotiate_with_other_ai(
             target_ai_user=match['user_phone'],
             proposal=enhanced_proposal,
             negotiation_id=negotiation_id,
             strategy="collaborative"
         )
-        
+
         negotiations.append({
             'negotiation_id': negotiation_id,
             'target_user': match['user_phone'],
@@ -3636,27 +3634,26 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
             'status': 'pending',
             'success_probability': result.get('estimated_success_probability', 0.5)
         })
-    
+
     state['active_negotiations'] = negotiations
-    
-    # Send immediate feedback to user only if we have negotiations
+
+    # Immediate user feedback
     if negotiations:
         restaurant = request.get('restaurant', 'food')
-        location = request.get('location', 'campus') 
+        location = request.get('location', 'campus')
         time_pref = request.get('time_preference', 'now')
-        
         feedback_message = f"""Great! I found {len(negotiations)} people interested in {restaurant} at {location} around {time_pref}! 
 
 I'm working with their AI friends to confirm the group order details. Give me about a minute to sort this out! 🤝"""
-        
         send_friendly_message(
-            state['user_phone'], 
+            state['user_phone'],
             feedback_message,
             message_type="negotiation"
         )
         state['messages'].append(AIMessage(content=feedback_message))
-    
+
     return state
+
 
 def handle_group_response_yes_node(state: PangeaState) -> PangeaState:
     """FIXED: Handle YES response with proper fake match detection"""
