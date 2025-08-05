@@ -2629,7 +2629,7 @@ def route_message_intelligently(phone_number: str, message_body: str):
         if action in ['cancel_current_process', 'handle_correction', 'provide_clarification']:
             try:
                 print("📨 Routing to handle_incoming_sms()...")
-                main_result = handle_incoming_sms(phone_number, message_body)
+                main_result = handle_incoming_sms(phone_number, message_body, routing_decision)
                 print(f"✅ handle_incoming_sms() returned: {main_result}")
                 return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
             except Exception as e:
@@ -2653,7 +2653,7 @@ def route_message_intelligently(phone_number: str, message_body: str):
         else:
             try:
                 print("📨 Routing to handle_incoming_sms() (default)...")
-                main_result = handle_incoming_sms(phone_number, message_body)
+                main_result = handle_incoming_sms(phone_number, message_body, routing_decision)
                 print(f"✅ handle_incoming_sms() returned: {main_result}")
                 return {'system': 'main_pangea_enhanced', 'result': main_result, 'routing_decision': routing_decision}
             except Exception as e:
@@ -5101,7 +5101,7 @@ Then your payment will be $3.50 💳"""
 
 
 # ===== TWILIO WEBHOOK HANDLER =====
-def handle_incoming_sms(phone_number: str, message_body: str):
+def handle_incoming_sms(phone_number: str, message_body: str, routing_decision: dict = None):
     """Enhanced SMS handler with conversational support"""
     
     # Load existing conversation context from database
@@ -5125,6 +5125,12 @@ def handle_incoming_sms(phone_number: str, message_body: str):
         partial_request = {}
         user_preferences = {}
     
+    # Determine if this is a fresh request based on routing decision
+    is_fresh_request = False
+    if routing_decision and routing_decision.get('action') == 'start_fresh_request':
+        is_fresh_request = True
+        print(f"✅ Setting is_fresh_request=True based on routing decision")
+    
     # Initialize state with loaded context and new fields
     initial_state = PangeaState(
         messages=[HumanMessage(content=message_body)],
@@ -5143,9 +5149,10 @@ def handle_incoming_sms(phone_number: str, message_body: str):
         partial_request=partial_request,
         # NEW: Enhanced context fields
         user_context=None,
-        routing_decision=None,
+        routing_decision=routing_decision,
         suggested_response=None,
-        solo_message_sent=False
+        solo_message_sent=False,
+        is_fresh_request=is_fresh_request
     )
     
     # Run through enhanced LangGraph

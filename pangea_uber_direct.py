@@ -115,6 +115,39 @@ def parse_delivery_time(time_str: str) -> datetime:
                 target_time += timedelta(days=1)
             return target_time
     
+    # Handle time ranges like "10:50-11:00pm", "between 10:50 and 11:00pm"
+    range_patterns = [
+        r'between\s+(\d{1,2}):(\d{2})\s+and\s+(\d{1,2}):(\d{2})\s*(pm|am)',  # between 10:50 and 11:00pm
+        r'(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*(pm|am)',  # 10:50-11:00pm
+        r'(\d{1,2}):(\d{2})\s*to\s*(\d{1,2}):(\d{2})\s*(pm|am)',  # 10:50 to 11:00pm
+    ]
+    
+    for pattern in range_patterns:
+        match = re.search(pattern, time_str.lower())
+        if match:
+            groups = match.groups()
+            if len(groups) >= 5:
+                # Take the earlier time from the range
+                hour = int(groups[0])
+                minute = int(groups[1])
+                period = groups[4]
+                
+                # Convert to 24-hour format
+                if period == 'pm' and hour != 12:
+                    hour += 12
+                elif period == 'am' and hour == 12:
+                    hour = 0
+                
+                # Create target time
+                target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                
+                # If the time has passed today, schedule for tomorrow
+                if target_time <= chicago_now:
+                    target_time += timedelta(days=1)
+                    
+                print(f"✅ Parsed time range '{time_str}' -> scheduling for {target_time.strftime('%I:%M %p')}")
+                return target_time
+
     # Handle specific times like "3pm", "5:30pm", "2:15"
     time_patterns = [
         r'(\d{1,2}):(\d{2})\s*(pm|am)',  # 3:30pm, 2:15am
