@@ -5035,8 +5035,14 @@ def sms_webhook():
             print(f"❌ Missing required fields - From: {from_number}, Body: {message_body}")
             return '', 400
         
-        # Use enhanced routing
+        # Use enhanced routing safely
         routing_result = route_message_intelligently(from_number, message_body)
+        
+        # ✅ ADDED: Ensure routing_result is valid
+        if not isinstance(routing_result, dict) or 'routing_decision' not in routing_result:
+            print(f"⚠️ Invalid routing_result: {routing_result}")
+            handle_incoming_sms(from_number, message_body)  # fallback to basic handler
+            return '', 200
         
         # Log the enhanced decision
         decision = routing_result.get('routing_decision', {})
@@ -5054,12 +5060,17 @@ def sms_webhook():
         # ADDED: Try to send error message to user
         try:
             if 'from_number' in locals() and from_number:
-                send_friendly_message(from_number, "Sorry, I'm having technical difficulties. Please try again in a few minutes.", message_type="error")
+                send_friendly_message(
+                    from_number,
+                    "Sorry, I'm having technical difficulties. Please try again in a few minutes.",
+                    message_type="error"
+                )
                 print("✅ Error SMS sent to user")
         except Exception as sms_error:
             print(f"❌ Could not send error SMS: {sms_error}")
         
         return '', 500
+
 
 @app.route('/health', methods=['GET'])
 def health_check():
