@@ -980,6 +980,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
     """
     Check if all group members have paid (texted PAY),
     and if so, trigger the Uber Direct delivery
+    FIXED: Don't trigger solo deliveries immediately - only schedule them
     """
     
     # Get this user's session to find their group
@@ -1034,6 +1035,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 'restaurant': session.get('restaurant'),
                 'pickup_location': session.get('pickup_location'),  # FIX: Add pickup_location
                 'delivery_location': session.get('delivery_location'),  # FIX: Add delivery_location
+                'location': session.get('delivery_location'),  # ✅ FIX: Use delivery_location for dropoff
                 'delivery_time': session.get('delivery_time', 'now'),
                 'members': [member['user_phone'] for member in members_who_paid],
                 'group_id': group_id,
@@ -1049,13 +1051,13 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 ]
             }
             
-            # Check if this is a solo order with scheduled delivery time
+            # ✅ CRITICAL FIX: Check if this is a solo order - DON'T trigger delivery immediately
             delivery_time = group_data.get('delivery_time', 'now')
             group_size = group_data.get('group_size', len(members_who_paid))
             
-            if group_size == 1 and delivery_time != 'now':
-                # Solo order with scheduled time - delay delivery trigger
-                print(f"⏰ Solo order scheduled for {delivery_time} - scheduling delivery trigger")
+            if group_size == 1:
+                # Solo order - ONLY schedule delivery trigger, don't execute immediately
+                print(f"⏰ Solo order detected - scheduling delivery trigger for {delivery_time} (NOT triggering now)")
                 schedule_solo_delivery_trigger(group_data)
                 
                 # Send confirmation message to user with 50-second delay
@@ -1063,9 +1065,12 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                 
                 def send_delayed_solo_confirmation():
                     time.sleep(50)  # 50-second delay
-                    from pangea_main import send_friendly_message
-                    send_friendly_message(user_phone, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="solo_payment_confirmation")
-                    print(f"✅ Sent delayed solo payment confirmation to {user_phone}")
+                    try:
+                        from pangea_main import send_friendly_message
+                        send_friendly_message(user_phone, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="solo_payment_confirmation")
+                        print(f"✅ Sent delayed solo payment confirmation to {user_phone}")
+                    except Exception as e:
+                        print(f"❌ Failed to send delayed solo confirmation: {e}")
                 
                 # Start delayed notification thread
                 thread = threading.Thread(target=send_delayed_solo_confirmation)
@@ -1078,17 +1083,19 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                     member_session = member['session_data']
                     member_session['delivery_scheduled'] = True
                     member_session['scheduled_trigger_time'] = delivery_time
+                    member_session['order_stage'] = 'payment_initiated'  # Mark as paid but not delivered
                     update_order_session(member['user_phone'], member_session)
                 
-                return  # Don't trigger delivery immediately
+                return  # ✅ CRITICAL: Don't trigger delivery immediately for solo orders
             
-            # Import and trigger delivery IMMEDIATELY (for "now" orders and group orders)
+            # ✅ GROUP ORDER (2+ people): Trigger delivery IMMEDIATELY
+            print(f"👥 Group order ({group_size} people) - triggering delivery immediately")
             try:
                 from pangea_uber_direct import create_group_delivery
                 delivery_result = create_group_delivery(group_data)
                 
                 if delivery_result.get('success'):
-                    print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
+                    print(f"✅ Group delivery created: {delivery_result.get('delivery_id')}")
                     
                     # Check delivery type and send appropriate 50-second delayed notification
                     delivery_time = group_data.get('delivery_time', 'now')
@@ -1105,16 +1112,17 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                         member_session['delivery_triggered'] = True
                         member_session['delivery_id'] = delivery_result.get('delivery_id')
                         member_session['tracking_url'] = delivery_result.get('tracking_url')
+                        member_session['order_stage'] = 'payment_initiated'
                         
                         update_order_session(member['user_phone'], member_session)
                 
                 else:
-                    print(f"❌ Delivery creation failed: {delivery_result}")
+                    print(f"❌ Group delivery creation failed: {delivery_result}")
                     
             except ImportError:
                 print("❌ Uber Direct integration not available")
             except Exception as e:
-                print(f"❌ Delivery creation error: {e}")
+                print(f"❌ Group delivery creation error: {e}")
         
         else:
             missing_count = total_members - len(members_who_paid)

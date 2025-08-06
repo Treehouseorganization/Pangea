@@ -648,63 +648,113 @@ def restaurants_match(rest1: str, rest2: str) -> bool:
     return result
 
 def calculate_time_compatibility(time1: str, time2: str) -> float:
-    """Enhanced time compatibility with proper range vs specific time matching"""
+    """Enhanced time compatibility with Claude-powered analysis"""
     
     # Convert any DatetimeWithNanoseconds objects to strings first
     time1_str = convert_time_to_string(time1)
     time2_str = convert_time_to_string(time2)
     
-    time1_clean = time1_str.lower().strip()
-    time2_clean = time2_str.lower().strip()
+    print(f"🤖 Using Claude for time compatibility: '{time1_str}' vs '{time2_str}'")
     
-    # Exact matches
-    if time1_clean == time2_clean:
-        return 1.0
+    compatibility_prompt = f"""
+    You are helping a food delivery service match users with compatible delivery times.
     
-    # Immediate time matches
-    immediate_times = ["now", "soon", "asap", "immediately"]
-    if any(t in time1_clean for t in immediate_times) and any(t in time2_clean for t in immediate_times):
-        return 1.0
+    User 1 wants delivery: "{time1_str}"
+    User 2 wants delivery: "{time2_str}"
     
-    # Parse both times to check for range/specific time overlaps
-    time1_parsed = parse_time_for_matching(time1_clean)
-    time2_parsed = parse_time_for_matching(time2_clean)
+    Analyze if these times are compatible for a group food order:
     
-    # Check for range vs specific time compatibility
-    if time1_parsed and time2_parsed:
-        compatibility = check_time_overlap(time1_parsed, time2_parsed)
-        if compatibility > 0:
-            return compatibility
+    COMPATIBILITY RULES:
+    1. Times within 30 minutes = HIGHLY compatible (0.8-1.0)
+    2. Times within 45 minutes = MODERATELY compatible (0.6-0.7)  
+    3. Times 45+ minutes apart = NOT compatible (0.0-0.3)
+    4. "now/asap" is compatible with any time within 1 hour
+    5. Ranges (like "1:30-2pm") are more flexible than specific times
+    6. Consider if people would realistically want to coordinate
     
-    # Clear incompatibilities
-    incompatible_pairs = [
-        (["breakfast", "morning"], ["dinner", "evening", "night"]),
-        (["lunch", "noon", "12pm"], ["dinner", "evening", "night"]),
-        (["now", "soon"], ["tomorrow", "later", "tonight"]),
-    ]
+    EXAMPLES:
+    - "1pm" + "1:30pm-2pm" → moderately compatible (0.6-0.7)
+    - "1pm" + "1:15pm" → highly compatible (0.9-1.0)
+    - "12pm" + "2pm" → not compatible (0.0)
+    - "now" + "1:30pm" → compatible (0.8)
+    - "1pm-2pm" + "1:30pm-2:30pm" → highly compatible (0.9-1.0)
     
-    for group1, group2 in incompatible_pairs:
-        if (any(t in time1_clean for t in group1) and any(t in time2_clean for t in group2)) or \
-           (any(t in time2_clean for t in group1) and any(t in time1_clean for t in group2)):
+    Return ONLY a number between 0.0 and 1.0 (like 0.8 or 0.0):
+    """
+    
+    try:
+        response = anthropic_llm.invoke([HumanMessage(content=compatibility_prompt)])
+        response_text = response.content.strip()
+        
+        # Extract just the number from Claude's response
+        import re
+        number_match = re.search(r'(\d+\.?\d*)', response_text)
+        if number_match:
+            compatibility_score = float(number_match.group(1))
+            # Ensure it's between 0.0 and 1.0
+            compatibility_score = max(0.0, min(1.0, compatibility_score))
+        else:
+            compatibility_score = 0.5  # Default fallback
+        
+        print(f"🤖 Claude compatibility result: {compatibility_score}")
+        return compatibility_score
+        
+    except Exception as e:
+        print(f"❌ Claude time analysis failed: {e}")
+        
+        # Fallback to simple logic
+        time1_clean = time1_str.lower().strip()
+        time2_clean = time2_str.lower().strip()
+        
+        # Exact matches
+        if time1_clean == time2_clean:
+            return 1.0
+        
+        # Immediate time matches
+        immediate_times = ["now", "soon", "asap", "immediately"]
+        if any(t in time1_clean for t in immediate_times) and any(t in time2_clean for t in immediate_times):
+            return 1.0
+        
+        # Parse both times to check for range/specific time overlaps
+        time1_parsed = parse_time_for_matching(time1_clean)
+        time2_parsed = parse_time_for_matching(time2_clean)
+        
+        # Check for range vs specific time compatibility
+        if time1_parsed and time2_parsed:
+            compatibility = check_time_overlap(time1_parsed, time2_parsed)
+            if compatibility > 0:
+                return compatibility
+        
+        # Clear incompatibilities
+        incompatible_pairs = [
+            (["breakfast", "morning"], ["dinner", "evening", "night"]),
+            (["lunch", "noon", "12pm"], ["dinner", "evening", "night"]),
+            (["now", "soon"], ["tomorrow", "later", "tonight"]),
+        ]
+        
+        for group1, group2 in incompatible_pairs:
+            if (any(t in time1_clean for t in group1) and any(t in time2_clean for t in group2)) or \
+               (any(t in time2_clean for t in group1) and any(t in time1_clean for t in group2)):
+                return 0.0
+        
+        # Check for specific hour incompatibilities
+        if has_hour_conflict(time1_clean, time2_clean):
             return 0.0
-    
-    # Check for specific hour incompatibilities
-    if has_hour_conflict(time1_clean, time2_clean):
-        return 0.0
-    
-    # Similar time periods
-    similar_times = [
-        ["lunch", "noon", "12pm", "1pm", "lunch time"],
-        ["dinner", "evening", "6pm", "7pm", "8pm", "tonight"],
-        ["breakfast", "morning", "8am", "9am", "10am"],
-    ]
-    
-    for time_group in similar_times:
-        if any(t in time1_clean for t in time_group) and any(t in time2_clean for t in time_group):
-            return 0.8
-    
-    # Uncertain cases - might need LLM
-    return 0.5
+        
+        # Similar time periods
+        similar_times = [
+            ["lunch", "noon", "12pm", "1pm", "lunch time"],
+            ["dinner", "evening", "6pm", "7pm", "8pm", "tonight"],
+            ["breakfast", "morning", "8am", "9am", "10am"],
+        ]
+        
+        for time_group in similar_times:
+            if any(t in time1_clean for t in time_group) and any(t in time2_clean for t in time_group):
+                return 0.8
+        
+        # Uncertain cases - might need LLM
+        return 0.5
+
 
 def parse_time_for_matching(time_str: str):
     """Parse time string into structured format for matching"""
