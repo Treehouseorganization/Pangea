@@ -527,6 +527,40 @@ def filter_by_rejection_history(matches: List[Dict], rejection_history: List[Dic
     return filtered_matches
 
 
+def convert_time_to_string(time_value):
+    """
+    Convert any time object (string or DatetimeWithNanoseconds) to a string for matching.
+    
+    Args:
+        time_value: Can be string like "7:40am-8:00am" or DatetimeWithNanoseconds object
+        
+    Returns:
+        String representation suitable for time matching
+    """
+    # If already a string, return as-is
+    if isinstance(time_value, str):
+        return time_value
+    
+    # Handle datetime objects (including DatetimeWithNanoseconds)
+    if hasattr(time_value, 'hour') and hasattr(time_value, 'minute'):
+        # Convert to readable time format
+        hour = time_value.hour
+        minute = time_value.minute
+        
+        # Convert to 12-hour format with am/pm
+        if hour == 0:
+            return f"12:{minute:02d}am"
+        elif hour < 12:
+            return f"{hour}:{minute:02d}am"
+        elif hour == 12:
+            return f"12:{minute:02d}pm"
+        else:
+            return f"{hour - 12}:{minute:02d}pm"
+    
+    # Fallback: convert to string
+    return str(time_value)
+
+
 def calculate_compatibility(
     user1_restaurant: str,
     user1_time: str, 
@@ -596,8 +630,12 @@ def restaurants_match(rest1: str, rest2: str) -> bool:
 def calculate_time_compatibility(time1: str, time2: str) -> float:
     """Deterministic time compatibility - clear rules"""
     
-    time1_clean = time1.lower().strip()
-    time2_clean = time2.lower().strip()
+    # Convert any DatetimeWithNanoseconds objects to strings first
+    time1_str = convert_time_to_string(time1)
+    time2_str = convert_time_to_string(time2)
+    
+    time1_clean = time1_str.lower().strip()
+    time2_clean = time2_str.lower().strip()
     
     # Exact matches
     if time1_clean == time2_clean:
@@ -641,17 +679,21 @@ def calculate_time_compatibility(time1: str, time2: str) -> float:
 def has_hour_conflict(time1: str, time2: str) -> bool:
     """Check for obvious hour conflicts like 7pm vs 12am"""
     
+    # Convert any DatetimeWithNanoseconds objects to strings first
+    time1_str = convert_time_to_string(time1)
+    time2_str = convert_time_to_string(time2)
+    
     import re
     
     # Skip range times - let smart assessment handle them
-    if 'between' in time1 or 'between' in time2:
+    if 'between' in time1_str or 'between' in time2_str:
         return False
     
     # Extract hours from times like "7pm", "12am", "around 7pm"
     hour_pattern = r'(\d{1,2})\s*(am|pm)'
     
-    match1 = re.search(hour_pattern, time1)
-    match2 = re.search(hour_pattern, time2)
+    match1 = re.search(hour_pattern, time1_str)
+    match2 = re.search(hour_pattern, time2_str)
     
     if match1 and match2:
         hour1, period1 = match1.groups()
@@ -684,10 +726,14 @@ def has_hour_conflict(time1: str, time2: str) -> bool:
 def get_llm_time_assessment(time1: str, time2: str) -> float:
     """Smart time matching with better heuristics and no signal timeout"""
     
-    time1_lower = time1.lower().strip()
-    time2_lower = time2.lower().strip()
+    # Convert any DatetimeWithNanoseconds objects to strings first
+    time1_str = convert_time_to_string(time1)
+    time2_str = convert_time_to_string(time2)
     
-    print(f"   🧠 Smart time assessment: '{time1}' vs '{time2}'")
+    time1_lower = time1_str.lower().strip()
+    time2_lower = time2_str.lower().strip()
+    
+    print(f"   🧠 Smart time assessment: '{time1_str}' vs '{time2_str}'")
     
     # Extract hours for both times
     import re
@@ -1685,6 +1731,8 @@ def check_timing_patterns(user_data: Dict, active_group_data: Dict) -> bool:
     
     preferences = user_data.get('preferences', {})
     time = active_group_data.get('time', 'now')
+    # Convert DatetimeWithNanoseconds to string if needed
+    time_str = convert_time_to_string(time)
     
     # 1. Check preferred times
     preferred_times = preferences.get('preferred_times', [])
@@ -1699,9 +1747,9 @@ def check_timing_patterns(user_data: Dict, active_group_data: Dict) -> bool:
     for pattern in successful_patterns:
         pattern_time = pattern.get('time', '')
         # Simple time matching - could be more sophisticated
-        if ('lunch' in time.lower() and 'lunch' in pattern_time.lower()) or \
-           ('dinner' in time.lower() and 'dinner' in pattern_time.lower()) or \
-           ('now' in time.lower() and 11 <= current_hour <= 14):  # Lunch hours
+        if ('lunch' in time_str.lower() and 'lunch' in pattern_time.lower()) or \
+           ('dinner' in time_str.lower() and 'dinner' in pattern_time.lower()) or \
+           ('now' in time_str.lower() and 11 <= current_hour <= 14):  # Lunch hours
             return True
     
     return True  # Default to True for flexible timing
@@ -5027,14 +5075,16 @@ Then your payment will be $3.50 💳"""
             should_cleanup = False
             
             # Parse delivery time and determine if it's expired
-            if time_requested.lower() == 'now':
+            # Convert DatetimeWithNanoseconds to string if needed
+            time_requested_str = convert_time_to_string(time_requested)
+            if time_requested_str.lower() == 'now':
                 # For "now" orders, cleanup after 30 minutes
                 if current_time - created_at > timedelta(minutes=30):
                     should_cleanup = True
             else:
                 # Try to parse specific times like "1:30pm", "2:00pm", etc.
                 import re
-                time_match = re.search(r'(\d{1,2}):?(\d{0,2})\s*(am|pm)', time_requested.lower())
+                time_match = re.search(r'(\d{1,2}):?(\d{0,2})\s*(am|pm)', time_requested_str.lower())
                 if time_match:
                     try:
                         hour = int(time_match.group(1))
