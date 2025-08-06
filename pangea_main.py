@@ -125,6 +125,10 @@ class PangeaState(TypedDict):
     routing_decision: Optional[Dict]
     suggested_response: Optional[str]
     solo_message_sent: Optional[bool] # Store proactive notification data
+    is_fresh_request: Optional[bool] # Whether this is a fresh request that should override existing orders
+    missing_info: Optional[List] # Missing information fields for incomplete requests
+    partial_request: Optional[Dict] # Partially parsed request data
+    group_formed: Optional[bool] # Whether a group has been successfully formed
 
 
 def cleanup_stale_sessions():
