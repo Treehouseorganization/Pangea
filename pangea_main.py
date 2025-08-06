@@ -3422,11 +3422,42 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
         
     except Exception as e:
         print(f"❌ Error in enhanced spontaneous analysis: {e}")
-        # Fallback to basic extraction
+        # Fallback to basic extraction with better time detection
+        def extract_time_from_message(message):
+            """Extract time from message with common patterns"""
+            import re
+            message_lower = message.lower()
+            
+            # Look for specific time patterns
+            time_patterns = [
+                r'\b(\d{1,2}:\d{2}\s*(?:am|pm))\b',  # 1:30pm, 2:00am
+                r'\b(\d{1,2}\s*(?:am|pm))\b',        # 1pm, 2am
+                r'\b(\d{1,2}:\d{2})\b',              # 13:30, 14:00
+                r'between\s+(\d{1,2}:\d{2}\s*(?:am|pm)?\s*-\s*\d{1,2}:\d{2}\s*(?:am|pm)?)', # between 1:30pm - 2:00pm
+                r'between\s+(\d{1,2}\s*(?:am|pm)?\s*-\s*\d{1,2}\s*(?:am|pm)?)', # between 1pm - 2pm
+            ]
+            
+            for pattern in time_patterns:
+                match = re.search(pattern, message_lower)
+                if match:
+                    return match.group(1)
+            
+            # Check for specific times mentioned in the original message
+            if 'now' in message_lower or 'soon' in message_lower or 'asap' in message_lower:
+                return 'now'
+            
+            # Return the original message if it contains time-like words
+            time_keywords = ['morning', 'afternoon', 'evening', 'night', 'lunch', 'dinner', 'breakfast']
+            for keyword in time_keywords:
+                if keyword in message_lower:
+                    return message_lower
+            
+            return 'now'  # Final fallback
+        
         state['current_request'] = {
             'restaurant': 'McDonald\'s' if 'mcdonald' in user_message.lower() else '',
             'location': 'library' if 'library' in user_message.lower() else '',
-            'time_preference': '7pm' if '7pm' in user_message.lower() else 'now'
+            'time_preference': extract_time_from_message(user_message)
         }
         # FIXED: Use 'spontaneous_matching' not 'complete_request'
         state['conversation_stage'] = 'spontaneous_matching'
@@ -4385,6 +4416,7 @@ def should_continue_negotiating(state: PangeaState) -> str:
     
     
     # CRITICAL FIX: Check if user is already in an ACTIVE group (not just pending)
+    # BUT allow fresh requests to override
     try:
         # Check for any active groups (pending_responses, forming, or active)
         user_groups = db.collection('active_groups')\
@@ -4393,10 +4425,15 @@ def should_continue_negotiating(state: PangeaState) -> str:
                       .limit(1).get()
         
         if len(user_groups) > 0:
-            group_data = user_groups[0].to_dict()
-            group_status = group_data.get('status')
-            print(f"🛑 User {user_phone} is already in group with status '{group_status}' - stopping search")
-            return "wait_for_responses"
+            # Allow fresh requests to override existing group memberships
+            is_fresh_request = state.get('is_fresh_request', False)
+            if not is_fresh_request:
+                group_data = user_groups[0].to_dict()
+                group_status = group_data.get('status')
+                print(f"🛑 User {user_phone} is already in group with status '{group_status}' - stopping search")
+                return "wait_for_responses"
+            else:
+                print(f"✅ Fresh request detected - allowing search despite existing group membership")
             
     except Exception as e:
         print(f"⚠️ Error checking for active groups: {e}")
