@@ -627,54 +627,126 @@ def restaurants_match(rest1: str, rest2: str) -> bool:
     print(f"   🍕 Restaurant match: {rest1_canonical} == {rest2_canonical} = {result}")
     return result
 
-def calculate_time_compatibility(time1: str, time2: str) -> float:
-    """Deterministic time compatibility - clear rules"""
-    
-    # Convert any DatetimeWithNanoseconds objects to strings first
-    time1_str = convert_time_to_string(time1)
-    time2_str = convert_time_to_string(time2)
-    
-    time1_clean = time1_str.lower().strip()
-    time2_clean = time2_str.lower().strip()
-    
-    # Exact matches
-    if time1_clean == time2_clean:
-        return 1.0
-    
+def calculate_time_compatibility(time1: str, time2: str):
+    """
+    Uses Claude-style reasoning to determine compatibility and best mutual time.
+    If the hour matches exactly, return 1.0 immediately.
+    Otherwise, uses fuzzy mapping + reasoning for overlap.
+    Returns: (score: float, best_time: str or None)
+    """
+    import re
+    from datetime import datetime, time as dtime
+
+    # Map fuzzy natural language phrases to approximate times/ranges
+    fuzzy_map = {
+        "early morning": (dtime(6, 0), dtime(9, 0)),
+        "morning": (dtime(8, 0), dtime(11, 0)),
+        "late morning": (dtime(10, 0), dtime(12, 0)),
+        "lunch": (dtime(12, 0), dtime(13, 0)),
+        "noon": (dtime(12, 0), dtime(12, 0)),
+        "early afternoon": (dtime(13, 0), dtime(15, 0)),
+        "afternoon": (dtime(13, 0), dtime(17, 0)),
+        "late afternoon": (dtime(15, 0), dtime(17, 0)),
+        "after work": (dtime(17, 0), dtime(19, 0)),
+        "evening": (dtime(17, 0), dtime(20, 0)),
+        "late evening": (dtime(20, 0), dtime(22, 0)),
+        "night": (dtime(20, 0), dtime(23, 59)),
+        "tonight": (dtime(18, 0), dtime(23, 0)),
+        "now": (None, None),
+        "soon": (None, None),
+        "asap": (None, None),
+        "immediately": (None, None)
+    }
+
+    def parse_time_str(s):
+        """Parse explicit time like '4:30pm' → datetime.time"""
+        patterns = [
+            ("%I:%M %p", r"\b\d{1,2}:\d{2}\s*(am|pm)\b"),
+            ("%I %p", r"\b\d{1,2}\s*(am|pm)\b"),
+        ]
+        for fmt, pattern in patterns:
+            match = re.search(pattern, s)
+            if match:
+                try:
+                    return datetime.strptime(match.group(0), fmt).time()
+                except:
+                    pass
+        return None
+
+    def extract_time_range(s):
+        """Turn a string into (start, end) time objects"""
+        s = s.lower().strip()
+
+        # First check explicit time(s)
+        times_found = []
+        for fmt, pattern in [
+            ("%I:%M %p", r"\b\d{1,2}:\d{2}\s*(am|pm)\b"),
+            ("%I %p", r"\b\d{1,2}\s*(am|pm)\b"),
+        ]:
+            for match in re.findall(pattern, s):
+                try:
+                    parsed = datetime.strptime(match if isinstance(match, str) else " ".join(match), fmt).time()
+                    times_found.append(parsed)
+                except:
+                    pass
+        times_found.sort()
+        if times_found:
+            if len(times_found) == 1:
+                return times_found[0], times_found[0]
+            return times_found[0], times_found[-1]
+
+        # Then fuzzy map
+        for phrase, (start, end) in fuzzy_map.items():
+            if phrase in s:
+                return start, end
+
+        return None, None
+
+    # Normalize input
+    t1 = str(time1).lower().strip()
+    t2 = str(time2).lower().strip()
+
+    # If exact same string → perfect match
+    if t1 == t2:
+        return 1.0, t1
+
     # Immediate time matches
-    immediate_times = ["now", "soon", "asap", "immediately"]
-    if any(t in time1_clean for t in immediate_times) and any(t in time2_clean for t in immediate_times):
-        return 1.0
-    
-    # Clear incompatibilities
-    incompatible_pairs = [
-        (["breakfast", "morning", "am"], ["dinner", "evening", "night", "pm"]),
-        (["lunch", "noon", "12pm"], ["dinner", "evening", "night"]),
-        (["now", "soon"], ["tomorrow", "later", "tonight"]),
+    immediates = ["now", "soon", "asap", "immediately"]
+    if any(w in t1 for w in immediates) and any(w in t2 for w in immediates):
+        return 1.0, "now"
+
+    # Extract ranges
+    start1, end1 = extract_time_range(t1)
+    start2, end2 = extract_time_range(t2)
+
+    # If both have explicit times and the hour is literally the same → match immediately
+    if start1 and start2:
+        if start1.hour == start2.hour:
+            return 1.0, start1.strftime("%I:%M %p").lstrip("0")
+
+    # If both have ranges, find overlap
+    if start1 and end1 and start2 and end2:
+        if start1 is None or start2 is None:  # fuzzy like 'now'
+            return 1.0, "now"
+        latest_start = max(start1, start2)
+        earliest_end = min(end1, end2)
+        if latest_start <= earliest_end:
+            return 1.0, latest_start.strftime("%I:%M %p").lstrip("0")
+
+    # Fallback fuzzy reasoning: match if periods feel close enough
+    similar_groups = [
+        ["morning", "late morning", "breakfast"],
+        ["lunch", "noon", "early afternoon"],
+        ["afternoon", "late afternoon", "after work"],
+        ["evening", "tonight", "night"],
     ]
-    
-    for group1, group2 in incompatible_pairs:
-        if (any(t in time1_clean for t in group1) and any(t in time2_clean for t in group2)) or \
-           (any(t in time2_clean for t in group1) and any(t in time1_clean for t in group2)):
-            return 0.0
-    
-    # Check for specific hour incompatibilities
-    if has_hour_conflict(time1_clean, time2_clean):
-        return 0.0
-    
-    # Similar time periods
-    similar_times = [
-        ["lunch", "noon", "12pm", "1pm", "lunch time"],
-        ["dinner", "evening", "6pm", "7pm", "8pm", "tonight"],
-        ["breakfast", "morning", "8am", "9am", "10am"],
-    ]
-    
-    for time_group in similar_times:
-        if any(t in time1_clean for t in time_group) and any(t in time2_clean for t in time_group):
-            return 0.8
-    
-    # Uncertain cases - might need LLM
-    return 0.5
+    for group in similar_groups:
+        if any(g in t1 for g in group) and any(g in t2 for g in group):
+            return 0.8, group[0]
+
+    # No strong match
+    return 0.5, None
+
 
 def has_hour_conflict(time1: str, time2: str) -> bool:
     """Check for obvious hour conflicts like 7pm vs 12am"""
@@ -2152,15 +2224,6 @@ ORIGINAL ROUTING DECISION TREE (IN PRIORITY ORDER):
    - Messages with restaurant + location + time → start_fresh_request
    - Messages with "delivery" or "delivered" + restaurant → start_fresh_request
    - Any comprehensive food request with multiple details → start_fresh_request
-   
-   IMPORTANT: If a message contains restaurant name AND delivery details (location/time), 
-   this is ALWAYS a new food request regardless of any active order session. 
-   Even if user also includes name/order details/food items, if restaurant+location+time 
-   are present, treat as start_fresh_request.
-   Example: "I want McDonald's delivered to the library at 10pm my name is Jake and I ordered a Big Mac" = start_fresh_request
-   
-   NOTE: Only route to collect_order_description when user provides ONLY food items/names 
-   without restaurant+location context in an active order session.
 
 5. **GROUP RESPONSES** - Simple yes/no to invitations:
    - "yes", "sure", "ok", "yeah", "yep" → group_response_yes
@@ -2183,37 +2246,6 @@ ORIGINAL ROUTING DECISION TREE (IN PRIORITY ORDER):
    - Morning greeting responses → morning_response
    - Proactive group responses → proactive_group_yes/no
 
-AVAILABLE ROUTING OPTIONS:
-
-MAIN FOOD MATCHING SYSTEM:
-- "start_fresh_request" - NEW food craving/restaurant request (clear old data)
-- "continue_food_matching" - Complete request ready for group matching
-- "handle_incomplete_request" - User filling in missing info (restaurant/location/time)
-- "group_response_yes" - User accepted group invitation (YES/sure/ok)
-- "group_response_no" - User declined group invitation (NO/pass/nah)
-- "morning_response" - Response to morning location/preference prompt
-- "preference_update" - Updating food/location preferences
-- "faq_answered" - FAQ, help, non-food chat
-
-ORDER FULFILLMENT SYSTEM:
-- "collect_order_number" - User providing order confirmation/name after placing order
-- "collect_order_description" - User providing what they ordered
-- "handle_payment_request" - User wants to pay (texted "PAY")
-- "redirect_to_payment" - Remind about payment options
-- "need_order_first" - User trying to pay without order details
-
-NEW CONVERSATIONAL SYSTEM:
-- "cancel_current_process" - User wants to stop/cancel
-- "handle_correction" - User wants to change something
-- "provide_clarification" - Explain current status/options
-- "proactive_group_yes" - Accept proactive group notification
-- "proactive_group_no" - Decline proactive group notification
-
-CONTEXTUAL RESPONSES - Smart contextual handling:
-- If they have pending invitations but ask about restaurants → explain current invitation first
-- If they're in order process but ask about new food → acknowledge current order, clarify intent
-- If they seem confused → provide helpful context about where they are in the process
-
 Return JSON with:
 {{
     "action": "[routing_option]",
@@ -2224,12 +2256,10 @@ Return JSON with:
     "user_intent": "what you think the user actually wants",
     "suggested_response": "optional: suggest what the system should say to user"
 }}
-
-Remember: Be conversational and helpful. If the user's intent is unclear, choose the action that would be most helpful to them based on context. Always prioritize user autonomy - they can change their mind, cancel, or start over at any time.
 """
     
     try:
-        llm = ChatAnthropic(model="claude-opus-4-20250514", temperature=0.1, max_tokens=4096)
+        llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=0.1, max_tokens=4096)
         response = llm.invoke([HumanMessage(content=routing_prompt)])
         response_text = response.content.strip()
         
@@ -2237,15 +2267,12 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
         
         # Clean up response - remove any markdown formatting
         if '```json' in response_text:
-            # Extract JSON from markdown code block
             start = response_text.find('{')
             end = response_text.rfind('}') + 1
             response_text = response_text[start:end]
         elif '```' in response_text:
-            # Remove any code block markers
             response_text = response_text.replace('```', '').strip()
         
-        # Try to find JSON in the response if it doesn't start with {
         if not response_text.startswith('{'):
             import re
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -2267,7 +2294,6 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
         
     except Exception as e:
         print(f"❌ Enhanced router failed: {e}")
-        # Enhanced fallback logic with conversational support
         message_lower = new_message.lower().strip()
         
         print(f"🔄 Using enhanced fallback routing logic:")
@@ -2279,7 +2305,7 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
         print(f"   Pending negotiations: {len(pending_negotiations)}")
         print(f"   Active groups: {len(active_groups)}")
         
-        # Priority 1: NEW - Conversational commands
+        # Conversational commands
         if any(word in message_lower for word in ['cancel', 'stop', 'never mind', 'forget it']):
             fallback_action = "cancel_current_process"
             print(f"   🛑 Detected cancellation request")
@@ -2289,13 +2315,9 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
         elif any(phrase in message_lower for phrase in ['what did i', 'my status', 'where am i', 'what restaurants']):
             fallback_action = "provide_clarification"
             print(f"   ❓ Detected clarification request")
-            
-        # Priority 2: Handle incomplete requests (user responding with missing info)
         elif conversation_stage == 'incomplete_request' and missing_info and partial_request:
             fallback_action = "handle_incomplete_request"
             print(f"   🎯 Detected incomplete request follow-up")
-            
-        # Priority 3: Order session handling
         elif order_session:
             if any(word in message_lower for word in ['pay', 'payment']):
                 fallback_action = "handle_payment_request"
@@ -2303,8 +2325,6 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
             else:
                 fallback_action = "collect_order_number"
                 print(f"   📋 Detected order continuation")
-                
-        # Priority 4: Group responses (check both old and new systems)
         elif pending_group_invites or len(pending_negotiations) > 0 or len(active_groups) > 0:
             if any(word in message_lower for word in ['yes', 'y', 'sure', 'ok']):
                 fallback_action = "group_response_yes"
@@ -2313,10 +2333,8 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
                 fallback_action = "group_response_no"
                 print(f"   ❌ Detected group NO response")
             else:
-                fallback_action = "faq_answered" 
-                print(f"   💬 Detected general conversation with pending invites")
-                
-        # Priority 5: Proactive notifications
+                fallback_action = "faq_answered"
+                print(f"   💬 General conversation with pending invites")
         elif proactive_notification:
             if any(word in message_lower for word in ['yes', 'y', 'sure', 'ok']):
                 fallback_action = "proactive_group_yes"
@@ -2327,18 +2345,12 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
             else:
                 fallback_action = "faq_answered"
                 print(f"   💬 General conversation with proactive notification")
-                
-        # Priority 6: New food requests
         elif any(word in message_lower for word in ['want', 'craving', 'hungry', 'order', 'get', 'need']):
             fallback_action = "start_fresh_request"
             print(f"   🍔 Detected new food request")
-            
-        # Priority 7: Morning responses
         elif conversation_stage == 'morning_greeting_sent':
             fallback_action = "morning_response"
             print(f"   🌅 Detected morning response")
-            
-        # Default: FAQ/General conversation
         else:
             fallback_action = "faq_answered"
             print(f"   💬 Defaulting to FAQ/general conversation")
@@ -2352,6 +2364,7 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
             "user_intent": f"Fallback detected: {fallback_action}",
             "suggested_response": None
         }
+
 # ===== 3. ADD NEW HANDLER NODES =====
 
 
