@@ -5006,17 +5006,61 @@ Then your payment will be $3.50 💳"""
     except Exception as e:
         print(f"⚠️ Could not update last_request in Firestore: {e}")
 
-    # Clean up old solo orders (>5 min)
+    # Clean up old solo orders with intelligent time-based cleanup
     try:
-        cutoff_time = datetime.now() - timedelta(minutes=5)
+        current_time = datetime.now()
         old_orders = db.collection('active_orders')\
             .where('user_phone', '==', user_phone)\
             .where('status', '==', 'looking_for_group')\
-            .where('created_at', '<', cutoff_time)\
             .get()
+        
         for old_order in old_orders:
-            old_order.reference.delete()
-            print(f"🗑️ Cleaned up old solo order for {user_phone}")
+            order_data = old_order.to_dict()
+            time_requested = order_data.get('time_requested', 'now')
+            created_at = order_data.get('created_at', current_time)
+            
+            should_cleanup = False
+            
+            # Parse delivery time and determine if it's expired
+            if time_requested.lower() == 'now':
+                # For "now" orders, cleanup after 30 minutes
+                if current_time - created_at > timedelta(minutes=30):
+                    should_cleanup = True
+            else:
+                # Try to parse specific times like "1:30pm", "2:00pm", etc.
+                import re
+                time_match = re.search(r'(\d{1,2}):?(\d{0,2})\s*(am|pm)', time_requested.lower())
+                if time_match:
+                    try:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2)) if time_match.group(2) else 0
+                        ampm = time_match.group(3)
+                        
+                        # Convert to 24-hour format
+                        if ampm == 'pm' and hour != 12:
+                            hour += 12
+                        elif ampm == 'am' and hour == 12:
+                            hour = 0
+                        
+                        # Create delivery time for today
+                        delivery_time = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                        
+                        # If delivery time has passed + 30 minute buffer, cleanup
+                        if current_time > delivery_time + timedelta(minutes=30):
+                            should_cleanup = True
+                    except (ValueError, AttributeError):
+                        # If parsing fails, fall back to 2-hour cleanup
+                        if current_time - created_at > timedelta(hours=2):
+                            should_cleanup = True
+                else:
+                    # For unparseable times, fall back to 2-hour cleanup
+                    if current_time - created_at > timedelta(hours=2):
+                        should_cleanup = True
+            
+            if should_cleanup:
+                old_order.reference.delete()
+                print(f"🗑️ Cleaned up expired solo order for {user_phone} (time_requested: {time_requested})")
+                
     except Exception as e:
         print(f"❌ Failed to clean up solo orders: {e}")
 
