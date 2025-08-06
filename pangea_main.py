@@ -530,12 +530,13 @@ def filter_by_rejection_history(matches: List[Dict], rejection_history: List[Dic
 def convert_time_to_string(time_value):
     """
     Convert any time object (string or DatetimeWithNanoseconds) to a string for matching.
+    Handles timezone conversion properly to show correct local times to users.
     
     Args:
         time_value: Can be string like "7:40am-8:00am" or DatetimeWithNanoseconds object
         
     Returns:
-        String representation suitable for time matching
+        String representation suitable for time matching and display
     """
     # If already a string, return as-is
     if isinstance(time_value, str):
@@ -543,9 +544,28 @@ def convert_time_to_string(time_value):
     
     # Handle datetime objects (including DatetimeWithNanoseconds)
     if hasattr(time_value, 'hour') and hasattr(time_value, 'minute'):
-        # Convert to readable time format
-        hour = time_value.hour
-        minute = time_value.minute
+        # Check if it's a timezone-aware datetime that needs conversion
+        if hasattr(time_value, 'tzinfo') and time_value.tzinfo is not None:
+            # Convert UTC to local timezone (Chicago/Central Time)
+            import pytz
+            try:
+                # If it's in UTC, convert to Central Time
+                if time_value.tzinfo.zone == 'UTC' or str(time_value.tzinfo) == 'UTC':
+                    central_tz = pytz.timezone('America/Chicago')
+                    local_time = time_value.astimezone(central_tz)
+                else:
+                    # Already in local timezone
+                    local_time = time_value
+            except:
+                # Fallback: use the time as-is if timezone conversion fails
+                local_time = time_value
+        else:
+            # No timezone info, assume it's already local time
+            local_time = time_value
+        
+        # Extract hour and minute from the (potentially converted) time
+        hour = local_time.hour
+        minute = local_time.minute
         
         # Convert to 12-hour format with am/pm
         if hour == 0:
@@ -628,7 +648,7 @@ def restaurants_match(rest1: str, rest2: str) -> bool:
     return result
 
 def calculate_time_compatibility(time1: str, time2: str) -> float:
-    """Deterministic time compatibility - clear rules"""
+    """Enhanced time compatibility with proper range vs specific time matching"""
     
     # Convert any DatetimeWithNanoseconds objects to strings first
     time1_str = convert_time_to_string(time1)
@@ -646,9 +666,19 @@ def calculate_time_compatibility(time1: str, time2: str) -> float:
     if any(t in time1_clean for t in immediate_times) and any(t in time2_clean for t in immediate_times):
         return 1.0
     
+    # Parse both times to check for range/specific time overlaps
+    time1_parsed = parse_time_for_matching(time1_clean)
+    time2_parsed = parse_time_for_matching(time2_clean)
+    
+    # Check for range vs specific time compatibility
+    if time1_parsed and time2_parsed:
+        compatibility = check_time_overlap(time1_parsed, time2_parsed)
+        if compatibility > 0:
+            return compatibility
+    
     # Clear incompatibilities
     incompatible_pairs = [
-        (["breakfast", "morning", "am"], ["dinner", "evening", "night", "pm"]),
+        (["breakfast", "morning"], ["dinner", "evening", "night"]),
         (["lunch", "noon", "12pm"], ["dinner", "evening", "night"]),
         (["now", "soon"], ["tomorrow", "later", "tonight"]),
     ]
@@ -675,6 +705,120 @@ def calculate_time_compatibility(time1: str, time2: str) -> float:
     
     # Uncertain cases - might need LLM
     return 0.5
+
+def parse_time_for_matching(time_str: str):
+    """Parse time string into structured format for matching"""
+    import re
+    
+    # Handle range formats like "8:40am-9:00am" or "8:30-9:00am"
+    range_match = re.search(r'(\d{1,2}):?(\d{0,2})?\s*(am|pm)?\s*-\s*(\d{1,2}):?(\d{0,2})?\s*(am|pm)', time_str)
+    if range_match:
+        start_hour = int(range_match.group(1))
+        start_min = int(range_match.group(2)) if range_match.group(2) else 0
+        start_ampm = range_match.group(3) or range_match.group(6)  # Use end ampm if start missing
+        end_hour = int(range_match.group(4))
+        end_min = int(range_match.group(5)) if range_match.group(5) else 0
+        end_ampm = range_match.group(6)
+        
+        # Convert to 24h format
+        if start_ampm == 'pm' and start_hour != 12:
+            start_hour += 12
+        elif start_ampm == 'am' and start_hour == 12:
+            start_hour = 0
+            
+        if end_ampm == 'pm' and end_hour != 12:
+            end_hour += 12
+        elif end_ampm == 'am' and end_hour == 12:
+            end_hour = 0
+            
+        return {
+            'type': 'range',
+            'start_hour': start_hour,
+            'start_min': start_min,
+            'end_hour': end_hour,
+            'end_min': end_min
+        }
+    
+    # Handle specific times like "9am" or "9:00am"
+    specific_match = re.search(r'(\d{1,2}):?(\d{0,2})?\s*(am|pm)', time_str)
+    if specific_match:
+        hour = int(specific_match.group(1))
+        minute = int(specific_match.group(2)) if specific_match.group(2) else 0
+        ampm = specific_match.group(3)
+        
+        # Convert to 24h format
+        if ampm == 'pm' and hour != 12:
+            hour += 12
+        elif ampm == 'am' and hour == 12:
+            hour = 0
+            
+        return {
+            'type': 'specific',
+            'hour': hour,
+            'minute': minute
+        }
+    
+    return None
+
+def check_time_overlap(time1_parsed, time2_parsed):
+    """Check if two parsed times have overlap/compatibility"""
+    
+    # Both specific times - must match exactly for high compatibility
+    if time1_parsed['type'] == 'specific' and time2_parsed['type'] == 'specific':
+        if (time1_parsed['hour'] == time2_parsed['hour'] and 
+            abs(time1_parsed['minute'] - time2_parsed['minute']) <= 15):
+            return 1.0
+        return 0.0
+    
+    # One range, one specific - check if specific falls within range
+    if time1_parsed['type'] == 'range' and time2_parsed['type'] == 'specific':
+        return check_specific_in_range(time2_parsed, time1_parsed)
+    elif time1_parsed['type'] == 'specific' and time2_parsed['type'] == 'range':
+        return check_specific_in_range(time1_parsed, time2_parsed)
+    
+    # Both ranges - check for overlap
+    if time1_parsed['type'] == 'range' and time2_parsed['type'] == 'range':
+        return check_range_overlap(time1_parsed, time2_parsed)
+    
+    return 0.0
+
+def check_specific_in_range(specific_time, range_time):
+    """Check if a specific time falls within a time range"""
+    spec_minutes = specific_time['hour'] * 60 + specific_time['minute']
+    range_start = range_time['start_hour'] * 60 + range_time['start_min']
+    range_end = range_time['end_hour'] * 60 + range_time['end_min']
+    
+    # Handle overnight ranges
+    if range_end < range_start:
+        range_end += 24 * 60
+    
+    if range_start <= spec_minutes <= range_end:
+        return 1.0  # Perfect match - specific time is within range
+    
+    # Check if close (within 30 minutes of range)
+    if (range_start - 30 <= spec_minutes <= range_start) or (range_end <= spec_minutes <= range_end + 30):
+        return 0.7
+    
+    return 0.0
+
+def check_range_overlap(range1, range2):
+    """Check if two time ranges overlap"""
+    start1 = range1['start_hour'] * 60 + range1['start_min']
+    end1 = range1['end_hour'] * 60 + range1['end_min']
+    start2 = range2['start_hour'] * 60 + range2['start_min']
+    end2 = range2['end_hour'] * 60 + range2['end_min']
+    
+    # Handle overnight ranges
+    if end1 < start1:
+        end1 += 24 * 60
+    if end2 < start2:
+        end2 += 24 * 60
+    
+    # Check for overlap
+    if start1 <= end2 and start2 <= end1:
+        return 0.9  # High compatibility for overlapping ranges
+    
+    return 0.0
 
 def has_hour_conflict(time1: str, time2: str) -> bool:
     """Check for obvious hour conflicts like 7pm vs 12am"""
@@ -2172,11 +2316,16 @@ ORIGINAL ROUTING DECISION TREE (IN PRIORITY ORDER):
    - User providing time → handle_incomplete_request
    - Completely new request → start_fresh_request
 
-7. **ACTIVE ORDER SESSION** (user already in order fulfillment):
+7. **ACTIVE ORDER SESSION** (user already in order fulfillment - HIGH PRIORITY):
+   When user has active order session, prioritize order continuation over new requests:
    - "pay"/"payment" → handle_payment_request
-   - Order numbers/names → collect_order_number
-   - Food descriptions (without restaurant/location) → collect_order_description
-   - New food request → start_fresh_request (clear session)
+   - Order numbers/names (like "My name is Mike") → collect_order_number
+   - Food descriptions without restaurant/location (like "I want a Big Mac") → collect_order_description
+   - Only if message contains full restaurant+location+time → start_fresh_request (clear session)
+   
+   IMPORTANT: If user is in active order session and says "My name is [name] and I want [food item]",
+   this should be treated as order continuation (collect_order_number), NOT a new food request,
+   unless the message also contains restaurant name, location, and time together.
 
 8. **OTHER**:
    - Questions about service → faq_answered
