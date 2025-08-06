@@ -319,14 +319,14 @@ def find_potential_matches_contextual(
             order_data = order.to_dict()
             print(f"   Checking: {order_data}")
 
-            compatibility_score = calculate_compatibility.invoke({
-                "user1_restaurant": restaurant_preference,
-                "user1_time": time_window,
-                "user2_restaurant": order_data.get('restaurant', ''),
-                "user2_time": order_data.get('time_requested', 'flexible'),
-                "user1_phone": requesting_user,
-                "user2_phone": order_data['user_phone']
-            })
+            compatibility_score = calculate_compatibility(
+                user1_restaurant=restaurant_preference,
+                user1_time=time_window,
+                user2_restaurant=order_data.get('restaurant', ''),
+                user2_time=order_data.get('time_requested', 'flexible'),
+                user1_phone=requesting_user,
+                user2_phone=order_data['user_phone']
+            )
 
             if compatibility_score >= 0.3:
                 match = {
@@ -437,14 +437,14 @@ def _match_candidates(
             order_data = order.to_dict()
             print(f"   Checking: {order_data}")
 
-            compatibility_score = calculate_compatibility.invoke({
-                "user1_restaurant": restaurant_preference,
-                "user1_time": time_window,
-                "user2_restaurant": order_data.get('restaurant', ''),
-                "user2_time": order_data.get('time_requested', 'flexible'),
-                "user1_phone": requesting_user,
-                "user2_phone": order_data['user_phone']
-            })
+            compatibility_score = calculate_compatibility(
+                user1_restaurant=restaurant_preference,
+                user1_time=time_window,
+                user2_restaurant=order_data.get('restaurant', ''),
+                user2_time=order_data.get('time_requested', 'flexible'),
+                user1_phone=requesting_user,
+                user2_phone=order_data['user_phone']
+            )
 
             if compatibility_score >= 0.3:
                 match = {
@@ -3435,10 +3435,15 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             print(f"⚠️ Failed to get solo session: {e}")
             solo_session = None
         
-        if solo_session and solo_session.get('delivery_time') != 'now':
-            # Use solo user's scheduled delivery time for the group
+        # Always prioritize the current request's delivery time for fresh requests
+        # Only use solo session time if current request is 'ASAP' or 'now' and solo has specific time
+        if (delivery_time in ['ASAP', 'now'] and 
+            solo_session and 
+            solo_session.get('delivery_time') not in ['now', 'ASAP', None]):
             delivery_time = solo_session.get('delivery_time')
             print(f"📅 Using solo user's scheduled delivery time: {delivery_time}")
+        else:
+            print(f"📅 Using current request's delivery time: {delivery_time}")
         
         # Create group data
         group_data = {

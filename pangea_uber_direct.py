@@ -81,19 +81,28 @@ class UberDeliveryConfig:
         
         print(f"✅ Uber Direct configured with Customer ID: {self.customer_id[:8]}...")
 
-def parse_delivery_time(time_str: str) -> datetime:
+def parse_delivery_time(time_str) -> datetime:
     """
     Parse user time preferences into datetime objects for Uber Direct scheduling
     
     Args:
         time_str: User's time preference like "3pm", "5:30pm", "now", "lunch", etc.
+                  Can be string or DatetimeWithNanoseconds object
         
     Returns:
         datetime object for the scheduled delivery time
     """
+    # If it's already a datetime object, return it as-is
+    if isinstance(time_str, datetime):
+        return time_str
+    
     # Get current time in Chicago timezone for consistent handling
     chicago_tz = pytz.timezone('America/Chicago')
     chicago_now = datetime.now(chicago_tz)
+    
+    # Ensure time_str is a string
+    if not isinstance(time_str, str):
+        time_str = str(time_str)
     
     # Handle immediate delivery
     if time_str.lower() in ['now', 'asap', 'immediately']:
