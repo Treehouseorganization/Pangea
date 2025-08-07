@@ -314,6 +314,13 @@ def find_potential_matches_contextual(
                 print(f"   ❌ Skipping order with no timestamp: {order_data}")
                 continue
 
+            # ENHANCED: Check if this is a paid solo order that should be included
+            order_user_phone = order_data.get('user_phone')
+            if is_paid_solo_order(order_user_phone):
+                print(f"   💰 Found PAID solo order from {order_user_phone}")
+                filtered_orders.append(order)
+                continue
+
             filtered_orders.append(order)
 
         print(f"📊 After aggressive time filtering: {len(filtered_orders)} potential orders")
@@ -472,44 +479,6 @@ def _match_candidates(
         return []
 
 
-@tool
-def find_potential_matches_contextual(
-    restaurant_preference: str,
-    location: str,
-    time_window: str,
-    requesting_user: str,
-    user_context: UserContext
-) -> List[Dict]:
-    """Context-aware matching that adapts to user situation and uses the helper for matching logic."""
-    print(f"🔍 CONTEXT-AWARE SEARCH for {requesting_user}:")
-    print(f"   Reason: {user_context.search_reason}")
-    print(f"   Urgency: {user_context.urgency_level}")
-    print(f"   Is correction: {user_context.is_correction}")
-
-    # Context-based flexibility
-    if user_context.is_correction:
-        flexibility_score = 0.7
-    elif user_context.urgency_level == "urgent":
-        flexibility_score = 0.8
-    elif len(user_context.rejection_history or []) > 2:
-        flexibility_score = 0.3
-    else:
-        flexibility_score = 0.5
-
-    # Get matches from helper
-    matches = _match_candidates(
-        restaurant_preference,
-        location,
-        time_window,
-        requesting_user,
-        flexibility_score
-    )
-
-    # Apply rejection learning
-    if user_context.rejection_history:
-        matches = filter_by_rejection_history(matches, user_context.rejection_history)
-
-    return matches
 
 
 def filter_by_rejection_history(matches: List[Dict], rejection_history: List[Dict]) -> List[Dict]:
@@ -5156,6 +5125,82 @@ This is going to be great! 🍜"""
     
     return state
 
+def should_protect_solo_order(user_phone: str, order_data: Dict) -> bool:
+    """
+    Check if a solo order should be protected from cleanup
+    Protects orders that:
+    1. Have been paid for
+    2. Have not reached their delivery time yet
+    3. Are still awaiting potential matches
+    """
+    try:
+        from pangea_order_processor import get_user_order_session
+        session = get_user_order_session(user_phone)
+        
+        if not session:
+            return False
+            
+        is_solo = session.get('solo_order', False) or session.get('group_size') == 1
+        is_paid = session.get('payment_requested_at') is not None
+        delivery_triggered = session.get('delivery_triggered', False)
+        
+        if not (is_solo and is_paid) or delivery_triggered:
+            return False
+            
+        # Check if delivery time has passed
+        delivery_time_str = order_data.get('time_requested') or session.get('delivery_time')
+        if not delivery_time_str:
+            return False
+            
+        from pangea_uber_direct import parse_delivery_time
+        from datetime import datetime, timezone, timedelta
+        
+        try:
+            scheduled_time = parse_delivery_time(delivery_time_str) if isinstance(delivery_time_str, str) else delivery_time_str
+            current_time = datetime.now()
+            
+            # Handle timezones
+            if scheduled_time.tzinfo is None:
+                scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
+            if current_time.tzinfo is None:
+                current_time = current_time.replace(tzinfo=timezone.utc)
+                
+            # Protect if delivery time hasn't passed (30 min buffer)
+            buffer_time = scheduled_time + timedelta(minutes=30)
+            
+            if current_time < buffer_time:
+                print(f"🛡️ Protecting paid solo order for {user_phone}")
+                return True
+                
+        except Exception as time_error:
+            print(f"⚠️ Time parsing error: {time_error}")
+            return True  # Protect on error
+            
+        return False
+        
+    except Exception as e:
+        print(f"⚠️ Protection check error: {e}")
+        return True  # Protect on error
+
+def is_paid_solo_order(user_phone: str) -> bool:
+    """Check if user has a paid solo order that should be protected"""
+    try:
+        from pangea_order_processor import get_user_order_session
+        session = get_user_order_session(user_phone)
+        
+        if not session:
+            return False
+            
+        is_solo = session.get('solo_order', False) or session.get('group_size', 0) == 1
+        is_paid = session.get('payment_requested_at') is not None
+        delivery_triggered = session.get('delivery_triggered', False)
+        
+        return is_solo and is_paid and not delivery_triggered
+        
+    except Exception as e:
+        print(f"⚠️ Error checking paid solo status: {e}")
+        return False
+
 def handle_no_matches_node(state: PangeaState) -> PangeaState:
     """
     When no matches found, send COMBINED message and trigger order processor flow.
@@ -5254,7 +5299,7 @@ Then your payment will be $3.50 💳"""
     except Exception as e:
         print(f"⚠️ Could not update last_request in Firestore: {e}")
 
-    # Clean up old solo orders with intelligent time-based cleanup
+    # CRITICAL FIX: Intelligent cleanup with solo order protection
     try:
         current_time = datetime.now()
         old_orders = db.collection('active_orders')\
@@ -5264,55 +5309,38 @@ Then your payment will be $3.50 💳"""
         
         for old_order in old_orders:
             order_data = old_order.to_dict()
-            time_requested = order_data.get('time_requested', 'now')
             created_at = order_data.get('created_at', current_time)
+            delivery_time_str = order_data.get('time_requested', 'now')
+            
+            # PROTECTION: Check if this is a protected solo order
+            if should_protect_solo_order(user_phone, order_data):
+                print(f"🛡️ PROTECTING paid solo order for {user_phone}")
+                continue  # Skip cleanup
             
             should_cleanup = False
             
-            # Parse delivery time and determine if it's expired
-            # Convert DatetimeWithNanoseconds to string if needed
-            time_requested_str = convert_time_to_string(time_requested)
-            if time_requested_str.lower() == 'now':
-                # For "now" orders, cleanup after 30 minutes
-                if current_time - created_at > timedelta(minutes=30):
+            # Standard cleanup logic for non-protected orders
+            if delivery_time_str.lower() == 'now':
+                if current_time - created_at > timedelta(hours=2):
                     should_cleanup = True
             else:
-                # Try to parse specific times like "1:30pm", "2:00pm", etc.
-                import re
-                time_match = re.search(r'(\d{1,2}):?(\d{0,2})\s*(am|pm)', time_requested_str.lower())
-                if time_match:
-                    try:
-                        hour = int(time_match.group(1))
-                        minute = int(time_match.group(2)) if time_match.group(2) else 0
-                        ampm = time_match.group(3)
-                        
-                        # Convert to 24-hour format
-                        if ampm == 'pm' and hour != 12:
-                            hour += 12
-                        elif ampm == 'am' and hour == 12:
-                            hour = 0
-                        
-                        # Create delivery time for today
-                        delivery_time = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                        
-                        # If delivery time has passed + 30 minute buffer, cleanup
-                        if current_time > delivery_time + timedelta(minutes=30):
-                            should_cleanup = True
-                    except (ValueError, AttributeError):
-                        # If parsing fails, fall back to 2-hour cleanup
-                        if current_time - created_at > timedelta(hours=2):
-                            should_cleanup = True
-                else:
-                    # For unparseable times, fall back to 2-hour cleanup
-                    if current_time - created_at > timedelta(hours=2):
+                try:
+                    from pangea_uber_direct import parse_delivery_time
+                    scheduled_time = parse_delivery_time(delivery_time_str)
+                    if current_time > scheduled_time + timedelta(hours=2):
+                        should_cleanup = True
+                except:
+                    if current_time - created_at > timedelta(hours=6):
                         should_cleanup = True
             
             if should_cleanup:
                 old_order.reference.delete()
-                print(f"🗑️ Cleaned up expired solo order for {user_phone} (time_requested: {time_requested})")
+                print(f"🗑️ Cleaned up expired order for {user_phone}")
+            else:
+                print(f"✅ Keeping active order for {user_phone}")
                 
     except Exception as e:
-        print(f"❌ Failed to clean up solo orders: {e}")
+        print(f"❌ Cleanup error: {e}")
 
     # Create new active_orders entry so this solo user can be found by future users
     try:
@@ -5402,12 +5430,15 @@ Then your payment will be $3.50 💳"""
 
         # Update user memory
         try:
-            update_user_memory(phone_number=user_phone, interaction_data={
-                "interaction_type": "fake_match_solo_order",
-                "restaurant": restaurant,
-                "location": location,
-                "delivery_time": delivery_time,
-                "timestamp": datetime.now(),
+            update_user_memory.invoke({
+                "phone_number": user_phone, 
+                "interaction_data": {
+                    "interaction_type": "fake_match_solo_order",
+                    "restaurant": restaurant,
+                    "location": location,
+                    "delivery_time": delivery_time,
+                    "timestamp": datetime.now(),
+                }
             })
         except Exception as memory_error:
             print(f"❌ Failed to update user memory: {memory_error}")

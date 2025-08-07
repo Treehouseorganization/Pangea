@@ -977,14 +977,30 @@ def schedule_solo_delivery_trigger(group_data: Dict):
 
 
 def check_group_completion_and_trigger_delivery(user_phone: str):
-    """
-    Check if all group members have paid (texted PAY),
-    and if so, trigger the Uber Direct delivery
-    """
+    """FIXED: Only trigger delivery for real groups or immediate solo orders"""
     
-    # Get this user's session to find their group
     session = get_user_order_session(user_phone)
     if not session:
+        return
+    
+    # ENHANCED: Check if this is a solo order that should wait for matches
+    group_size = session.get('group_size', 1)
+    delivery_time = session.get('delivery_time', 'now')
+    
+    # Check multiple conditions for solo order protection
+    should_wait_for_matches = (
+        # Original protection flags
+        (session.get('solo_order') and 
+         session.get('is_scheduled') and 
+         session.get('awaiting_match')) or
+        
+        # Backup protection: single-person scheduled order
+        (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered'))
+    )
+    
+    if should_wait_for_matches:
+        print(f"⏳ Solo order {user_phone} awaiting match - NOT triggering delivery")
+        print(f"   Reason: group_size={group_size}, delivery_time={delivery_time}, delivery_triggered={session.get('delivery_triggered', False)}")
         return
     
     group_id = session.get('group_id')
