@@ -2765,7 +2765,7 @@ def provide_clarification_node(state: PangeaState) -> PangeaState:
     return state
 
 # ===== 4. CONTEXT BUILDER FUNCTION =====
-def build_user_context(user_phone: str, current_message: str, routing_decision: Dict) -> UserContext:
+def build_user_context(user_phone: str, current_message: str, routing_decision: Dict, is_fresh_request: bool = False) -> UserContext:
     """Build rich context from all available data sources"""
     
     # Get user data from database
@@ -2787,12 +2787,17 @@ def build_user_context(user_phone: str, current_message: str, routing_decision: 
     elif routing_decision.get('action') == 'expand_search':
         search_reason = "retry"
     
-    # Get order session
-    try:
-        from pangea_order_processor import get_user_order_session
-        current_session = get_user_order_session(user_phone) or {}
-    except:
+    # Get order session - but not for fresh requests to avoid old data confusion
+    if is_fresh_request:
+        # Fresh request - don't load old session data to avoid confusion
         current_session = {}
+        print(f"🔄 Fresh request detected - not loading old session data for {user_phone}")
+    else:
+        try:
+            from pangea_order_processor import get_user_order_session
+            current_session = get_user_order_session(user_phone) or {}
+        except:
+            current_session = {}
     
     return UserContext(
         user_phone=user_phone,
@@ -3365,7 +3370,7 @@ def analyze_spontaneous_request_node_enhanced(state: PangeaState) -> PangeaState
     
     # Build and store context
     routing_decision = getattr(state, 'routing_decision', {})
-    user_context = build_user_context(user_phone, user_message, routing_decision)
+    user_context = build_user_context(user_phone, user_message, routing_decision, routing_decision.get('action') == 'start_fresh_request')
     state['user_context'] = user_context
     
     # Context-aware extraction prompt
@@ -3473,7 +3478,7 @@ def realtime_search_node_enhanced(state: PangeaState) -> PangeaState:
 
     user_context = state.get('user_context')
     if not user_context:
-        user_context = build_user_context(state['user_phone'], "", {})
+        user_context = build_user_context(state['user_phone'], "", {}, state.get('is_fresh_request', False))
 
     request = state['current_request']
     search_attempt = state.get('search_attempts', 0) + 1
@@ -5315,7 +5320,7 @@ Then your payment will be $3.50 💳"""
             'user_phone': user_phone,
             'restaurant': restaurant,
             'location': location,
-            'time_requested': delivery_time,
+            'time_requested': str(delivery_time),  # Ensure it's stored as string, not datetime
             'status': 'looking_for_group',
             'created_at': datetime.now(),
             'flexibility_score': 0.5
