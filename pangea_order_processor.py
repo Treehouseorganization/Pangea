@@ -145,8 +145,20 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         'order_session_id': str(uuid.uuid4()),
         'created_at': datetime.now(),
         'order_number': None,
-        'customer_name': None
+        'customer_name': None,
+        # Flag fixes for scheduled deliveries
+        'solo_order': delivery_time != 'now' and group_size == 1,
+        'is_scheduled': delivery_time != 'now',
+        'awaiting_match': delivery_time != 'now' and group_size <= 2
     }
+    
+    # Set protection flags for scheduled deliveries
+    is_scheduled_delivery = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
+    if is_scheduled_delivery:
+        session_data['is_scheduled'] = True
+        session_data['awaiting_match'] = True
+        if group_size == 1:
+            session_data['solo_order'] = True
     
     update_order_session(user_phone, session_data)
     
@@ -987,7 +999,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    group_size = session.get('group_size', 1)
    delivery_time = session.get('delivery_time', 'now')
    
-   # Check multiple conditions for solo order protection
+   # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
    should_wait_for_matches = (
        # Original protection flags
        (session.get('solo_order') and 
@@ -995,7 +1007,12 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         session.get('awaiting_match')) or
        
        # Backup protection: single-person scheduled order
-       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered'))
+       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered')) or
+       
+       # NEW: 2-person scheduled groups waiting for potential 3rd member
+       (group_size == 2 and session.get('is_scheduled') and 
+        session.get('awaiting_match') and delivery_time != 'now' and 
+        not session.get('delivery_triggered'))
    )
    
    if should_wait_for_matches:
