@@ -3576,6 +3576,15 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                 })
                 print(f"🛡️ Marked solo user {phone} for silent matching")
                 
+                # CRITICAL FIX: Remove solo user from active_orders to prevent future matches
+                try:
+                    active_orders_docs = db.collection('active_orders').where('user_phone', '==', phone).get()
+                    for doc in active_orders_docs:
+                        doc.reference.delete()
+                        print(f"🗑️ Removed {phone} from active_orders - no longer discoverable")
+                except Exception as cleanup_error:
+                    print(f"⚠️ Error removing {phone} from active_orders: {cleanup_error}")
+                
             except Exception as e:
                 print(f"❌ Error updating solo user {phone} session: {e}")
         
@@ -3708,6 +3717,15 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
                 'silent_match': True,  # Flag for silent matching - no notifications to solo user
                 'last_updated': datetime.now()
             })
+            
+            # CRITICAL FIX: Remove solo user from active_orders to prevent future matches
+            try:
+                active_orders_docs = db.collection('active_orders').where('user_phone', '==', solo_user_phone).get()
+                for doc in active_orders_docs:
+                    doc.reference.delete()
+                    print(f"🗑️ Removed {solo_user_phone} from active_orders - no longer discoverable")
+            except Exception as cleanup_error:
+                print(f"⚠️ Error removing {solo_user_phone} from active_orders: {cleanup_error}")
             print(f"🛡️ Protected solo user {solo_user_phone} from duplicate messages and marked for silent matching")
         except Exception as e:
             print(f"⚠️ Warning: Could not update solo user protection flags: {e}")

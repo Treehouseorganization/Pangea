@@ -1089,7 +1089,10 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            # Protect ANY scheduled delivery (solo or group)
            is_scheduled_delivery = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
            
-           if is_scheduled_delivery and not session.get('delivery_triggered'):
+           # Check if ANY member in the group has delivery_triggered=True
+           any_delivery_triggered = any(member['session_data'].get('delivery_triggered', False) for member in members_who_paid)
+           
+           if is_scheduled_delivery and not any_delivery_triggered:
                # Scheduled delivery - delay delivery trigger for ANY group size
                print(f"⏰ Scheduled delivery for {delivery_time} - scheduling delivery trigger")
                print(f"   Group size: {group_size}")
