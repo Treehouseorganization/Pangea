@@ -29,6 +29,10 @@ from pangea_locations import (
 
 MAX_GROUP_SIZE = 3 
 
+def normalize_location(location: str) -> str:
+    """Normalize location strings for consistent matching"""
+    return location.lower().replace('the ', '').strip()
+
 # LangGraph imports
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -265,12 +269,15 @@ def find_potential_matches_contextual(
     try:
         matches = []
 
-        # Query database
+        # Normalize location for matching
+        normalized_search_location = normalize_location(location)
+
+        # Query database - get all orders for this restaurant, we'll filter location later
         orders_ref = db.collection('active_orders')
-        similar_orders = orders_ref.where('location', '==', location) \
+        similar_orders = orders_ref.where('restaurant', '==', restaurant_preference) \
                                    .where('status', '==', 'looking_for_group') \
                                    .where('user_phone', '!=', requesting_user) \
-                                   .limit(10).get()
+                                   .limit(20).get()
 
         print(f"📊 Found {len(similar_orders)} potential orders in database")
 
@@ -285,6 +292,12 @@ def find_potential_matches_contextual(
 
             if order_data.get('user_phone') == requesting_user:
                 print(f"   🚫 Skipping self-match for {requesting_user}")
+                continue
+
+            # Check location compatibility with normalization
+            order_location = order_data.get('location', '')
+            normalized_order_location = normalize_location(order_location)
+            if normalized_order_location != normalized_search_location:
                 continue
 
             if order_time:
@@ -5368,7 +5381,7 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
        active_order_data = {
            'user_phone': user_phone,
            'restaurant': restaurant,
-           'location': location,
+           'location': normalize_location(location),
            'time_requested': str(delivery_time),  # Ensure it's stored as string, not datetime
            'status': 'looking_for_group',
            'created_at': datetime.now(),
