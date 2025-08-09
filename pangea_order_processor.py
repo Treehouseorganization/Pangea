@@ -1016,7 +1016,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    )
    
    if should_wait_for_matches:
-       print(f"⏳ Solo order {user_phone} awaiting match - NOT triggering delivery")
+       print(f"⏳ Group {group_size} awaiting {'match' if group_size == 1 else 'third member'} - NOT triggering delivery")
        print(f"   Reason: group_size={group_size}, delivery_time={delivery_time}, delivery_triggered={session.get('delivery_triggered', False)}")
        return
    

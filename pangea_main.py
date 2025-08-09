@@ -245,6 +245,40 @@ def find_potential_matches_contextual(
     print(f"   Urgency: {user_context.urgency_level}")
     print(f"   Is correction: {user_context.is_correction}")
 
+    # STEP 1: Check for existing 2-person groups FIRST (highest priority)
+    try:
+        active_groups = db.collection('active_groups')\
+                         .where('restaurant', '==', restaurant_preference)\
+                         .where('status', 'in', ['active', 'forming'])\
+                         .get()
+        
+        for group_doc in active_groups:
+            group_data = group_doc.to_dict()
+            group_members = group_data.get('members', [])
+            group_location = group_data.get('location', '')
+            
+            # Check if this is a 2-person group with matching location
+            if (len(group_members) == 2 and 
+                requesting_user not in group_members and
+                normalize_location(group_location) == normalize_location(location)):
+                
+                print(f"🎯 FOUND 2-PERSON GROUP: {group_doc.id} with members {group_members}")
+                
+                # Create a special match entry for the existing group
+                return [{
+                    'group_id': group_doc.id,
+                    'group_size': 2,
+                    'members': group_members,
+                    'restaurant': restaurant_preference,
+                    'location': group_location,
+                    'time_requested': group_data.get('delivery_time', time_window),
+                    'compatibility_score': 1.0,  # Perfect match
+                    'match_type': 'existing_group'
+                }]
+    except Exception as e:
+        print(f"❌ Error checking for existing groups: {e}")
+
+    # STEP 2: If no 2-person groups found, do normal individual matching
     # Adapt flexibility based on context
     if user_context.is_correction:
         flexibility_score = 0.7
@@ -359,7 +393,8 @@ def find_potential_matches_contextual(
                     'location': order_data['location'],
                     'time_requested': order_data['time_requested'],
                     'compatibility_score': compatibility_score,
-                    'user_flexibility': order_data.get('flexibility_score', flexibility_score)
+                    'user_flexibility': order_data.get('flexibility_score', flexibility_score),
+                    'match_type': 'individual'
                 }
                 matches.append(match)
                 print(f"   ✅ MATCH: {match}")
@@ -3605,6 +3640,43 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         if solo_order_users:
             db.collection('active_groups').document(group_id).update({'delivery_time': group_data['delivery_time']})
         
+        # NEW: Set awaiting_match flags for 2-person groups to prevent immediate delivery
+        if len(sorted_phones) == 2:
+            delivery_time = group_data.get('delivery_time', 'ASAP')
+            is_scheduled = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
+            
+            for phone in sorted_phones:
+                try:
+                    from pangea_order_processor import get_user_order_session, update_order_session
+                    user_session = get_user_order_session(phone)
+                    if user_session:
+                        user_session['awaiting_match'] = True  # Key flag for protection
+                        if is_scheduled:
+                            user_session['is_scheduled'] = True
+                        update_order_session(phone, user_session)
+                        print(f"✅ Set awaiting_match=True for {phone} in 2-person group")
+                except Exception as e:
+                    print(f"⚠️ Failed to set awaiting_match flag for {phone}: {e}")
+            
+            # Make 2-person group discoverable for 3rd person
+            try:
+                representative_user = sorted_phones[0]  # Use first user as representative
+                active_order_data = {
+                    'user_phone': representative_user,
+                    'restaurant': group_data['restaurant'],
+                    'location': group_data['delivery_location'],
+                    'time_requested': str(group_data['delivery_time']),
+                    'status': 'looking_for_group',
+                    'created_at': datetime.now(),
+                    'group_id': group_id,
+                    'group_size': 2,
+                    'flexibility_score': 0.8
+                }
+                db.collection('active_orders').add(active_order_data)
+                print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
+            except Exception as e:
+                print(f"❌ Failed to make 2-person group discoverable: {e}")
+        
         print(f"🎉 Group {group_id} created and invitations sent to both users")
         
     except Exception as e:
@@ -3789,10 +3861,10 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
 
     # 🆕 NEW: Check if any matches are existing 2-person groups
     for match in matches:
-        if match.get('group_size') == 2:
+        if match.get('match_type') == 'existing_group' and match.get('group_size') == 2:
             # This is a 2-person group, join it instead of creating new group
             existing_group_id = match.get('group_id')
-            print(f"👥 Found existing 2-person group {existing_group_id} - joining silently as 3rd person")
+            print(f"👥 Found existing 2-person group {existing_group_id} - joining as 3rd person")
             
             try:
                 # Get existing group data
@@ -3853,13 +3925,14 @@ The other 2 people are also placing their orders!"""
                     except Exception as e:
                         print(f"❌ Failed to remove group from discovery: {e}")
                     
-                    # Update all member sessions to reflect new group size
+                    # Update all member sessions to reflect new group size and remove awaiting_match flag
                     for member_phone in updated_members:
                         try:
                             from pangea_order_processor import get_user_order_session, update_order_session
                             member_session = get_user_order_session(member_phone)
                             if member_session:
                                 member_session['group_size'] = 3
+                                member_session['awaiting_match'] = False  # No longer waiting
                                 update_order_session(member_phone, member_session)
                         except Exception as e:
                             print(f"⚠️ Failed to update session for {member_phone}: {e}")
@@ -3873,7 +3946,7 @@ The other 2 people are also placing their orders!"""
                         'type': 'joined_existing_group'
                     }
                     
-                    print(f"✅ Successfully joined existing group {existing_group_id} silently as 3rd person")
+                    print(f"✅ Successfully joined existing group {existing_group_id} as 3rd person")
                     return state
                     
             except Exception as e:
