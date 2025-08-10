@@ -3782,6 +3782,13 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             solo_session['group_size'] = 2
             solo_session['delivery_time'] = delivery_time
             
+            # PROTECTION FIX: Set protection flags for 2-person scheduled groups
+            is_scheduled = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
+            if is_scheduled:
+                solo_session['awaiting_match'] = True
+                solo_session['is_scheduled'] = True
+                print(f"🛡️ Set protection flags for solo user {solo_user_phone} (scheduled: {delivery_time})")
+            
             # Clear any scheduled delivery flags since they're now in a group
             if 'delivery_scheduled' in solo_session:
                 del solo_session['delivery_scheduled']
