@@ -3593,7 +3593,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
             'created_at': datetime.now(),
             'created_by': state['user_phone'],
             'restaurant': state['current_request'].get('restaurant', 'local restaurant'),
-            'delivery_location': state['current_request'].get('delivery_location', 'campus'),
+            'delivery_location': state['current_request'].get('location', 'campus'),
             'delivery_time': state['current_request'].get('time_preference', 'ASAP'),
             'invitations_sent': sorted_phones,
             'responses_received': [],
@@ -3608,7 +3608,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         # Check for users already in solo orders - silently group them instead of re-inviting
         restaurant = state['current_request'].get('restaurant', 'local restaurant')
         delivery_time = state['current_request'].get('time_preference', 'ASAP')
-        delivery_location = state['current_request'].get('delivery_location', 'campus')
+        delivery_location = state['current_request'].get('location', 'campus')
         
         solo_order_users = []
         new_users = []
@@ -3782,7 +3782,7 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         # Get delivery details from the current request
         restaurant = state['current_request'].get('restaurant', 'local restaurant')
         delivery_time = state['current_request'].get('time_preference', 'ASAP')
-        delivery_location = state['current_request'].get('delivery_location', 'campus')
+        delivery_location = state['current_request'].get('location', 'campus')
         
         # Get solo user's existing session to preserve their delivery time
         try:
