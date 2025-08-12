@@ -278,6 +278,63 @@ def find_potential_matches_contextual(
     except Exception as e:
         print(f"❌ Error checking for existing groups: {e}")
 
+    # STEP 1.5: Check for discoverable 2-person groups in active_orders
+    try:
+        existing_group_orders = db.collection('active_orders')\
+                               .where('restaurant', '==', restaurant_preference)\
+                               .where('status', '==', 'looking_for_group')\
+                               .where('group_size', '==', 2)\
+                               .get()
+        
+        print(f"🔍 Found {len(existing_group_orders)} discoverable 2-person groups in active_orders")
+        
+        for order_doc in existing_group_orders:
+            order_data = order_doc.to_dict()
+            group_location = order_data.get('location', '')
+            group_time = order_data.get('time_requested', '')
+            group_id = order_data.get('group_id', '')
+            group_members = order_data.get('current_members', [])
+            
+            print(f"🔍 Checking discoverable group {group_id}:")
+            print(f"   Location match: '{normalize_location(location)}' vs '{group_location}'")
+            print(f"   Time: '{time_window}' vs '{group_time}'")
+            print(f"   Members: {group_members}")
+            
+            # Check if locations match
+            if group_location != normalize_location(location):
+                print(f"   ❌ Location mismatch")
+                continue
+                
+            # Check if user is already in this group
+            if requesting_user in group_members:
+                print(f"   ❌ User already in group")
+                continue
+            
+            # Check time compatibility
+            time_compatibility = calculate_time_compatibility(time_window, group_time)
+            if time_compatibility < 0.7:  # High threshold for group joining
+                print(f"   ❌ Time incompatibility: {time_compatibility}")
+                continue
+            
+            print(f"🎯 FOUND DISCOVERABLE 2-PERSON GROUP: {group_id} with members {group_members}")
+            
+            # Return the existing group as a match
+            return [{
+                'group_id': group_id,
+                'group_size': 2,
+                'members': group_members,
+                'restaurant': restaurant_preference,
+                'location': group_location,
+                'time_requested': group_time,
+                'compatibility_score': 1.0,  # Perfect match for existing group
+                'match_type': 'existing_group'
+            }]
+            
+    except Exception as e:
+        print(f"❌ Error checking for discoverable groups: {e}")
+
+    print(f"🔍 No discoverable 2-person groups found in active_orders")
+
     # STEP 2: If no 2-person groups found, do normal individual matching
     # Adapt flexibility based on context
     if user_context.is_correction:
@@ -413,6 +470,7 @@ def find_potential_matches_contextual(
     except Exception as e:
         print(f"❌ Matching failed: {e}")
         return []
+
 
 
 def _match_candidates(
@@ -3764,6 +3822,27 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         db.collection('active_groups').document(group_id).set(group_data)
         print(f"✅ Created group {group_id} in Firebase with solo user silently added")
         
+        # Make 2-person group discoverable for 3rd person
+        try:
+            active_order_data = {
+                'user_phone': new_user_phone,  # Representative user
+                'restaurant': restaurant,
+                'location': normalize_location(delivery_location),  # Use normalized location
+                'time_requested': str(delivery_time),
+                'status': 'looking_for_group',
+                'created_at': datetime.now(),
+                'group_id': group_id,
+                'group_size': 2,
+                'flexibility_score': 0.8,
+                'current_members': sorted_phones,  # Add this field
+                'existing_group': True  # Mark as existing group
+            }
+            db.collection('active_orders').add(active_order_data)
+            print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
+            print(f"   Restaurant: {restaurant}, Location: {normalize_location(delivery_location)}, Time: {delivery_time}")
+        except Exception as e:
+            print(f"❌ Failed to make group discoverable: {e}")
+        
         # Send invitation ONLY to the new user
         invitation_message = f"🍕 Perfect match found! Someone nearby wants {restaurant} delivered to {delivery_location} at {delivery_time}. Want to split the order and save on delivery? Reply YES to join or NO to pass."
         
@@ -3943,6 +4022,25 @@ The other 2 people are also placing their orders!"""
                                 update_order_session(member_phone, member_session)
                         except Exception as e:
                             print(f"⚠️ Failed to update session for {member_phone}: {e}")
+                    
+                    # Check if all 3 members have already paid - if so, trigger delivery immediately
+                    try:
+                        from pangea_order_processor import check_group_payment_status
+                        all_members_paid = True
+                        for member_phone in updated_members:
+                            member_session = get_user_order_session(member_phone)
+                            if not member_session or not member_session.get('payment_completed'):
+                                all_members_paid = False
+                                break
+                        
+                        if all_members_paid:
+                            print(f"🚀 All 3 members already paid - triggering delivery immediately for group {existing_group_id}")
+                            from pangea_order_processor import trigger_group_delivery
+                            trigger_group_delivery(existing_group_id)
+                        else:
+                            print(f"💳 Waiting for remaining payments from group {existing_group_id}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to check payment status for auto-delivery: {e}")
                     
                     state['group_formed'] = True
                     state['final_group'] = {

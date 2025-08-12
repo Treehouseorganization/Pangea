@@ -999,6 +999,53 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    group_size = session.get('group_size', 1)
    delivery_time = session.get('delivery_time', 'now')
    
+   # Check if we're close to delivery time and should stop waiting for 3rd member
+   close_to_delivery_time = False
+   if delivery_time != 'now' and (group_size == 1 or group_size == 2):
+       try:
+           from pangea_uber_direct import parse_delivery_time
+           from datetime import datetime, timedelta
+           import pytz
+           
+           scheduled_datetime = parse_delivery_time(delivery_time)
+           if scheduled_datetime:
+               # Use Chicago timezone
+               chicago_tz = pytz.timezone('America/Chicago')
+               current_time = datetime.now(chicago_tz)
+               
+               if scheduled_datetime.tzinfo is None:
+                   scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+               else:
+                   scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
+                   
+               time_until_delivery = (scheduled_datetime - current_time).total_seconds() / 60  # minutes
+               
+               # If within 10 minutes of delivery time, stop waiting for 3rd member
+               if time_until_delivery <= 10:
+                   close_to_delivery_time = True
+                   print(f"⏰ Within {time_until_delivery:.1f} minutes of delivery - stopping wait for more members")
+                   
+                   # Clear awaiting_match flags for all group members (or solo user)
+                   if group_size == 1:
+                       # Solo order - clear own awaiting_match
+                       session['awaiting_match'] = False
+                       update_order_session(user_phone, session)
+                       print(f"✅ Cleared awaiting_match for solo user {user_phone}")
+                   else:
+                       # Group order - clear for all members
+                       group_id = session.get('group_id')
+                       if group_id:
+                           group_sessions_docs = db.collection('order_sessions').where('group_id', '==', group_id).get()
+                           for member_doc in group_sessions_docs:
+                               member_session = member_doc.to_dict()
+                               member_phone = member_session.get('user_phone')
+                               if member_session.get('awaiting_match'):
+                                   member_session['awaiting_match'] = False
+                                   update_order_session(member_phone, member_session)
+                                   print(f"✅ Cleared awaiting_match for {member_phone}")
+       except Exception as e:
+           print(f"⚠️ Error checking delivery timing: {e}")
+   
    # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
    should_wait_for_matches = (
        # Original protection flags
@@ -1006,13 +1053,13 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         session.get('is_scheduled') and 
         session.get('awaiting_match')) or
        
-       # Backup protection: single-person scheduled order
-       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered')) or
+       # Backup protection: single-person scheduled order (but not if close to delivery time)
+       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time) or
        
-       # NEW: 2-person scheduled groups waiting for potential 3rd member
+       # NEW: 2-person scheduled groups waiting for potential 3rd member (but not if close to delivery time)
        (group_size == 2 and session.get('is_scheduled') and 
         session.get('awaiting_match') and delivery_time != 'now' and 
-        not session.get('delivery_triggered'))
+        not session.get('delivery_triggered') and not close_to_delivery_time)
    )
    
    # ENHANCED GROUP-LEVEL CHECK: If individual check passes, also verify all group members
@@ -1026,7 +1073,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                    member_session = member_doc.to_dict()
                    if (member_session.get('awaiting_match') and 
                        member_session.get('is_scheduled') and 
-                       delivery_time != 'now'):
+                       delivery_time != 'now' and not close_to_delivery_time):
                        should_wait_for_matches = True
                        print(f"🛡️ Group-level protection: Member {member_session.get('user_phone')} still awaiting matches")
                        break
