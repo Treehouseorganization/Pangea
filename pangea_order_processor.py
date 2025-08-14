@@ -647,6 +647,9 @@ After payment, I'll coordinate with your group to place the order! 🍕"""
     send_friendly_message(user_phone, message, message_type="payment")
     
     # Check if all group members have now paid and trigger delivery if so
+    # Add small delay to ensure Firebase write is committed before checking group status
+    import time
+    time.sleep(0.5)  # 500ms delay to ensure Firebase consistency
     check_group_completion_and_trigger_delivery(user_phone)
     
     state['messages'].append(AIMessage(content=message))
