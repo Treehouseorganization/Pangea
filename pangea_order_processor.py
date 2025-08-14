@@ -149,7 +149,10 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         # Flag fixes for scheduled deliveries
         'solo_order': delivery_time != 'now' and group_size == 1,
         'is_scheduled': delivery_time != 'now',
-        'awaiting_match': delivery_time != 'now' and group_size <= 2
+        'awaiting_match': delivery_time != 'now' and group_size <= 2,
+        # Reset delivery flags for fresh orders
+        'delivery_triggered': False,
+        'delivery_scheduled': False
     }
     
     # Set protection flags for scheduled deliveries
@@ -160,7 +163,12 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
         if group_size == 1:
             session_data['solo_order'] = True
     
-    update_order_session(user_phone, session_data)
+    # For fresh orders, replace completely to avoid inheriting old flags
+    try:
+        session_data['last_updated'] = datetime.now()
+        db.collection('order_sessions').document(user_phone).set(session_data, merge=False)
+    except Exception as e:
+        print(f"Error creating fresh order session: {e}")
     
     payment_amount = get_payment_amount(group_size)
     
