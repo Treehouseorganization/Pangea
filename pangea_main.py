@@ -400,7 +400,7 @@ def find_potential_matches_contextual(
 
                     time_diff = current_time - order_time
 
-                    if time_diff > timedelta(minutes=30):
+                    if time_diff > timedelta(hours=2):
                         print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago (user: {order_data.get('user_phone')})")
                         continue
 
