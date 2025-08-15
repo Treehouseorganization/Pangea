@@ -948,17 +948,21 @@ def schedule_solo_delivery_trigger(group_data: Dict):
         scheduled_datetime = parse_delivery_time(delivery_time)
         
         if scheduled_datetime:
-            from datetime import timezone
+            from datetime import timezone, timedelta
             # Ensure both datetimes have timezone info
             if scheduled_datetime.tzinfo is None:
                 scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
             
             current_time = datetime.now(timezone.utc)
-            delay_seconds = (scheduled_datetime - current_time).total_seconds()
+            # Trigger delivery 10 minutes before scheduled time so food arrives on time
+            trigger_time = scheduled_datetime - timedelta(minutes=10)
+            delay_seconds = (trigger_time - current_time).total_seconds()
             
             if delay_seconds > 0:
-                print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
+                print(f"⏰ Solo delivery scheduled for {delivery_time} - triggering 10min early, waiting {delay_seconds} seconds")
                 time.sleep(delay_seconds)
+            else:
+                print(f"⚠️ Scheduled time {delivery_time} is too close - triggering immediately")
             
         # Trigger the delivery
         print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
@@ -1094,6 +1098,24 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    if should_wait_for_matches:
        print(f"⏳ Group {group_size} awaiting {'match' if group_size == 1 else 'third member'} - NOT triggering delivery")
        print(f"   Reason: group_size={group_size}, delivery_time={delivery_time}, delivery_triggered={session.get('delivery_triggered', False)}")
+       
+       # Send scheduled delivery confirmation for solo/scheduled orders waiting for matches
+       is_scheduled_delivery = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
+       if is_scheduled_delivery and session.get('payment_requested_at') and not session.get('delivery_triggered'):
+           def send_delayed_confirmation():
+               import time
+               time.sleep(50)  # 50-second delay
+               from pangea_main import send_friendly_message
+               send_friendly_message(user_phone, f"Perfect! Your food will arrive around {delivery_time} ⏰", message_type="scheduled_payment_confirmation")
+               print(f"✅ Sent delayed payment confirmation to {user_phone}")
+           
+           # Start delayed notification thread
+           import threading
+           thread = threading.Thread(target=send_delayed_confirmation)
+           thread.daemon = True
+           thread.start()
+           print(f"⏰ Scheduled 50s delayed payment confirmation for {user_phone}")
+       
        return
    
    group_id = session.get('group_id')
@@ -1180,7 +1202,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                    from pangea_main import send_friendly_message
                    for member in members_who_paid:
                        user_phone_member = member['user_phone']
-                       send_friendly_message(user_phone_member, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="scheduled_payment_confirmation")
+                       send_friendly_message(user_phone_member, f"Perfect! Your food will arrive around {delivery_time} ⏰", message_type="scheduled_payment_confirmation")
                        print(f"✅ Sent delayed payment confirmation to {user_phone_member}")
                
                # Start delayed notification thread

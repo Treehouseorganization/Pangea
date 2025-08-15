@@ -5496,13 +5496,15 @@ def should_protect_solo_order(user_phone: str, order_data: Dict) -> bool:
         
         try:
             scheduled_time = parse_delivery_time(delivery_time_str) if isinstance(delivery_time_str, str) else delivery_time_str
-            current_time = datetime.now()
+            import pytz
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
             
-            # Handle timezones
+            # Handle timezones - ensure both use Chicago timezone
             if scheduled_time.tzinfo is None:
-                scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
-            if current_time.tzinfo is None:
-                current_time = current_time.replace(tzinfo=timezone.utc)
+                chicago_tz = pytz.timezone('America/Chicago')
+                scheduled_time = chicago_tz.localize(scheduled_time)
+            else:
+                scheduled_time = scheduled_time.astimezone(pytz.timezone('America/Chicago'))
                 
             # Protect if delivery time hasn't passed (30 min buffer)
             buffer_time = scheduled_time + timedelta(minutes=30)
@@ -5656,7 +5658,8 @@ Then your payment will be $3.50 💳"""
 
    # CRITICAL FIX: Intelligent cleanup with solo order protection
    try:
-       current_time = datetime.now()
+       import pytz
+       current_time = datetime.now(pytz.timezone('America/Chicago'))
        old_orders = db.collection('active_orders')\
            .where('user_phone', '==', user_phone)\
            .where('status', '==', 'looking_for_group')\
