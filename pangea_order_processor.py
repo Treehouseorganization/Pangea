@@ -949,11 +949,15 @@ def schedule_solo_delivery_trigger(group_data: Dict):
         
         if scheduled_datetime:
             from datetime import timezone, timedelta
-            # Ensure both datetimes have timezone info
+            import pytz
+            # Ensure both datetimes use Chicago timezone
+            chicago_tz = pytz.timezone('America/Chicago')
             if scheduled_datetime.tzinfo is None:
-                scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
+                scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+            else:
+                scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
             
-            current_time = datetime.now(timezone.utc)
+            current_time = datetime.now(chicago_tz)
             # Trigger delivery 10 minutes before scheduled time so food arrives on time
             trigger_time = scheduled_datetime - timedelta(minutes=10)
             delay_seconds = (trigger_time - current_time).total_seconds()
