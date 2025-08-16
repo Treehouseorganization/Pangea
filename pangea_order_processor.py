@@ -1065,6 +1065,11 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        except Exception as e:
            print(f"⚠️ Error checking delivery timing: {e}")
    
+   # Re-read session after potential awaiting_match flag clearing
+   session = get_user_order_session(user_phone)
+   if not session:
+       return
+   
    # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
    should_wait_for_matches = (
        # Original protection flags (but not if close to delivery time)
@@ -1086,7 +1091,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        group_id = session.get('group_id')
        if group_id:
            try:
-               # Check if ANY group member is still awaiting matches
+               # Re-read group sessions after potential awaiting_match flag clearing
                group_sessions_docs = db.collection('order_sessions').where('group_id', '==', group_id).get()
                for member_doc in group_sessions_docs:
                    member_session = member_doc.to_dict()
