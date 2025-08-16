@@ -136,23 +136,47 @@ def parse_delivery_time(time_str) -> datetime:
         if match:
             groups = match.groups()
             if len(groups) >= 5:
-                # Take the earlier time from the range
-                hour = int(groups[0])
-                minute = int(groups[1])
+                # Get both start and end times from the range
+                start_hour = int(groups[0])
+                start_minute = int(groups[1])
+                end_hour = int(groups[2])
+                end_minute = int(groups[3])
                 period = groups[4]
                 
-                # Convert to 24-hour format
-                if period == 'pm' and hour != 12:
-                    hour += 12
-                elif period == 'am' and hour == 12:
-                    hour = 0
+                # Convert both to 24-hour format
+                if period == 'pm' and start_hour != 12:
+                    start_hour += 12
+                elif period == 'am' and start_hour == 12:
+                    start_hour = 0
+                    
+                if period == 'pm' and end_hour != 12:
+                    end_hour += 12
+                elif period == 'am' and end_hour == 12:
+                    end_hour = 0
                 
-                # Create target time
-                target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                # Create both target times
+                start_time = chicago_now.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+                end_time = chicago_now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
                 
-                # If the time has passed today AND user didn't specify "today", schedule for tomorrow
-                if target_time <= chicago_now and 'today' not in time_str.lower():
-                    target_time += timedelta(days=1)
+                # Smart selection: if current time is within the range, use the end time
+                # If current time is before the range, use the start time
+                # If current time is after the range, check if we should schedule for today or tomorrow
+                if start_time <= chicago_now <= end_time:
+                    # We're currently within the time range - use end time for delivery
+                    target_time = end_time
+                    print(f"✅ Current time within range - using end time: {target_time.strftime('%I:%M %p')}")
+                elif chicago_now < start_time:
+                    # We're before the range - use start time
+                    target_time = start_time
+                    print(f"✅ Current time before range - using start time: {target_time.strftime('%I:%M %p')}")
+                else:
+                    # We're after the range - check if user specified "today"
+                    if 'today' in time_str.lower():
+                        target_time = end_time  # Use end time for today (past delivery)
+                        print(f"✅ Range has passed but 'today' specified - using end time: {target_time.strftime('%I:%M %p')}")
+                    else:
+                        target_time = start_time + timedelta(days=1)  # Schedule for tomorrow
+                        print(f"✅ Range has passed - scheduling for tomorrow: {target_time.strftime('%I:%M %p')}")
                     
                 print(f"✅ Parsed time range '{time_str}' -> scheduling for {target_time.strftime('%I:%M %p')}")
                 return target_time
