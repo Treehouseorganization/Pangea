@@ -119,8 +119,8 @@ def parse_delivery_time(time_str) -> datetime:
     for meal, hour in meal_times.items():
         if meal in time_str.lower():
             target_time = chicago_now.replace(hour=hour, minute=0, second=0, microsecond=0)
-            # If the time has passed today, schedule for tomorrow
-            if target_time <= chicago_now:
+            # If the time has passed today AND user didn't specify "today", schedule for tomorrow
+            if target_time <= chicago_now and 'today' not in time_str.lower():
                 target_time += timedelta(days=1)
             return target_time
     
@@ -150,8 +150,8 @@ def parse_delivery_time(time_str) -> datetime:
                 # Create target time
                 target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 
-                # If the time has passed today, schedule for tomorrow
-                if target_time <= chicago_now:
+                # If the time has passed today AND user didn't specify "today", schedule for tomorrow
+                if target_time <= chicago_now and 'today' not in time_str.lower():
                     target_time += timedelta(days=1)
                     
                 print(f"✅ Parsed time range '{time_str}' -> scheduling for {target_time.strftime('%I:%M %p')}")
@@ -210,8 +210,8 @@ def parse_delivery_time(time_str) -> datetime:
             # Create target time
             target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
-            # If the time has passed today, schedule for tomorrow
-            if target_time <= chicago_now:
+            # If the time has passed today AND user didn't specify "today", schedule for tomorrow
+            if target_time <= chicago_now and 'today' not in time_str.lower():
                 target_time += timedelta(days=1)
                 
             return target_time
