@@ -939,72 +939,148 @@ I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
 def schedule_solo_delivery_trigger(group_data: Dict):
     """
     Schedule solo order delivery to be triggered at the specified time
+    FIXED VERSION: More robust with error handling and persistence
     """
     def trigger_delivery_at_scheduled_time():
         delivery_time = group_data.get('delivery_time', 'now')
+        group_id = group_data.get('group_id', 'unknown')
         
-        # Parse the delivery time and calculate delay
-        from pangea_uber_direct import parse_delivery_time
-        scheduled_datetime = parse_delivery_time(delivery_time)
+        print(f"⏰ DELIVERY TRIGGER THREAD STARTED for group {group_id}")
+        print(f"   Target delivery time: {delivery_time}")
         
-        if scheduled_datetime:
-            from datetime import timezone, timedelta
-            import pytz
-            # Ensure both datetimes use Chicago timezone
-            chicago_tz = pytz.timezone('America/Chicago')
-            if scheduled_datetime.tzinfo is None:
-                scheduled_datetime = chicago_tz.localize(scheduled_datetime)
-            else:
-                scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
-            
-            current_time = datetime.now(chicago_tz)
-            # Trigger delivery 10 minutes before scheduled time so food arrives on time
-            trigger_time = scheduled_datetime - timedelta(minutes=10)
-            delay_seconds = (trigger_time - current_time).total_seconds()
-            
-            if delay_seconds > 0:
-                print(f"⏰ Solo delivery scheduled for {delivery_time} - triggering 10min early, waiting {delay_seconds} seconds")
-                time.sleep(delay_seconds)
-            else:
-                print(f"⚠️ Scheduled time {delivery_time} is too close - triggering immediately")
-            
-        # Trigger the delivery
-        print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
         try:
-            from pangea_uber_direct import create_group_delivery
-            delivery_result = create_group_delivery(group_data)
+            # Parse the delivery time and calculate delay
+            from pangea_uber_direct import parse_delivery_time
+            scheduled_datetime = parse_delivery_time(delivery_time)
             
-            if delivery_result.get('success'):
-                print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
+            if scheduled_datetime:
+                from datetime import timezone, timedelta
+                import pytz
+                # Ensure both datetimes use Chicago timezone
+                chicago_tz = pytz.timezone('America/Chicago')
+                if scheduled_datetime.tzinfo is None:
+                    scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+                else:
+                    scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
                 
-                # Update sessions for ALL group members to mark delivery as triggered
-                group_id = group_data.get('group_id')
-                all_members = group_data.get('members', [])
+                current_time = datetime.now(chicago_tz)
+                # Trigger delivery 15 minutes before scheduled time so food arrives on time
+                trigger_time = scheduled_datetime - timedelta(minutes=15)
+                delay_seconds = (trigger_time - current_time).total_seconds()
                 
-                for member_phone in all_members:
-                    session = get_user_order_session(member_phone)
-                    if session:
-                        session['delivery_triggered'] = True
-                        session['delivery_id'] = delivery_result.get('delivery_id')
-                        session['tracking_url'] = delivery_result.get('tracking_url')
-                        session['delivery_scheduled'] = False  # Clear scheduled flag
-                        update_order_session(member_phone, session)
-                        print(f"✅ Updated session for group member {member_phone}")
+                print(f"⏰ Current time: {current_time.strftime('%I:%M %p')}")
+                print(f"⏰ Target delivery: {scheduled_datetime.strftime('%I:%M %p')}")
+                print(f"⏰ Will trigger at: {trigger_time.strftime('%I:%M %p')}")
+                print(f"⏰ Waiting {delay_seconds} seconds ({delay_seconds/60:.1f} minutes)")
                 
-                # Send notifications
-                schedule_delayed_triggered_notifications(group_data, delivery_result)
-                
+                if delay_seconds > 0:
+                    # Store the trigger info in Firebase for persistence
+                    try:
+                        trigger_doc = {
+                            'group_id': group_id,
+                            'delivery_time': delivery_time,
+                            'trigger_time': trigger_time,
+                            'created_at': datetime.now(),
+                            'status': 'scheduled',
+                            'group_data': group_data
+                        }
+                        db.collection('scheduled_triggers').document(group_id).set(trigger_doc)
+                        print(f"✅ Stored trigger info in Firebase for {group_id}")
+                    except Exception as store_error:
+                        print(f"⚠️ Could not store trigger info: {store_error}")
+                    
+                    print(f"⏰ Sleeping for {delay_seconds} seconds...")
+                    time.sleep(delay_seconds)
+                else:
+                    print(f"⚠️ Scheduled time {delivery_time} is too close - triggering immediately")
             else:
-                print(f"❌ Solo delivery creation failed: {delivery_result}")
+                print(f"⚠️ Could not parse delivery time '{delivery_time}' - triggering immediately")
+            
+            # Trigger the delivery
+            print(f"🚚 TRIGGERING DELIVERY NOW for group {group_id}")
+            try:
+                from pangea_uber_direct import create_group_delivery
+                delivery_result = create_group_delivery(group_data)
                 
-        except Exception as e:
-            print(f"❌ Solo delivery trigger error: {e}")
+                if delivery_result.get('success'):
+                    print(f"✅ Scheduled delivery created: {delivery_result.get('delivery_id')}")
+                    
+                    # Update sessions for ALL group members to mark delivery as triggered
+                    all_members = group_data.get('members', [])
+                    
+                    for member_phone in all_members:
+                        try:
+                            session = get_user_order_session(member_phone)
+                            if session:
+                                session['delivery_triggered'] = True
+                                session['delivery_id'] = delivery_result.get('delivery_id')
+                                session['tracking_url'] = delivery_result.get('tracking_url')
+                                session['delivery_scheduled'] = False  # Clear scheduled flag
+                                session['awaiting_match'] = False  # No longer waiting
+                                update_order_session(member_phone, session)
+                                print(f"✅ Updated session for group member {member_phone}")
+                        except Exception as session_error:
+                            print(f"❌ Failed to update session for {member_phone}: {session_error}")
+                    
+                    # Send notifications
+                    schedule_delayed_triggered_notifications(group_data, delivery_result)
+                    
+                    # Mark as completed in Firebase
+                    try:
+                        db.collection('scheduled_triggers').document(group_id).update({
+                            'status': 'completed',
+                            'completed_at': datetime.now(),
+                            'delivery_id': delivery_result.get('delivery_id')
+                        })
+                        print(f"✅ Marked trigger as completed in Firebase")
+                    except Exception as update_error:
+                        print(f"⚠️ Could not update trigger status: {update_error}")
+                    
+                else:
+                    print(f"❌ Scheduled delivery creation failed: {delivery_result}")
+                    # Mark as failed in Firebase
+                    try:
+                        db.collection('scheduled_triggers').document(group_id).update({
+                            'status': 'failed',
+                            'failed_at': datetime.now(),
+                            'error': str(delivery_result.get('error', 'Unknown error'))
+                        })
+                    except Exception as update_error:
+                        print(f"⚠️ Could not update trigger failure: {update_error}")
+                        
+            except Exception as delivery_error:
+                print(f"❌ Scheduled delivery trigger error: {delivery_error}")
+                import traceback
+                print(f"❌ Full traceback: {traceback.format_exc()}")
+                
+                # Mark as failed in Firebase
+                try:
+                    db.collection('scheduled_triggers').document(group_id).update({
+                        'status': 'failed',
+                        'failed_at': datetime.now(),
+                        'error': str(delivery_error)
+                    })
+                except Exception as update_error:
+                    print(f"⚠️ Could not update trigger failure: {update_error}")
+        
+        except Exception as thread_error:
+            print(f"❌ CRITICAL: Delivery trigger thread failed: {thread_error}")
+            import traceback
+            print(f"❌ Thread error traceback: {traceback.format_exc()}")
     
     # Start background thread to wait and trigger delivery
-    thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
-    thread.daemon = True
-    thread.start()
-    print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
+    try:
+        thread = threading.Thread(
+            target=trigger_delivery_at_scheduled_time,
+            name=f"delivery_trigger_{group_data.get('group_id', 'unknown')}",
+            daemon=False  # Changed to False so thread doesn't die with main process
+        )
+        thread.start()
+        print(f"✅ Delivery trigger thread started for {group_data.get('delivery_time')}")
+        return True
+    except Exception as thread_start_error:
+        print(f"❌ Failed to start delivery trigger thread: {thread_start_error}")
+        return False
 
 
 def check_group_completion_and_trigger_delivery(user_phone: str):
@@ -1020,6 +1096,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    
    # Check if we're close to delivery time and should stop waiting for 3rd member
    close_to_delivery_time = False
+   time_override = False  # NEW: Force trigger if time has passed
+   
    if delivery_time != 'now' and (group_size == 1 or group_size == 2):
        try:
            from pangea_uber_direct import parse_delivery_time
@@ -1039,8 +1117,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                    
                time_until_delivery = (scheduled_datetime - current_time).total_seconds() / 60  # minutes
                
-               # If within 10 minutes of delivery time, stop waiting for 3rd member
-               if time_until_delivery <= 10:
+               # FIXED: Use 15-minute cutoff instead of 10
+               if time_until_delivery <= 15:
                    close_to_delivery_time = True
                    print(f"⏰ Within {time_until_delivery:.1f} minutes of delivery - stopping wait for more members")
                    
@@ -1063,14 +1141,32 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                                    update_order_session(member_phone, member_session)
                                    print(f"✅ Cleared awaiting_match for {member_phone}")
                
-               # Also trigger if delivery time has already passed
+               # NEW: Time override - if delivery time has passed, force trigger
                elif time_until_delivery <= 0:
+                   time_override = True
                    close_to_delivery_time = True
-                   print(f"⏰ Delivery time has passed ({abs(time_until_delivery):.1f} minutes ago) - triggering immediately")
+                   print(f"🚨 DELIVERY TIME OVERRIDE: {abs(time_until_delivery):.1f} minutes overdue - forcing trigger")
+                   
+                   # Force clear all protection flags
+                   session['awaiting_match'] = False
+                   session['is_scheduled'] = False
+                   update_order_session(user_phone, session)
+                   
+                   if group_size > 1:
+                       group_id = session.get('group_id')
+                       if group_id:
+                           group_sessions_docs = db.collection('order_sessions').where('group_id', '==', group_id).get()
+                           for member_doc in group_sessions_docs:
+                               member_session = member_doc.to_dict()
+                               member_phone = member_session.get('user_phone')
+                               member_session['awaiting_match'] = False
+                               member_session['is_scheduled'] = False
+                               update_order_session(member_phone, member_session)
+                               print(f"🚨 OVERRIDE: Cleared all flags for {member_phone}")
                
                # Log waiting status for 2-person groups
-               elif group_size == 2 and time_until_delivery > 10:
-                   print(f"⏳ 2-person group waiting for 3rd member - {time_until_delivery:.1f} minutes until 10-min cutoff")
+               elif group_size == 2 and time_until_delivery > 15:
+                   print(f"⏳ 2-person group waiting for 3rd member - {time_until_delivery:.1f} minutes until 15-min cutoff")
                    
        except Exception as e:
            print(f"⚠️ Error checking delivery timing: {e}")
@@ -1080,20 +1176,23 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    if not session:
        return
    
-   # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
+   # Check multiple conditions for protection - BUT RESPECT TIME OVERRIDE
    should_wait_for_matches = (
-       # Original protection flags (but not if close to delivery time)
-       (session.get('solo_order') and 
-        session.get('is_scheduled') and 
-        session.get('awaiting_match') and not close_to_delivery_time) or
-       
-       # Backup protection: single-person scheduled order (but not if close to delivery time)
-       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time) or
-       
-       # NEW: 2-person scheduled groups waiting for potential 3rd member (but not if close to delivery time)
-       (group_size == 2 and session.get('is_scheduled') and 
-        session.get('awaiting_match') and delivery_time != 'now' and 
-        not session.get('delivery_triggered') and not close_to_delivery_time)
+       not time_override and  # NEW: Don't wait if time override is active
+       (
+           # Original protection flags (but not if close to delivery time)
+           (session.get('solo_order') and 
+            session.get('is_scheduled') and 
+            session.get('awaiting_match') and not close_to_delivery_time) or
+           
+           # Backup protection: single-person scheduled order (but not if close to delivery time)
+           (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time) or
+           
+           # NEW: 2-person scheduled groups waiting for potential 3rd member (but not if close to delivery time)
+           (group_size == 2 and session.get('is_scheduled') and 
+            session.get('awaiting_match') and delivery_time != 'now' and 
+            not session.get('delivery_triggered') and not close_to_delivery_time)
+       )
    )
    
    # ENHANCED GROUP-LEVEL CHECK: If individual check passes, also verify all group members
@@ -1210,7 +1309,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            # Check if ANY member in the group has delivery_triggered=True
            any_delivery_triggered = any(member['session_data'].get('delivery_triggered', False) for member in members_who_paid)
            
-           if is_scheduled_delivery and not any_delivery_triggered:
+           if is_scheduled_delivery and not any_delivery_triggered and not time_override:
                # Scheduled delivery - delay delivery trigger for ANY group size
                print(f"⏰ Scheduled delivery for {delivery_time} - scheduling delivery trigger")
                print(f"   Group size: {group_size}")
@@ -1245,7 +1344,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                
                return  # Don't trigger delivery immediately
            
-           # Import and trigger delivery IMMEDIATELY (for "now" orders only)
+           # Import and trigger delivery IMMEDIATELY (for "now" orders or time override)
            try:
                from pangea_uber_direct import create_group_delivery
                delivery_result = create_group_delivery(group_data)
@@ -1255,8 +1354,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                    
                    # Check delivery type and send appropriate 50-second delayed notification
                    delivery_time = group_data.get('delivery_time', 'now')
-                   if delivery_time == 'now':
-                       # Immediate delivery: send 2nd message after 50 seconds
+                   if delivery_time == 'now' or time_override:
+                       # Immediate delivery or time override: send 2nd message after 50 seconds
                        schedule_delayed_delivery_notifications(group_data, delivery_result)
                    else:
                        # Scheduled delivery: send 1st message after 50 seconds
