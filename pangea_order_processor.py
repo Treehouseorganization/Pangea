@@ -1174,6 +1174,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                'restaurant': session.get('restaurant'),
                'pickup_location': session.get('pickup_location'),  # FIX: Add pickup_location
                'delivery_location': session.get('delivery_location'),  # FIX: Add delivery_location
+               'location': session.get('delivery_location') or session.get('location', 'Richard J Daley Library'),  # ADDED: For uber integration
                'delivery_time': session.get('delivery_time', 'now'),
                'members': [member['user_phone'] for member in members_who_paid],
                'group_id': group_id,
@@ -1203,10 +1204,21 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                # Scheduled delivery - delay delivery trigger for ANY group size
                print(f"⏰ Scheduled delivery for {delivery_time} - scheduling delivery trigger")
                print(f"   Group size: {group_size}")
+               
+               # ADDED: Clear awaiting_match flags when scheduling delivery
+               for member in members_who_paid:
+                   member_session = member['session_data']
+                   member_session['awaiting_match'] = False  # Stop waiting for more members
+                   member_session['delivery_scheduled'] = True
+                   member_session['scheduled_trigger_time'] = delivery_time
+                   update_order_session(member['user_phone'], member_session)
+                   print(f"✅ Cleared awaiting_match for {member['user_phone']} - delivery scheduled")
+               
                schedule_solo_delivery_trigger(group_data)
                
                # Send confirmation message to users with 50-second delay
                def send_delayed_confirmation():
+                   import time
                    time.sleep(50)  # 50-second delay
                    from pangea_main import send_friendly_message
                    for member in members_who_paid:
@@ -1215,17 +1227,11 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                        print(f"✅ Sent delayed payment confirmation to {user_phone_member}")
                
                # Start delayed notification thread
+               import threading
                thread = threading.Thread(target=send_delayed_confirmation)
                thread.daemon = True
                thread.start()
                print(f"⏰ Scheduled 50s delayed payment confirmation for all {len(members_who_paid)} members")
-               
-               # Update session to mark as payment completed but delivery scheduled
-               for member in members_who_paid:
-                   member_session = member['session_data']
-                   member_session['delivery_scheduled'] = True
-                   member_session['scheduled_trigger_time'] = delivery_time
-                   update_order_session(member['user_phone'], member_session)
                
                return  # Don't trigger delivery immediately
            
