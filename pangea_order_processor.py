@@ -1062,6 +1062,16 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                                    member_session['awaiting_match'] = False
                                    update_order_session(member_phone, member_session)
                                    print(f"✅ Cleared awaiting_match for {member_phone}")
+               
+               # Also trigger if delivery time has already passed
+               elif time_until_delivery <= 0:
+                   close_to_delivery_time = True
+                   print(f"⏰ Delivery time has passed ({abs(time_until_delivery):.1f} minutes ago) - triggering immediately")
+               
+               # Log waiting status for 2-person groups
+               elif group_size == 2 and time_until_delivery > 10:
+                   print(f"⏳ 2-person group waiting for 3rd member - {time_until_delivery:.1f} minutes until 10-min cutoff")
+                   
        except Exception as e:
            print(f"⚠️ Error checking delivery timing: {e}")
    
