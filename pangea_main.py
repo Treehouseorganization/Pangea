@@ -327,10 +327,13 @@ def find_potential_matches_contextual(
                 print(f"   ❌ Location mismatch")
                 continue
                 
-            # Check if user is already in this group
+            # Check if user is already in this group (allow fresh requests to override)
             if requesting_user in group_members:
-                print(f"   ❌ User already in group")
-                continue
+                if user_context.search_reason == 'new_request':
+                    print(f"   ✅ User already in group but fresh request - allowing match")
+                else:
+                    print(f"   ❌ User already in group")
+                    continue
             
             # Check time compatibility
             time_compatibility = calculate_time_compatibility(time_window, group_time)
