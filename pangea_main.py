@@ -3614,13 +3614,46 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
         new_users = []
         
         # Check which users are already in solo orders (have active order sessions)
+        # ONLY include users who have FRESH/RECENT sessions to prevent lingering old sessions
         for phone in sorted_phones:
             try:
                 session_ref = db.collection('order_sessions').document(phone)
                 session_doc = session_ref.get()
-                if session_doc.exists and session_doc.to_dict().get('group_size') == 1:
-                    solo_order_users.append(phone)
-                    print(f"🔄 Found existing solo order user: {phone} - will silently group")
+                
+                if session_doc.exists:
+                    session_data = session_doc.to_dict()
+                    
+                    # Check if this is a valid solo order that should be grouped
+                    is_solo_order = session_data.get('group_size') == 1
+                    is_recent = True  # We'll add time validation here
+                    
+                    # Additional validation: check if session is recent (within last hour)
+                    try:
+                        from datetime import datetime, timedelta
+                        last_updated = session_data.get('last_updated')
+                        if last_updated:
+                            # Convert Firestore timestamp to datetime if needed
+                            if hasattr(last_updated, 'seconds'):
+                                last_updated = datetime.fromtimestamp(last_updated.seconds)
+                            
+                            time_since_update = datetime.now() - last_updated
+                            is_recent = time_since_update < timedelta(hours=1)
+                            
+                            if not is_recent:
+                                print(f"⏰ Skipping stale session for {phone} (last updated: {time_since_update} ago)")
+                    except Exception as time_e:
+                        print(f"⚠️ Could not validate session age for {phone}: {time_e}")
+                        # Default to recent if we can't check time
+                        is_recent = True
+                    
+                    # Only add to solo_order_users if it's a valid, recent solo order
+                    if is_solo_order and is_recent:
+                        solo_order_users.append(phone)
+                        print(f"🔄 Found valid recent solo order user: {phone} - will silently group")
+                    else:
+                        new_users.append(phone)
+                        if is_solo_order and not is_recent:
+                            print(f"🗑️ Ignoring stale solo order for {phone}")
                 else:
                     new_users.append(phone)
             except Exception as e:
@@ -3636,6 +3669,16 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                 print(f"📱 Sent invitation SMS to {phone}")
             else:
                 print(f"❌ Failed to send SMS to {phone}")
+        
+        # ENFORCE 2-PERSON GROUP LIMIT: Ensure total members never exceeds 2
+        total_group_members = len(new_users) + len(solo_order_users)
+        if total_group_members > 2:
+            print(f"❌ ERROR: Group would have {total_group_members} members (new: {len(new_users)}, solo: {len(solo_order_users)})")
+            print(f"   New users: {new_users}")
+            print(f"   Solo users: {solo_order_users}")
+            print(f"   Groups are limited to 2 people maximum. Rejecting group formation.")
+            state['group_formed'] = False
+            return state
         
         # Silently add solo order users to the group without invitations
         for phone in solo_order_users:

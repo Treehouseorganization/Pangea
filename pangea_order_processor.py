@@ -925,6 +925,53 @@ I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
         print(f"⏰ Scheduled 50s delayed triggered notification for {user_phone}")
 
 
+def schedule_immediate_delayed_delivery(group_data: Dict, delay_seconds: int):
+    """
+    Schedule delivery to trigger after a short delay (for silently matched groups)
+    """
+    def trigger_delivery_after_delay():
+        print(f"⏰ Waiting {delay_seconds} seconds before triggering silently matched delivery...")
+        time.sleep(delay_seconds)
+        
+        # Trigger the delivery immediately after delay
+        print(f"🚚 Triggering silently matched delivery after {delay_seconds}s delay")
+        try:
+            from pangea_uber_direct import create_group_delivery
+            delivery_result = create_group_delivery(group_data)
+            
+            if delivery_result.get('success'):
+                print(f"✅ Silently matched delivery created: {delivery_result.get('delivery_id')}")
+                
+                # Update sessions for ALL group members to mark delivery as triggered
+                group_id = group_data.get('group_id')
+                all_members = group_data.get('members', [])
+                
+                for member_phone in all_members:
+                    session = get_user_order_session(member_phone)
+                    if session:
+                        session['delivery_triggered'] = True
+                        session['delivery_id'] = delivery_result.get('delivery_id')
+                        session['tracking_url'] = delivery_result.get('tracking_url')
+                        session['delivery_scheduled'] = False  # Clear scheduled flag
+                        update_order_session(member_phone, session)
+                        print(f"✅ Updated session for silently matched member {member_phone}")
+                
+                # Send notifications
+                schedule_delayed_triggered_notifications(group_data, delivery_result)
+                
+            else:
+                print(f"❌ Silently matched delivery creation failed: {delivery_result}")
+                
+        except Exception as e:
+            print(f"❌ Silently matched delivery trigger error: {e}")
+    
+    # Start background thread to wait and trigger delivery
+    thread = threading.Thread(target=trigger_delivery_after_delay)
+    thread.daemon = True
+    thread.start()
+    print(f"🤝 Silently matched delivery trigger scheduled for {delay_seconds} seconds from now")
+
+
 def schedule_solo_delivery_trigger(group_data: Dict):
     """
     Schedule solo order delivery to be triggered at the specified time
@@ -1136,10 +1183,19 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            any_delivery_triggered = any(member['session_data'].get('delivery_triggered', False) for member in members_who_paid)
            
            if is_scheduled_delivery and not any_delivery_triggered:
-               # Scheduled delivery - delay delivery trigger for ANY group size
-               print(f"⏰ Scheduled delivery for {delivery_time} - scheduling delivery trigger")
-               print(f"   Group size: {group_size}")
-               schedule_solo_delivery_trigger(group_data)
+               # Check if this is a silently matched group (original solo + new user)
+               has_silent_match = any(member['session_data'].get('silent_match', False) for member in members_who_paid)
+               
+               if has_silent_match and group_size == 2:
+                   # Silently matched group - trigger delivery 50 seconds from now
+                   print(f"🤝 Silently matched scheduled delivery - triggering in 50 seconds")
+                   print(f"   Original scheduled time was: {delivery_time}")
+                   schedule_immediate_delayed_delivery(group_data, 50)  # 50 second delay
+               else:
+                   # Original solo order - trigger at scheduled time
+                   print(f"⏰ Solo scheduled delivery for {delivery_time} - scheduling delivery trigger")
+                   print(f"   Group size: {group_size}")
+                   schedule_solo_delivery_trigger(group_data)
                
                # Send confirmation message to users with 50-second delay
                def send_delayed_confirmation():
