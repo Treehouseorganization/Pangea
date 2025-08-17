@@ -27,7 +27,7 @@ from pangea_locations import (
     AVAILABLE_DROPOFF_LOCATIONS,
 )
 
-MAX_GROUP_SIZE = 3 
+MAX_GROUP_SIZE = 2 
 
 def normalize_location(location: str) -> str:
     """Normalize location strings for consistent matching"""
@@ -3843,9 +3843,23 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             'group_size': 2
         }
         
-        # Store group in Firebase
+        # Store group in Firebase - ensure clean creation by explicitly deleting any existing data first
         print(f"📝 Storing group {group_id} in Firebase...")
-        db.collection('active_groups').document(group_id).set(group_data)
+        group_doc_ref = db.collection('active_groups').document(group_id)
+        
+        # Clean up any existing group data first to prevent member list contamination
+        try:
+            existing_group = group_doc_ref.get()
+            if existing_group.exists:
+                existing_data = existing_group.to_dict()
+                existing_members = existing_data.get('members', [])
+                print(f"🧹 Found existing group {group_id} with members {existing_members} - cleaning up before recreation")
+                group_doc_ref.delete()
+        except Exception as e:
+            print(f"⚠️ Error during group cleanup: {e}")
+        
+        # Now create the fresh group
+        group_doc_ref.set(group_data)
         print(f"✅ Created group {group_id} in Firebase with solo user silently added")
         
         # Groups are limited to 2 people maximum
