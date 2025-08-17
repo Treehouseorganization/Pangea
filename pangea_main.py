@@ -31,7 +31,29 @@ MAX_GROUP_SIZE = 2
 
 def normalize_location(location: str) -> str:
     """Normalize location strings for consistent matching"""
-    return location.lower().replace('the ', '').strip()
+    normalized = location.lower().replace('the ', '').strip()
+    
+    # Handle common location variations
+    location_mappings = {
+        'library': 'library',
+        'library plaza': 'library',
+        'lib': 'library',
+        'student union': 'student union',
+        'union': 'student union',
+        'campus center': 'campus center',
+        'center': 'campus center'
+    }
+    
+    # Check for exact matches first
+    if normalized in location_mappings:
+        return location_mappings[normalized]
+    
+    # Check for partial matches
+    for key, value in location_mappings.items():
+        if key in normalized or normalized in key:
+            return value
+    
+    return normalized
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
@@ -300,8 +322,8 @@ def find_potential_matches_contextual(
             print(f"   Time: '{time_window}' vs '{group_time}'")
             print(f"   Members: {group_members}")
             
-            # Check if locations match
-            if group_location != normalize_location(location):
+            # Check if locations match (normalize both sides)
+            if normalize_location(group_location) != normalize_location(location):
                 print(f"   ❌ Location mismatch")
                 continue
                 
