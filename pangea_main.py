@@ -3716,24 +3716,7 @@ def create_group_and_send_invitations(state: PangeaState, match: Dict, group_id:
                 except Exception as e:
                     print(f"⚠️ Failed to set awaiting_match flag for {phone}: {e}")
             
-            # Make 2-person group discoverable for 3rd person
-            try:
-                representative_user = sorted_phones[0]  # Use first user as representative
-                active_order_data = {
-                    'user_phone': representative_user,
-                    'restaurant': group_data['restaurant'],
-                    'location': group_data['delivery_location'],
-                    'time_requested': str(group_data['delivery_time']),
-                    'status': 'looking_for_group',
-                    'created_at': datetime.now(),
-                    'group_id': group_id,
-                    'group_size': 2,
-                    'flexibility_score': 0.8
-                }
-                db.collection('active_orders').add(active_order_data)
-                print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
-            except Exception as e:
-                print(f"❌ Failed to make 2-person group discoverable: {e}")
+            # Groups are limited to 2 people maximum
         
         print(f"🎉 Group {group_id} created and invitations sent to both users")
         
@@ -3822,26 +3805,7 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         db.collection('active_groups').document(group_id).set(group_data)
         print(f"✅ Created group {group_id} in Firebase with solo user silently added")
         
-        # Make 2-person group discoverable for 3rd person
-        try:
-            active_order_data = {
-                'user_phone': new_user_phone,  # Representative user
-                'restaurant': restaurant,
-                'location': normalize_location(delivery_location),  # Use normalized location
-                'time_requested': str(delivery_time),
-                'status': 'looking_for_group',
-                'created_at': datetime.now(),
-                'group_id': group_id,
-                'group_size': 2,
-                'flexibility_score': 0.8,
-                'current_members': sorted_phones,  # Add this field
-                'existing_group': True  # Mark as existing group
-            }
-            db.collection('active_orders').add(active_order_data)
-            print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
-            print(f"   Restaurant: {restaurant}, Location: {normalize_location(delivery_location)}, Time: {delivery_time}")
-        except Exception as e:
-            print(f"❌ Failed to make group discoverable: {e}")
+        # Groups are limited to 2 people maximum
         
         # Send invitation ONLY to the new user
         invitation_message = f"🍕 Perfect match found! Someone nearby wants {restaurant} delivered to {delivery_location} at {delivery_time}. Want to split the order and save on delivery? Reply YES to join or NO to pass."
@@ -3945,118 +3909,7 @@ def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     except Exception as e:
         print(f"❌ Error checking active order session: {e}")
 
-    # 🆕 NEW: Check if any matches are existing 2-person groups
-    for match in matches:
-        if match.get('match_type') == 'existing_group' and match.get('group_size') == 2:
-            # This is a 2-person group, join it instead of creating new group
-            existing_group_id = match.get('group_id')
-            print(f"👥 Found existing 2-person group {existing_group_id} - joining as 3rd person")
-            
-            try:
-                # Get existing group data
-                group_doc = db.collection('active_groups').document(existing_group_id).get()
-                if group_doc.exists:
-                    group_data = group_doc.to_dict()
-                    existing_members = group_data.get('members', [])
-                    restaurant = group_data.get('restaurant')
-                    delivery_time = group_data.get('delivery_time')
-                    
-                    # Add user to existing group
-                    updated_members = existing_members + [state['user_phone']]
-                    
-                    # Update group to 3 people
-                    group_doc.reference.update({
-                        'members': updated_members,
-                        'group_size': 3,
-                        'status': 'active',
-                        'last_updated': datetime.now()
-                    })
-                    
-                    # Start order process for new user
-                    from pangea_order_processor import start_order_process, get_payment_amount
-                    
-                    order_session = start_order_process(
-                        user_phone=state['user_phone'],
-                        group_id=existing_group_id,
-                        restaurant=restaurant,
-                        group_size=3,
-                        delivery_time=delivery_time
-                    )
-                    
-                    payment_amount = get_payment_amount(3)
-                    
-                    # Send welcome message to new user only
-                    welcome_message = f"""🎉 Perfect! You joined an existing {restaurant} group!
-
-You're now in a 3-person group (maximum size) which means the best delivery coordination and lowest cost per person!
-
-**Quick steps:**
-1. Order directly from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered
-
-Your share: {payment_amount} 💳
-
-The other 2 people are also placing their orders!"""
-                    
-                    send_friendly_message(state['user_phone'], welcome_message, message_type="joined_existing_group")
-                    
-                    # Remove group from discovery (3 people = full)
-                    try:
-                        discovery_orders = db.collection('active_orders')\
-                                           .where('group_id', '==', existing_group_id)\
-                                           .get()
-                        for discovery_order in discovery_orders:
-                            discovery_order.reference.delete()
-                        print(f"✅ Removed 3-person group {existing_group_id} from discovery")
-                    except Exception as e:
-                        print(f"❌ Failed to remove group from discovery: {e}")
-                    
-                    # Update all member sessions to reflect new group size and remove awaiting_match flag
-                    for member_phone in updated_members:
-                        try:
-                            from pangea_order_processor import get_user_order_session, update_order_session
-                            member_session = get_user_order_session(member_phone)
-                            if member_session:
-                                member_session['group_size'] = 3
-                                member_session['awaiting_match'] = False  # No longer waiting
-                                update_order_session(member_phone, member_session)
-                        except Exception as e:
-                            print(f"⚠️ Failed to update session for {member_phone}: {e}")
-                    
-                    # Check if all 3 members have already paid - if so, trigger delivery immediately
-                    try:
-                        from pangea_order_processor import check_group_payment_status
-                        all_members_paid = True
-                        for member_phone in updated_members:
-                            member_session = get_user_order_session(member_phone)
-                            if not member_session or not member_session.get('payment_completed'):
-                                all_members_paid = False
-                                break
-                        
-                        if all_members_paid:
-                            print(f"🚀 All 3 members already paid - triggering delivery immediately for group {existing_group_id}")
-                            from pangea_order_processor import trigger_group_delivery
-                            trigger_group_delivery(existing_group_id)
-                        else:
-                            print(f"💳 Waiting for remaining payments from group {existing_group_id}")
-                    except Exception as e:
-                        print(f"⚠️ Failed to check payment status for auto-delivery: {e}")
-                    
-                    state['group_formed'] = True
-                    state['final_group'] = {
-                        'group_id': existing_group_id,
-                        'members': updated_members,
-                        'restaurant': restaurant,
-                        'size': 3,
-                        'type': 'joined_existing_group'
-                    }
-                    
-                    print(f"✅ Successfully joined existing group {existing_group_id} as 3rd person")
-                    return state
-                    
-            except Exception as e:
-                print(f"❌ Failed to join existing group: {e}")
-                # Continue to normal matching if joining existing group fails
+    # Groups are limited to 2 people maximum - no 3rd person joining allowed
 
     # ---------------------------
     # PERFECT MATCH HANDLING
@@ -4294,23 +4147,7 @@ The other person already placed their order, so this will be coordinated togethe
                     'real_group_size': 2
                 })
                 
-                # 🆕 NEW: Make 2-person group discoverable for 3rd person
-                try:
-                    active_order_data = {
-                        'user_phone': group_members[0],  # Representative user
-                        'restaurant': restaurant,
-                        'location': group_data.get('delivery_location') or group_data.get('location'),
-                        'time_requested': str(delivery_time),
-                        'status': 'looking_for_group',
-                        'created_at': datetime.now(),
-                        'group_id': group_id,
-                        'group_size': 2,  # Mark as existing 2-person group
-                        'flexibility_score': 0.8
-                    }
-                    db.collection('active_orders').add(active_order_data)
-                    print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
-                except Exception as e:
-                    print(f"❌ Failed to make group discoverable: {e}")
+                # Groups are limited to 2 people maximum
                 
                 return state
             
@@ -4366,24 +4203,7 @@ Let me know if you need any help!"""
                 group_doc.reference.update({'status': 'active'})
                 print(f"✅ All members responded to perfect match group {group_id}")
                 
-                # 🆕 NEW: Make 2-person groups discoverable for 3rd person
-                if group_size == 2:
-                    try:
-                        active_order_data = {
-                            'user_phone': all_members[0],  # Representative user
-                            'restaurant': restaurant,
-                            'location': group_data.get('delivery_location') or group_data.get('location'),
-                            'time_requested': str(delivery_time),
-                            'status': 'looking_for_group',
-                            'created_at': datetime.now(),
-                            'group_id': group_id,
-                            'group_size': 2,  # Mark as existing 2-person group
-                            'flexibility_score': 0.8
-                        }
-                        db.collection('active_orders').add(active_order_data)
-                        print(f"✅ Made 2-person group {group_id} discoverable for 3rd person")
-                    except Exception as e:
-                        print(f"❌ Failed to make group discoverable: {e}")
+                # Groups are limited to 2 people maximum
             
             state['messages'].append(AIMessage(content="Perfect match group YES response processed with fake match handling"))
             return state
@@ -4497,9 +4317,10 @@ def handle_proactive_group_yes_node(state: PangeaState) -> PangeaState:
         restaurant = proactive_data.get('restaurant', '')
         delivery_time = proactive_data.get('time', 'now')
         
-        # Calculate new group size (this would be more sophisticated in real implementation)
-        # For now, assume group size is 3 (original + this user)
-        new_group_size = 3
+        # Groups are limited to 2 people maximum - no 3rd person joining allowed
+        # This function should not be called since we don't allow 3-person groups
+        print(f"❌ ERROR: Attempted to create 3-person group - groups are limited to 2 people maximum")
+        new_group_size = 2
         
         # Start order process directly - skip negotiation since group is already forming
         print(f"🚀 User {user_phone} accepted proactive invitation for {restaurant} at {delivery_time}")

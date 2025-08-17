@@ -91,9 +91,9 @@ class OrderState(TypedDict):
     order_description: Optional[str]
 
 def get_payment_link(size: int) -> str:
-    """Return a Stripe URL for the given group size (1-3)."""
-    if size not in PAYMENT_LINKS:
-        raise ValueError("Group size exceeds 3.")
+    """Return a Stripe URL for the given group size (1-2)."""
+    if size not in PAYMENT_LINKS or size > 2:
+        raise ValueError("Group size exceeds 2.")
     return random.choice(PAYMENT_LINKS[size])
 
 def get_payment_amount(size: int) -> str:
@@ -1101,8 +1101,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        
        print(f"✅ {len(members_who_paid)} members have paid")
        
-       # ✅ Trigger delivery if ALL members have paid
-       if len(members_who_paid) == total_members and len(members_who_paid) >= 1:
+       # ✅ Trigger delivery if ALL members have paid AND group size is exactly 2 (enforce 2-person limit)
+       if len(members_who_paid) == total_members and len(members_who_paid) == 2:
            print(f"🚚 ALL GROUP MEMBERS PAID! Triggering delivery for group {group_id}")
            
            # Build group data with individual order details
@@ -1199,6 +1199,9 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            except Exception as e:
                print(f"❌ Delivery creation error: {e}")
        
+       elif len(members_who_paid) > 2:
+           print(f"❌ ERROR: Group has {len(members_who_paid)} members - groups are limited to 2 people maximum")
+           print(f"❌ Delivery NOT triggered for oversized group {group_id}")
        else:
            missing_count = total_members - len(members_who_paid)
            print(f"⏳ Waiting for {missing_count} more members to pay")
