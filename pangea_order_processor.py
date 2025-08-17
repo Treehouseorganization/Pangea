@@ -1056,29 +1056,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        # Backup protection: single-person scheduled order (but not if close to delivery time)
        (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time) or
        
-       # NEW: 2-person scheduled groups waiting for potential 3rd member (but not if close to delivery time)
-       (group_size == 2 and session.get('is_scheduled') and 
-        session.get('awaiting_match') and delivery_time != 'now' and 
-        not session.get('delivery_triggered') and not close_to_delivery_time)
    )
-   
-   # ENHANCED GROUP-LEVEL CHECK: If individual check passes, also verify all group members
-   if not should_wait_for_matches and group_size == 2:
-       group_id = session.get('group_id')
-       if group_id:
-           try:
-               # Check if ANY group member is still awaiting matches
-               group_sessions_docs = db.collection('order_sessions').where('group_id', '==', group_id).get()
-               for member_doc in group_sessions_docs:
-                   member_session = member_doc.to_dict()
-                   if (member_session.get('awaiting_match') and 
-                       member_session.get('is_scheduled') and 
-                       delivery_time != 'now' and not close_to_delivery_time):
-                       should_wait_for_matches = True
-                       print(f"🛡️ Group-level protection: Member {member_session.get('user_phone')} still awaiting matches")
-                       break
-           except Exception as e:
-               print(f"⚠️ Error checking group-level protection: {e}")
    
    if should_wait_for_matches:
        print(f"⏳ Group {group_size} awaiting {'match' if group_size == 1 else 'third member'} - NOT triggering delivery")
