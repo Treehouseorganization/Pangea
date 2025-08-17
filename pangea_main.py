@@ -27,7 +27,7 @@ from pangea_locations import (
     AVAILABLE_DROPOFF_LOCATIONS,
 )
 
-MAX_GROUP_SIZE = 3 
+MAX_GROUP_SIZE = 2 
 
 def normalize_location(location: str) -> str:
     """Normalize location strings for consistent matching"""
@@ -867,16 +867,26 @@ def check_specific_in_range(specific_time, range_time):
     range_start = range_time['start_hour'] * 60 + range_time['start_min']
     range_end = range_time['end_hour'] * 60 + range_time['end_min']
     
-    # Handle overnight ranges
+    # Handle overnight ranges (e.g., 11:30pm-12:00am)
     if range_end < range_start:
-        range_end += 24 * 60
-    
-    if range_start <= spec_minutes <= range_end:
-        return 1.0  # Perfect match - specific time is within range
-    
-    # Check if close (within 30 minutes of range)
-    if (range_start - 30 <= spec_minutes <= range_start) or (range_end <= spec_minutes <= range_end + 30):
-        return 0.7
+        # Check if specific time falls in the "next day" portion (0am-end_time)
+        if spec_minutes <= range_end:
+            return 1.0  # Perfect match - specific time is in the next day portion
+        # Check if specific time falls in the "same day" portion (start_time-11:59pm)
+        if spec_minutes >= range_start:
+            return 1.0  # Perfect match - specific time is in the same day portion
+        
+        # Check if close to either end of the overnight range
+        if (range_start - 30 <= spec_minutes) or (spec_minutes <= range_end + 30):
+            return 0.7
+    else:
+        # Normal range (same day)
+        if range_start <= spec_minutes <= range_end:
+            return 1.0  # Perfect match - specific time is within range
+        
+        # Check if close (within 30 minutes of range)
+        if (range_start - 30 <= spec_minutes <= range_start) or (range_end <= spec_minutes <= range_end + 30):
+            return 0.7
     
     return 0.0
 

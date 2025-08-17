@@ -29,7 +29,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from flask import Flask, request
 
-MAX_GROUP_SIZE = 3 
+MAX_GROUP_SIZE = 2 
 
 load_dotenv()
 
@@ -1049,6 +1049,12 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        except Exception as e:
            print(f"⚠️ Error checking delivery timing: {e}")
    
+   # SOLO ORDER FIX: Clear awaiting_match for solo users who have paid
+   if group_size == 1 and session.get('payment_requested_at') and session.get('awaiting_match'):
+       session['awaiting_match'] = False
+       update_order_session(user_phone, session)
+       print(f"✅ Cleared awaiting_match for solo user {user_phone} who has paid")
+   
    # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
    should_wait_for_matches = (
        # Original protection flags
@@ -1190,39 +1196,86 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                
                return  # Don't trigger delivery immediately
            
-           # Import and trigger delivery IMMEDIATELY (for "now" orders only)
-           try:
-               from pangea_uber_direct import create_group_delivery
-               delivery_result = create_group_delivery(group_data)
+           # Check if this is a solo immediate order that needs 50-second delay
+           delivery_time = group_data.get('delivery_time', 'now')
+           group_size = group_data.get('group_size', len(members_who_paid))
+           
+           if delivery_time == 'now' and group_size == 1:
+               # Solo immediate order - add 50-second delay before delivery trigger
+               print(f"⏰ Solo immediate order - adding 50s delay before delivery trigger")
                
-               if delivery_result.get('success'):
-                   print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
+               def trigger_delayed_solo_delivery():
+                   time.sleep(50)  # 50-second delay
                    
-                   # Check delivery type and send appropriate 50-second delayed notification
-                   delivery_time = group_data.get('delivery_time', 'now')
-                   if delivery_time == 'now':
-                       # Immediate delivery: send 2nd message after 50 seconds
-                       schedule_delayed_delivery_notifications(group_data, delivery_result)
-                   else:
-                       # Scheduled delivery: send 1st message after 50 seconds
-                       schedule_delayed_triggered_notifications(group_data, delivery_result)
-                   
-                   # Update all sessions to mark delivery as triggered
-                   for member in members_who_paid:
-                       member_session = member['session_data']
-                       member_session['delivery_triggered'] = True
-                       member_session['delivery_id'] = delivery_result.get('delivery_id')
-                       member_session['tracking_url'] = delivery_result.get('tracking_url')
+                   try:
+                       from pangea_uber_direct import create_group_delivery
+                       delivery_result = create_group_delivery(group_data)
                        
-                       update_order_session(member['user_phone'], member_session)
+                       if delivery_result.get('success'):
+                           print(f"✅ Delayed solo delivery created: {delivery_result.get('delivery_id')}")
+                           
+                           # Send delivery notifications after trigger
+                           schedule_delayed_delivery_notifications(group_data, delivery_result)
+                           
+                           # Update session to mark delivery as triggered
+                           for member in members_who_paid:
+                               member_session = member['session_data']
+                               member_session['delivery_triggered'] = True
+                               member_session['delivery_id'] = delivery_result.get('delivery_id')
+                               member_session['tracking_url'] = delivery_result.get('tracking_url')
+                               
+                               update_order_session(member['user_phone'], member_session)
+                       else:
+                           print(f"❌ Delayed solo delivery creation failed: {delivery_result}")
+                           
+                   except Exception as e:
+                       print(f"❌ Delayed solo delivery creation error: {e}")
                
-               else:
-                   print(f"❌ Delivery creation failed: {delivery_result}")
+               # Start delayed delivery thread
+               thread = threading.Thread(target=trigger_delayed_solo_delivery)
+               thread.daemon = True
+               thread.start()
+               
+               # Send payment confirmation to user
+               from pangea_main import send_friendly_message
+               for member in members_who_paid:
+                   user_phone_member = member['user_phone']
+                   send_friendly_message(user_phone_member, f"Perfect! Your delivery will be triggered in 50 seconds. 🚀", message_type="solo_immediate_payment_confirmation")
+                   print(f"✅ Sent solo immediate payment confirmation to {user_phone_member}")
+               
+           else:
+               # Group immediate order or other cases - trigger immediately
+               try:
+                   from pangea_uber_direct import create_group_delivery
+                   delivery_result = create_group_delivery(group_data)
                    
-           except ImportError:
-               print("❌ Uber Direct integration not available")
-           except Exception as e:
-               print(f"❌ Delivery creation error: {e}")
+                   if delivery_result.get('success'):
+                       print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
+                       
+                       # Check delivery type and send appropriate 50-second delayed notification
+                       if delivery_time == 'now':
+                           # Immediate delivery: send 2nd message after 50 seconds
+                           schedule_delayed_delivery_notifications(group_data, delivery_result)
+                       else:
+                           # Scheduled delivery: send 1st message after 50 seconds
+                           schedule_delayed_triggered_notifications(group_data, delivery_result)
+                       
+                       # Update all sessions to mark delivery as triggered
+                       for member in members_who_paid:
+                           member_session = member['session_data']
+                           member_session['delivery_triggered'] = True
+                           member_session['delivery_id'] = delivery_result.get('delivery_id')
+                           member_session['tracking_url'] = delivery_result.get('tracking_url')
+                           
+                           update_order_session(member['user_phone'], member_session)
+                   
+                   else:
+                       print(f"❌ Delivery creation failed: {delivery_result}")
+                       
+               except ImportError:
+                   print("❌ Uber Direct integration not available")
+               except Exception as e:
+                   print(f"❌ Delivery creation error: {e}")
        
        else:
            missing_count = total_members - len(members_who_paid)
