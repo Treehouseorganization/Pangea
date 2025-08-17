@@ -1148,7 +1148,35 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        
        print(f"✅ {len(members_who_paid)} members have paid")
        
-       # ✅ Trigger delivery if ALL members have paid AND group size is exactly 2 (enforce 2-person limit)
+       # ✅ STRICT 2-PERSON ENFORCEMENT: Auto-remove extra users
+       if total_members > 2:
+           print(f"🔧 AUTO-FIX: Group {group_id} has {total_members} members but limit is 2")
+           print(f"   Members found: {[session_data.get('user_phone') for session_data in group_sessions]}")
+           
+           # Keep only the first 2 members and remove the rest
+           valid_sessions = group_sessions[:2]
+           extra_sessions = group_sessions[2:]
+           
+           for extra_session in extra_sessions:
+               extra_phone = extra_session.get('user_phone')
+               print(f"🗑️ Removing extra user {extra_phone} from group {group_id}")
+               
+               # Clear their group_id to remove them from this group
+               try:
+                   extra_session['group_id'] = None
+                   extra_session['group_size'] = 1
+                   extra_session['awaiting_match'] = False
+                   update_order_session(extra_phone, extra_session)
+                   print(f"✅ Cleared group assignment for {extra_phone}")
+               except Exception as e:
+                   print(f"❌ Failed to clear group for {extra_phone}: {e}")
+           
+           # Update group_sessions to only include valid members
+           group_sessions = valid_sessions
+           total_members = len(group_sessions)
+           print(f"✅ Group {group_id} now has {total_members} members (auto-fixed)")
+       
+       # ✅ Trigger delivery if ALL members have paid AND group size is exactly 2
        if len(members_who_paid) == total_members and len(members_who_paid) == 2:
            print(f"🚚 ALL GROUP MEMBERS PAID! Triggering delivery for group {group_id}")
            
