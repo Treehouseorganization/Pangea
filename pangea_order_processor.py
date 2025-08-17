@@ -1054,7 +1054,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
         session.get('awaiting_match')) or
        
        # Backup protection: single-person scheduled order (but not if close to delivery time)
-       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time) or
+       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered') and not close_to_delivery_time)
        
    )
    
