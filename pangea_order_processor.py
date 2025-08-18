@@ -813,24 +813,19 @@ def clear_old_order_session(phone_number: str):
 
 
 def schedule_delayed_delivery_notifications(group_data: Dict, delivery_result: Dict):
-    """
-    Schedule 50-second delayed delivery notifications for each user individually
-    """
+    """Schedule 50-second delayed delivery notifications for each user"""
+    
     def send_delayed_notification(user_phone: str, delivery_info: Dict):
         # Wait 50 seconds
         time.sleep(50)
         
         restaurant = group_data.get('restaurant', 'your restaurant')
-        
-        # FIX: Get the actual dropoff location name and address
         dropoff_location_name = group_data.get('location', 'campus')
         
-        # Get the actual dropoff address from the DROPOFFS dictionary
         try:
             from pangea_locations import DROPOFFS
             dropoff_address = DROPOFFS.get(dropoff_location_name, {}).get('address', dropoff_location_name)
         except ImportError:
-            # Fallback if import fails
             dropoff_address = dropoff_location_name
         
         tracking_url = delivery_info.get('tracking_url', '')
@@ -856,73 +851,9 @@ Your driver will contact you when they arrive! 🎉"""
             target=send_delayed_notification,
             args=(user_phone, delivery_result)
         )
-        thread.daemon = True  # Don't block program exit
+        thread.daemon = True
         thread.start()
         print(f"⏰ Scheduled 50s delayed notification for {user_phone}")
-
-
-
-def schedule_delayed_triggered_notifications(group_data: Dict, delivery_result: Dict):
-    """
-    Schedule 50-second delayed DELIVERY TRIGGERED notifications for scheduled deliveries
-    """
-    def send_delayed_triggered_notification(user_phone: str, group_info: Dict, delivery_info: Dict):
-        # Wait 50 seconds
-        time.sleep(50)
-        
-        restaurant = group_info.get('restaurant')
-        
-        # FIX: Get the actual dropoff location name and address
-        dropoff_location_name = group_info.get('delivery_location') or group_info.get('location')
-        
-        # Get the actual dropoff address from the DROPOFFS dictionary
-        try:
-            from pangea_locations import DROPOFFS
-            dropoff_address = DROPOFFS.get(dropoff_location_name, {}).get('address', dropoff_location_name)
-        except ImportError:
-            # Fallback if import fails
-            dropoff_address = dropoff_location_name
-        
-        # Get restaurant pickup address
-        try:
-            from pangea_locations import RESTAURANTS
-            pickup_address = restaurant  # FIX: Just use restaurant name instead of full address
-        except ImportError:
-            # Fallback if import fails
-            pickup_address = restaurant
-        
-        tracking_url = delivery_info.get('tracking_url', '')
-        delivery_id = delivery_info.get('delivery_id', '')
-        
-        message = f"""🚚 DELIVERY TRIGGERED! 🎉
-
-Your {restaurant} group order is now being processed!
-
-📍 Pickup: {pickup_address}
-📍 Dropoff: {dropoff_address}
-🆔 Delivery ID: {delivery_id[:8]}...
-
-The driver will pick up all individual orders and deliver them to {dropoff_address}. 
-
-📱 Track delivery: {tracking_url}
-
-I'll keep you updated as the driver picks up and delivers your orders! 🍕"""
-        
-        try:
-            send_friendly_message(user_phone, message, message_type="delivery_triggered")
-            print(f"✅ Sent delayed triggered notification to {user_phone}")
-        except Exception as e:
-            print(f"❌ Failed to send delayed triggered notification to {user_phone}: {e}")
-    
-    # Start background thread for each user
-    for user_phone in group_data.get('members', []):
-        thread = threading.Thread(
-            target=send_delayed_triggered_notification,
-            args=(user_phone, group_data, delivery_result)
-        )
-        thread.daemon = True  # Don't block program exit
-        thread.start()
-        print(f"⏰ Scheduled 50s delayed triggered notification for {user_phone}")
 
 
 def schedule_solo_delivery_trigger(group_data: Dict):
@@ -1065,9 +996,10 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            # Build group data with individual order details
            group_data = {
                'restaurant': session.get('restaurant'),
-               'pickup_location': session.get('pickup_location'),  # FIX: Add pickup_location
-               'delivery_location': session.get('delivery_location'),  # FIX: Add delivery_location
+               'pickup_location': session.get('pickup_location'),
+               'delivery_location': session.get('delivery_location'),
                'delivery_time': session.get('delivery_time', 'now'),
+               'location': session.get('delivery_location'),  # Added for compatibility
                'members': [member['user_phone'] for member in members_who_paid],
                'group_id': group_id,
                'group_size': session.get('group_size', len(members_who_paid)),
@@ -1127,14 +1059,8 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                if delivery_result.get('success'):
                    print(f"✅ Delivery created: {delivery_result.get('delivery_id')}")
                    
-                   # Check delivery type and send appropriate 50-second delayed notification
-                   delivery_time = group_data.get('delivery_time', 'now')
-                   if delivery_time == 'now':
-                       # Immediate delivery: send 2nd message after 50 seconds
-                       schedule_delayed_delivery_notifications(group_data, delivery_result)
-                   else:
-                       # Scheduled delivery: send 1st message after 50 seconds
-                       schedule_delayed_triggered_notifications(group_data, delivery_result)
+                   # Always send 50-second delayed delivery notifications for immediate orders
+                   schedule_delayed_delivery_notifications(group_data, delivery_result)
                    
                    # Update all sessions to mark delivery as triggered
                    for member in members_who_paid:

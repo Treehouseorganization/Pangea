@@ -3623,6 +3623,8 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
     """
     Create a real group when one user has an existing solo order.
     Solo user is silently added, only new user gets invitation.
+    ❌ REMOVED: Immediate delivery creation
+    ✅ ADDED: Wait for both users to pay before triggering delivery
     """
     try:
         print(f"🎯 Creating group {group_id} with solo user {solo_user_phone} and new user {new_user_phone}")
@@ -3642,7 +3644,6 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             solo_session = None
         
         # Always prioritize the current request's delivery time for fresh requests
-        # Only use solo session time if current request is 'ASAP' or 'now' and solo has specific time
         if (delivery_time in ['ASAP', 'now'] and 
             solo_session and 
             solo_session.get('delivery_time') not in ['now', 'ASAP', None]):
@@ -3658,8 +3659,8 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             'delivery_time': delivery_time,
             'location': delivery_location,
             'members': sorted_phones,
-            'creator': new_user_phone,  # New user is the "creator" for invitation tracking
-            'solo_user': solo_user_phone,  # Track who was the solo user
+            'creator': new_user_phone,
+            'solo_user': solo_user_phone,
             'status': 'pending_responses',
             'created_at': datetime.now(),
             'group_size': 2
@@ -3676,18 +3677,20 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         print(f"📱 Sending invitation SMS to {new_user_phone}...")
         success = send_friendly_message(new_user_phone, invitation_message, message_type="match_found")
         print(f"📤 SMS send completed with result: {success}")
-        if success:
-            print(f"📱 Sent invitation SMS to new user {new_user_phone}")
-        else:
-            print(f"❌ Failed to send SMS to new user {new_user_phone}")
         
-        # Update solo user's session to join the real group
+        # ✅ CRITICAL FIX: Update solo user's session WITHOUT triggering delivery
         print(f"🔄 Updating solo user session...")
         if solo_session:
             solo_session['group_id'] = group_id
             solo_session['group_size'] = 2
             solo_session['delivery_time'] = delivery_time
             
+            # ✅ FIXED: Clear protection flags so delivery can trigger when both users pay
+            solo_session['solo_order'] = False
+            solo_session['awaiting_match'] = False
+            solo_session['is_scheduled'] = False
+            
+            # ❌ REMOVED: delivery creation here
             # Clear any scheduled delivery flags since they're now in a group
             if 'delivery_scheduled' in solo_session:
                 del solo_session['delivery_scheduled']
@@ -3697,15 +3700,15 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
             update_order_session(solo_user_phone, solo_session)
             print(f"✅ Updated solo user {solo_user_phone} session to group {group_id}")
         
-        # CRITICAL: Update solo user's order status to prevent their workflow from sending duplicate messages
+        # Update solo user's order status to prevent workflow from sending duplicate messages
         try:
             solo_user_doc_ref = db.collection('users').document(solo_user_phone)
             solo_user_doc_ref.update({
                 'conversation_stage': 'matched_to_group',
                 'group_matched': True,
                 'group_id': group_id,
-                'solo_message_sent': True,  # Prevent any "no matches" messages
-                'silent_match': True,  # Flag for silent matching - no notifications to solo user
+                'solo_message_sent': True,
+                'silent_match': True,
                 'last_updated': datetime.now()
             })
             print(f"🛡️ Protected solo user {solo_user_phone} from duplicate messages and marked for silent matching")
@@ -3715,11 +3718,12 @@ def create_group_with_solo_user(state: PangeaState, match: Dict, group_id: str, 
         # Mark new user as waiting for their own response
         mark_as_matched_user(state, new_user_phone, group_id)
         
-        print(f"🎉 Group {group_id} created with solo user silently added and invitation sent to new user")
+        print(f"🎉 Group {group_id} created - delivery will trigger when BOTH users pay")
         
     except Exception as e:
         print(f"❌ Error creating group with solo user: {e}")
         state['group_formed'] = False
+
 
 def multi_agent_negotiation_node(state: PangeaState) -> PangeaState:
     """Advanced autonomous negotiation with better perfect match handling"""
