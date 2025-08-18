@@ -986,7 +986,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            valid_payment = (
                payment_requested_at is not None and  # They texted PAY
                session_restaurant == group_restaurant and  # Payment is for current restaurant
-               order_stage in ['payment_initiated', 'ready_to_pay']  # Valid payment stage
+               order_stage == 'payment_initiated'  # Valid payment stage
            )
            
            # Check if this member has paid (payment_requested_at exists)
@@ -1098,7 +1098,6 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            
    except Exception as e:
        print(f"❌ Error checking group completion: {e}")
-
 
 def notify_group_about_delivery_creation(group_data: Dict, delivery_result: Dict):
     """Notify all group members that delivery has been triggered"""
