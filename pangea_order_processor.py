@@ -968,6 +968,9 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        
        print(f"📊 Group {group_id}: {total_members} total members")
        
+       # ✅ ENHANCED: Check payment is for CURRENT restaurant
+       group_restaurant = session.get('restaurant')  # What restaurant this group is for
+       
        # Check if ALL members have paid (texted PAY)
        members_who_paid = []
        
@@ -975,23 +978,33 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            user_phone_session = session_data.get('user_phone')
            order_stage = session_data.get('order_stage')
            payment_requested_at = session_data.get('payment_requested_at')
+           session_restaurant = session_data.get('restaurant')
            
-           print(f"  📱 {user_phone_session}: stage={order_stage}, paid={payment_requested_at is not None}")
+           print(f"  📱 {user_phone_session}: restaurant={session_restaurant}, paid={payment_requested_at is not None}, stage={order_stage}")
+           
+           # ✅ CRITICAL FIX: Only count payment if it's for the CURRENT restaurant
+           valid_payment = (
+               payment_requested_at is not None and  # They texted PAY
+               session_restaurant == group_restaurant and  # Payment is for current restaurant
+               order_stage in ['payment_initiated', 'ready_to_pay']  # Valid payment stage
+           )
            
            # Check if this member has paid (payment_requested_at exists)
-           if payment_requested_at:
+           if valid_payment:
                members_who_paid.append({
                    'user_phone': user_phone_session,
                    'order_number': session_data.get('order_number'),
                    'customer_name': session_data.get('customer_name'),
                    'session_data': session_data
                })
+           else:
+               print(f"    ❌ Invalid payment: paid={payment_requested_at is not None}, restaurant_match={session_restaurant == group_restaurant}")
        
-       print(f"✅ {len(members_who_paid)} members have paid")
+       print(f"✅ {len(members_who_paid)} members have VALID payments for {group_restaurant}")
        
        # ✅ Trigger delivery if ALL members have paid
        if len(members_who_paid) == total_members and len(members_who_paid) >= 1:
-           print(f"🚚 ALL GROUP MEMBERS PAID! Triggering delivery for group {group_id}")
+           print(f"🚚 ALL GROUP MEMBERS PAID FOR {group_restaurant}! Triggering delivery for group {group_id}")
            
            # Build group data with individual order details
            group_data = {
@@ -1081,7 +1094,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
        
        else:
            missing_count = total_members - len(members_who_paid)
-           print(f"⏳ Waiting for {missing_count} more members to pay")
+           print(f"⏳ Waiting for {missing_count} more members to pay for {group_restaurant}")
            
    except Exception as e:
        print(f"❌ Error checking group completion: {e}")
