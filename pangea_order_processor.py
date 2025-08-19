@@ -857,66 +857,74 @@ Your driver will contact you when they arrive! 🎉"""
 
 
 def schedule_solo_delivery_trigger(group_data: Dict):
-    """
-    Schedule solo order delivery to be triggered at the specified time
-    """
-    def trigger_delivery_at_scheduled_time():
-        delivery_time = group_data.get('delivery_time', 'now')
-        
-        # Parse the delivery time and calculate delay
-        from pangea_uber_direct import parse_delivery_time
-        scheduled_datetime = parse_delivery_time(delivery_time)
-        
-        if scheduled_datetime:
-            from datetime import timezone
-            # Ensure both datetimes have timezone info
-            if scheduled_datetime.tzinfo is None:
-                scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
-            
-            current_time = datetime.now(timezone.utc)
-            delay_seconds = (scheduled_datetime - current_time).total_seconds()
-            
-            if delay_seconds > 0:
-                print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
-                time.sleep(delay_seconds)
-            
-        # Trigger the delivery
-        print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
-        try:
-            from pangea_uber_direct import create_group_delivery
-            delivery_result = create_group_delivery(group_data)
-            
-            if delivery_result.get('success'):
-                print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
-                
-                # Update sessions for ALL group members to mark delivery as triggered
-                group_id = group_data.get('group_id')
-                all_members = group_data.get('members', [])
-                
-                for member_phone in all_members:
-                    session = get_user_order_session(member_phone)
-                    if session:
-                        session['delivery_triggered'] = True
-                        session['delivery_id'] = delivery_result.get('delivery_id')
-                        session['tracking_url'] = delivery_result.get('tracking_url')
-                        session['delivery_scheduled'] = False  # Clear scheduled flag
-                        update_order_session(member_phone, session)
-                        print(f"✅ Updated session for group member {member_phone}")
-                
-                # Send notifications
-                schedule_delayed_triggered_notifications(group_data, delivery_result)
-                
-            else:
-                print(f"❌ Solo delivery creation failed: {delivery_result}")
-                
-        except Exception as e:
-            print(f"❌ Solo delivery trigger error: {e}")
-    
-    # Start background thread to wait and trigger delivery
-    thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
-    thread.daemon = True
-    thread.start()
-    print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
+   """
+   Schedule solo order delivery to be triggered at the specified time
+   """
+   def trigger_delivery_at_scheduled_time():
+       delivery_time = group_data.get('delivery_time', 'now')
+       
+       # Parse the delivery time and calculate delay
+       from pangea_uber_direct import parse_delivery_time
+       scheduled_datetime = parse_delivery_time(delivery_time)
+       
+       if scheduled_datetime:
+           import pytz
+           
+           # Ensure we're working in Chicago timezone
+           chicago_tz = pytz.timezone('America/Chicago')
+           
+           if scheduled_datetime.tzinfo is None:
+               # Assume it's Chicago time (what the user meant)
+               scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+           else:
+               # Convert to Chicago time if it's in a different timezone
+               scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
+           
+           # Get current Chicago time
+           current_time = datetime.now(chicago_tz)
+           delay_seconds = (scheduled_datetime - current_time).total_seconds()
+           
+           if delay_seconds > 0:
+               print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
+               time.sleep(delay_seconds)
+           
+       # Trigger the delivery
+       print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
+       try:
+           from pangea_uber_direct import create_group_delivery
+           delivery_result = create_group_delivery(group_data)
+           
+           if delivery_result.get('success'):
+               print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
+               
+               # Update sessions for ALL group members to mark delivery as triggered
+               group_id = group_data.get('group_id')
+               all_members = group_data.get('members', [])
+               
+               for member_phone in all_members:
+                   session = get_user_order_session(member_phone)
+                   if session:
+                       session['delivery_triggered'] = True
+                       session['delivery_id'] = delivery_result.get('delivery_id')
+                       session['tracking_url'] = delivery_result.get('tracking_url')
+                       session['delivery_scheduled'] = False  # Clear scheduled flag
+                       update_order_session(member_phone, session)
+                       print(f"✅ Updated session for group member {member_phone}")
+               
+               # Send notifications
+               schedule_delayed_delivery_notifications(group_data, delivery_result)
+               
+           else:
+               print(f"❌ Solo delivery creation failed: {delivery_result}")
+               
+       except Exception as e:
+           print(f"❌ Solo delivery trigger error: {e}")
+   
+   # Start background thread to wait and trigger delivery
+   thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
+   thread.daemon = True
+   thread.start()
+   print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
 
 
 def check_group_completion_and_trigger_delivery(user_phone: str):

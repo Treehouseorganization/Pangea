@@ -2422,6 +2422,13 @@ Remember: Be conversational and helpful. If the user's intent is unclear, choose
             if any(word in message_lower for word in ['pay', 'payment']):
                 fallback_action = "handle_payment_request"
                 print(f"   💳 Detected payment request")
+            # Check if this is actually a new food request despite having an order session
+            elif (any(word in message_lower for word in ['want', 'craving', 'hungry', 'order', 'get', 'need']) and
+                  ('delivered' in message_lower or 'delivery' in message_lower or 
+                   any(location in message_lower for location in ['library', 'union', 'student', 'campus', 'dorm']) or
+                   any(time in message_lower for time in ['pm', 'am', 'noon', 'midnight', 'tonight', 'later']))):
+                fallback_action = "start_fresh_request"
+                print(f"   🍔 Detected new food request (overriding order session)")
             else:
                 fallback_action = "collect_order_number"
                 print(f"   📋 Detected order continuation")
