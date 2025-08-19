@@ -651,7 +651,6 @@ After payment, I'll coordinate with your group to place the order! 🍕"""
         not session.get('delivery_triggered')):
         
         # This is a scheduled solo delivery - set up the timer
-        from pangea_order_processor import schedule_solo_delivery_trigger
         group_data = {
             'restaurant': session.get('restaurant'),
             'location': session.get('delivery_location'), 
