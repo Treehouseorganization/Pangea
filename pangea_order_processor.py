@@ -157,6 +157,7 @@ def start_order_process(user_phone: str, group_id: str, restaurant: str, group_s
     if is_scheduled_delivery:
         session_data['is_scheduled'] = True
         session_data['awaiting_match'] = True
+        session_data['delivery_triggered'] = False  # Reset for fresh scheduled delivery
         if group_size == 1:
             session_data['solo_order'] = True
     
