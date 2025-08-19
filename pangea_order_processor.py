@@ -352,7 +352,7 @@ When you're ready to pay, just text:
 I'll send you the payment link! 💳"""
         
         send_friendly_message(user_phone, message, message_type="order_update")
-        check_group_completion_and_trigger_delivery(user_phone)  # Trigger delivery check
+        # REMOVED: check_group_completion_and_trigger_delivery(user_phone) - delivery will trigger when user pays
         state['messages'].append(AIMessage(content=message))
         return state  # Exit after successful processing
         
@@ -416,7 +416,7 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
 Try something like "Order #123" or "My name is John"."""
     
     send_friendly_message(user_phone, message, message_type="order_update")
-    check_group_completion_and_trigger_delivery(user_phone)
+    # REMOVED: check_group_completion_and_trigger_delivery(user_phone) - delivery will trigger when user pays
     state['messages'].append(AIMessage(content=message))
     return state
 
@@ -504,8 +504,7 @@ Reply "pay" when ready to complete your order! 💳"""
             send_friendly_message(user_phone, message, message_type="order_update")
             state['messages'].append(AIMessage(content=message))
             
-            # Check if group is complete
-            check_group_completion_and_trigger_delivery(user_phone)
+            # REMOVED: check_group_completion_and_trigger_delivery(user_phone) - delivery will trigger when user pays
             
         else:
             # Still need clearer description
