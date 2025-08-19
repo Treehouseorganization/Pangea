@@ -645,6 +645,30 @@ After payment, I'll coordinate with your group to place the order! 🍕"""
     
     send_friendly_message(user_phone, message, message_type="payment")
     
+    # Check if this is a scheduled solo delivery that needs to be scheduled
+    if (group_size == 1 and 
+        session.get('delivery_time') not in ['now', 'ASAP', 'soon'] and 
+        not session.get('delivery_triggered')):
+        
+        # This is a scheduled solo delivery - set up the timer
+        from pangea_order_processor import schedule_solo_delivery_trigger
+        group_data = {
+            'restaurant': session.get('restaurant'),
+            'location': session.get('delivery_location'), 
+            'delivery_time': session.get('delivery_time'),
+            'members': [user_phone],
+            'group_id': session.get('group_id'),
+            'group_size': 1,
+            'order_details': [{
+                'user_phone': user_phone,
+                'order_number': session.get('order_number'),
+                'customer_name': session.get('customer_name'),
+                'order_description': session.get('order_description')
+            }]
+        }
+        schedule_solo_delivery_trigger(group_data)
+        print(f"⏰ Scheduled solo delivery trigger for {session.get('delivery_time')}")
+    
     # Check if all group members have now paid and trigger delivery if so
     check_group_completion_and_trigger_delivery(user_phone)
     
