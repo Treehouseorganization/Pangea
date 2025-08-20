@@ -880,107 +880,109 @@ Your driver will contact you when they arrive! 🎉"""
 
 
 def schedule_solo_delivery_trigger(group_data: Dict):
-   """
-   Schedule solo order delivery to be triggered at the specified time
-   """
-   def trigger_delivery_at_scheduled_time():
-       delivery_time = group_data.get('delivery_time', 'now')
-       
-       # Parse the delivery time and calculate delay
-       from pangea_uber_direct import parse_delivery_time
-       scheduled_datetime = parse_delivery_time(delivery_time)
-       
-       if scheduled_datetime:
-           import pytz
-           
-           # Ensure we're working in Chicago timezone
-           chicago_tz = pytz.timezone('America/Chicago')
-           
-           if scheduled_datetime.tzinfo is None:
-               # Assume it's Chicago time (what the user meant)
-               scheduled_datetime = chicago_tz.localize(scheduled_datetime)
-           else:
-               # Convert to Chicago time if it's in a different timezone
-               scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
-           
-           # Get current Chicago time
-           current_time = datetime.now(chicago_tz)
-           delay_seconds = (scheduled_datetime - current_time).total_seconds()
-           
-           if delay_seconds > 0:
-               print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
-               time.sleep(delay_seconds)
-           
-       # Check payment status for 2-person groups
-       all_members = group_data.get('members', [])
-       
-       # For 2-person scheduled groups, filter out unpaid members
-       if len(all_members) == 2:
-           members_who_paid = []
-           paid_member_details = []
-           group_restaurant = group_data.get('restaurant')
-           
-           for i, member_phone in enumerate(all_members):
-               session = get_user_order_session(member_phone)
-               if session and session.get('payment_requested_at') and session.get('order_stage') == 'payment_initiated' and session.get('restaurant') == group_restaurant:
-                   members_who_paid.append(member_phone)
-                   # Also collect the corresponding order details
-                   order_details = group_data.get('order_details', [])
-                   if i < len(order_details):
-                       paid_member_details.append(order_details[i])
-           
-           if len(members_who_paid) == 1:
-               # Only 1 person paid - create solo delivery for them
-               group_data = dict(group_data)  # Copy to avoid modifying original
-               group_data['members'] = members_who_paid
-               group_data['order_details'] = paid_member_details
-               print(f"🚚 Triggering solo delivery for 1 paid member: {members_who_paid[0]}")
-           elif len(members_who_paid) == 2:
-               # Both paid - proceed with group delivery
-               print(f"🚚 Triggering group delivery for 2 paid members at scheduled time: {delivery_time}")
-           else:
-               # No one paid - skip delivery
-               print(f"❌ No payments received for scheduled delivery - skipping")
-               return
-       else:
-           # Single member or other group sizes - proceed normally
-           print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
-       
-       try:
-           from pangea_uber_direct import create_group_delivery
-           delivery_result = create_group_delivery(group_data)
-           
-           if delivery_result.get('success'):
-               print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
-               
-               # Update sessions for ALL group members to mark delivery as triggered  
-               all_members = group_data.get('members', [])
-               
-               for member_phone in all_members:
-                   session = get_user_order_session(member_phone)
-                   if session:
-                       session['delivery_triggered'] = True
-                       session['delivery_id'] = delivery_result.get('delivery_id')
-                       session['tracking_url'] = delivery_result.get('tracking_url')
-                       session['delivery_scheduled'] = False  # Clear scheduled flag
-                       update_order_session(member_phone, session)
-                       print(f"✅ Updated session for group member {member_phone}")
-               
-               # Send notifications
-               schedule_delayed_delivery_notifications(group_data, delivery_result)
-               
-           else:
-               print(f"❌ Solo delivery creation failed: {delivery_result}")
-               
-       except Exception as e:
-           print(f"❌ Solo delivery trigger error: {e}")
-   
-   # Start background thread to wait and trigger delivery
-   thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
-   thread.daemon = True
-   thread.start()
-   print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
-
+  """
+  Schedule solo order delivery to be triggered at the specified time
+  """
+  def trigger_delivery_at_scheduled_time():
+      delivery_time = group_data.get('delivery_time', 'now')
+      
+      # Parse the delivery time and calculate delay
+      from pangea_uber_direct import parse_delivery_time
+      scheduled_datetime = parse_delivery_time(delivery_time)
+      
+      if scheduled_datetime:
+          import pytz
+          
+          # Ensure we're working in Chicago timezone
+          chicago_tz = pytz.timezone('America/Chicago')
+          
+          if scheduled_datetime.tzinfo is None:
+              # Assume it's Chicago time (what the user meant)
+              scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+          else:
+              # Convert to Chicago time if it's in a different timezone
+              scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
+          
+          # Get current Chicago time
+          current_time = datetime.now(chicago_tz)
+          delay_seconds = (scheduled_datetime - current_time).total_seconds()
+          
+          if delay_seconds > 0:
+              print(f"⏰ Solo delivery scheduled for {delivery_time} - waiting {delay_seconds} seconds")
+              time.sleep(delay_seconds)
+          
+      # Check payment status for 2-person groups
+      all_members = group_data.get('members', [])
+      
+      # For 2-person scheduled groups, filter out unpaid members
+      if len(all_members) == 2:
+          members_who_paid = []
+          paid_member_details = []
+          group_restaurant = group_data.get('restaurant')
+          
+          for i, member_phone in enumerate(all_members):
+              session = get_user_order_session(member_phone)
+              if session and session.get('payment_requested_at') and session.get('order_stage') == 'payment_initiated' and session.get('restaurant') == group_restaurant:
+                  members_who_paid.append(member_phone)
+                  # Also collect the corresponding order details
+                  order_details = group_data.get('order_details', [])
+                  if i < len(order_details):
+                      paid_member_details.append(order_details[i])
+          
+          if len(members_who_paid) == 1:
+              # Only 1 person paid - create solo delivery for them
+              updated_group_data = dict(group_data)  # Copy to avoid modifying original
+              updated_group_data['members'] = members_who_paid
+              updated_group_data['order_details'] = paid_member_details
+              print(f"🚚 Triggering solo delivery for 1 paid member: {members_who_paid[0]}")
+              final_group_data = updated_group_data
+          elif len(members_who_paid) == 2:
+              # Both paid - proceed with group delivery
+              print(f"🚚 Triggering group delivery for 2 paid members at scheduled time: {delivery_time}")
+              final_group_data = group_data
+          else:
+              # No one paid - skip delivery
+              print(f"❌ No payments received for scheduled delivery - skipping")
+              return
+      else:
+          # Single member or other group sizes - proceed normally
+          print(f"🚚 Triggering solo delivery at scheduled time: {delivery_time}")
+          final_group_data = group_data
+      
+      try:
+          from pangea_uber_direct import create_group_delivery
+          delivery_result = create_group_delivery(final_group_data)
+          
+          if delivery_result.get('success'):
+              print(f"✅ Solo delivery created: {delivery_result.get('delivery_id')}")
+              
+              # Update sessions for ALL group members to mark delivery as triggered  
+              all_members = final_group_data.get('members', [])
+              
+              for member_phone in all_members:
+                  session = get_user_order_session(member_phone)
+                  if session:
+                      session['delivery_triggered'] = True
+                      session['delivery_id'] = delivery_result.get('delivery_id')
+                      session['tracking_url'] = delivery_result.get('tracking_url')
+                      session['delivery_scheduled'] = False  # Clear scheduled flag
+                      update_order_session(member_phone, session)
+                      print(f"✅ Updated session for group member {member_phone}")
+              
+              # Send notifications
+              schedule_delayed_delivery_notifications(final_group_data, delivery_result)
+              
+          else:
+              print(f"❌ Solo delivery creation failed: {delivery_result}")
+              
+      except Exception as e:
+          print(f"❌ Solo delivery trigger error: {e}")
+  
+  # Start background thread to wait and trigger delivery
+  thread = threading.Thread(target=trigger_delivery_at_scheduled_time)
+  thread.daemon = True
+  thread.start()
+  print(f"⏰ Solo delivery trigger scheduled for {group_data.get('delivery_time')}")
 
 def check_group_completion_and_trigger_delivery(user_phone: str):
    """FIXED: Only trigger delivery for real groups or immediate solo orders"""
