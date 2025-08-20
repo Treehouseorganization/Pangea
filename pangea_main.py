@@ -25,6 +25,7 @@ from pangea_locations import (
     DROPOFFS,
     AVAILABLE_RESTAURANTS,
     AVAILABLE_DROPOFF_LOCATIONS,
+    normalize_location,
 )
 
 MAX_GROUP_SIZE = 3 
@@ -267,7 +268,7 @@ def find_potential_matches_contextual(
 
         # Query database
         orders_ref = db.collection('active_orders')
-        similar_orders = orders_ref.where('location', '==', location) \
+        similar_orders = orders_ref.where('location', '==', normalize_location(location)) \
                                    .where('status', '==', 'looking_for_group') \
                                    .where('user_phone', '!=', requesting_user) \
                                    .limit(10).get()
@@ -391,7 +392,7 @@ def _match_candidates(
     try:
         # Query database
         orders_ref = db.collection('active_orders')
-        similar_orders = orders_ref.where('location', '==', location) \
+        similar_orders = orders_ref.where('location', '==', normalize_location(location)) \
                                    .where('status', '==', 'looking_for_group') \
                                    .where('user_phone', '!=', requesting_user) \
                                    .limit(10).get()
@@ -5426,7 +5427,7 @@ def handle_no_matches_node(state: PangeaState) -> PangeaState:
        active_order_data = {
            'user_phone': user_phone,
            'restaurant': restaurant,
-           'location': location,
+           'location': normalize_location(location),
            'time_requested': str(delivery_time),  # Ensure it's stored as string, not datetime
            'status': 'looking_for_group',
            'created_at': datetime.now(),
