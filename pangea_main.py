@@ -576,9 +576,13 @@ def calculate_compatibility(
     time_score = calculate_time_compatibility(user1_time, user2_time)
     print(f"   ⏰ Time compatibility: {time_score}")
     
-    # Only use LLM for edge cases if needed
-    if time_score == 0.5:  # Uncertain cases only
+    # Use LLM for uncertain cases AND high-confidence validation
+    if time_score == 0.5:  # Uncertain cases
         llm_score = get_llm_time_assessment(user1_time, user2_time)
+        final_score = llm_score
+    elif time_score >= 0.8:  # High confidence matches need validation
+        print(f"   🤖 Validating high-confidence match with Claude...")
+        llm_score = get_llm_final_match_validation(user1_time, user2_time, time_score)
         final_score = llm_score
     else:
         final_score = time_score
@@ -665,9 +669,10 @@ def calculate_time_compatibility(time1: str, time2: str) -> float:
     if has_hour_conflict(time1_clean, time2_clean):
         return 0.0
     
-    # Similar time periods
+    # Similar time periods - be more restrictive with specific hours
     similar_times = [
-        ["lunch", "noon", "12pm", "1pm", "lunch time"],
+        ["lunch", "noon", "12pm", "lunch time"],
+        ["1pm"],  # 1pm is separate from noon/12pm
         ["dinner", "evening", "6pm", "7pm", "8pm", "tonight"],
         ["breakfast", "morning", "8am", "9am", "10am"],
     ]
@@ -957,6 +962,66 @@ def get_llm_time_assessment(time1: str, time2: str) -> float:
     
     print(f"   ❌ No clear time match found")
     return 0.0
+
+def get_llm_final_match_validation(time1: str, time2: str, rule_score: float) -> float:
+    """Final Claude validation for high-confidence matches to catch edge cases"""
+    
+    # Convert any DatetimeWithNanoseconds objects to strings first
+    time1_str = convert_time_to_string(time1)
+    time2_str = convert_time_to_string(time2)
+    
+    print(f"   🤖 Claude validating: '{time1_str}' vs '{time2_str}' (rule score: {rule_score})")
+    
+    try:
+        # Use Claude for validation (same as rest of codebase)
+        llm = ChatAnthropic(
+            model="claude-3-haiku-20240307",
+            temperature=0,
+            max_tokens=100
+        )
+        
+        prompt = f"""You are validating whether two users should be matched for a food delivery group order.
+
+User 1 wants delivery at: {time1_str}
+User 2 wants delivery at: {time2_str}
+
+The rule-based system gave this a score of {rule_score}/1.0, but we need your human-like judgment.
+
+For delivery coordination, users need to be available at the SAME TIME to receive the order.
+
+Question: Should these two users be matched for a group delivery order?
+
+Consider:
+- Can they realistically coordinate to receive delivery at the same time?
+- Is the time difference too large for practical coordination?
+- Would most reasonable people consider these times compatible for a joint delivery?
+
+Respond ONLY with a number between 0.0 and 1.0:
+- 1.0 = Perfect match, same time
+- 0.8-0.9 = Very good match, minor coordination needed  
+- 0.5-0.7 = Possible match, requires flexibility
+- 0.0-0.4 = Poor match, times too different
+
+Number only:"""
+
+        response = llm.invoke(prompt)
+        score_text = response.content.strip()
+        
+        # Parse the score
+        try:
+            validated_score = float(score_text)
+            validated_score = max(0.0, min(1.0, validated_score))  # Clamp to 0-1
+            
+            print(f"   🎯 Claude validation: {validated_score} (was {rule_score})")
+            return validated_score
+            
+        except ValueError:
+            print(f"   ⚠️ Claude validation failed to parse: '{score_text}', using rule score")
+            return rule_score
+            
+    except Exception as e:
+        print(f"   ⚠️ Claude validation error: {e}, using rule score")
+        return rule_score
 
 def simple_compatibility_check(pref1: str, pref2: str, time1: str, time2: str) -> float:
     """Simple fallback when agent reasoning fails"""
