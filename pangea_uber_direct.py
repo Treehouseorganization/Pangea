@@ -539,6 +539,17 @@ class UberDirectClient:
             chicago_time = user_requested_time.astimezone(chicago_tz)
             print(f"🕐 Already timezone-aware, converted to Chicago: {chicago_time.strftime('%I:%M %p %Z')}")
         
+        # ✅ NEW FIX: Validate in Chicago time BEFORE converting to UTC
+        chicago_now = datetime.now(chicago_tz)
+        min_chicago_time = chicago_now + timedelta(minutes=20)
+        
+        if chicago_time < min_chicago_time:
+            print(f"⚠️ Requested Chicago time {chicago_time.strftime('%I:%M %p')} is too soon")
+            print(f"   Current Chicago time: {chicago_now.strftime('%I:%M %p')}")
+            print(f"   Minimum Chicago time: {min_chicago_time.strftime('%I:%M %p')}")
+            print(f"   Adjusting to minimum 20 minutes from now in Chicago time")
+            chicago_time = min_chicago_time
+        
         # Now convert Chicago time to UTC for Uber API
         utc_time = chicago_time.astimezone(pytz.UTC)
         pickup_ready_dt = utc_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
@@ -547,17 +558,6 @@ class UberDirectClient:
         print(f"🕐 Chicago time: {chicago_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
         print(f"🕐 UTC time for Uber: {utc_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
         print(f"🕐 Uber API timestamp: {pickup_ready_dt}")
-        
-        # Validate that the time is at least 20 minutes in the future
-        utc_now = datetime.now(pytz.UTC)
-        min_delivery_time = utc_now + timedelta(minutes=20)
-        
-        if utc_time < min_delivery_time:
-            print(f"⚠️ Requested time is too soon, adjusting to minimum 20 minutes from now")
-            utc_time = min_delivery_time
-            pickup_ready_dt = utc_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-            print(f"🕐 Adjusted UTC time: {utc_time.strftime('%I:%M %p on %B %d, %Y (%Z)')}")
-            print(f"🕐 Adjusted API timestamp: {pickup_ready_dt}")
         
         payload = {
             "quote_id": quote_id,
