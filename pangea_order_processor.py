@@ -1013,7 +1013,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            
            print(f"  📱 {user_phone_session}: restaurant={session_restaurant}, paid={payment_requested_at is not None}, stage={order_stage}")
            
-           # ✅ CRITICAL FIX: Only count payment if it's for the CURRENT restaurant
+           # ✅ CRITICAL FIX: Only count payment if user ACTUALLY texted PAY
            valid_payment = (
                payment_requested_at is not None and  # They texted PAY
                session_restaurant == group_restaurant and  # Payment is for current restaurant

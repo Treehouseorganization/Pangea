@@ -4052,7 +4052,7 @@ The other person is placing their order now. I'll coordinate pickup and delivery
                 except Exception as e:
                     print(f"❌ Error converting solo session: {e}")
                 
-                # Start order process for the real user
+                # ✅ CRITICAL FIX: Start order process for the real user
                 group_id = group_data['group_id']
                 restaurant = group_data['restaurant']
                 delivery_time = group_data['delivery_time']
@@ -4077,6 +4077,7 @@ The other person is placing their order now. I'll coordinate pickup and delivery
 Quick steps:
 1. Order directly from {restaurant} (app/website/phone) - choose PICKUP
 2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
 
 Your share: {payment_amount} 💳
 
@@ -4129,7 +4130,7 @@ The other person already placed their order, so this will be coordinated togethe
                 'status': 'forming'
             })
             
-            # START ORDER PROCESS FOR THIS USER
+            # ✅ CRITICAL FIX: START ORDER PROCESS FOR THIS USER
             try:
                 from pangea_order_processor import start_order_process, get_payment_amount
                 
@@ -4148,8 +4149,9 @@ The other person already placed their order, so this will be coordinated togethe
 **Quick steps to get your food:**
 1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery
 2. Come back here with your confirmation number or name for the order AND what you ordered
+3. Text "PAY" when ready
 
-Once everyone's ready, your payment will be {payment_amount} 💳
+Your payment share: {payment_amount} 💳
 
 Let me know if you need any help!"""
                 
