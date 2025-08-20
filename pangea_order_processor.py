@@ -1062,14 +1062,12 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
            delivery_time = group_data.get('delivery_time', 'now')
            group_size = group_data.get('group_size', len(members_who_paid))
            
-           # Protect scheduled deliveries but allow early trigger for complete groups
+           # Protect ANY scheduled delivery (solo or group)
            is_scheduled_delivery = delivery_time not in ['now', 'ASAP', 'soon', 'immediately']
            
-           # Only schedule for full delivery time if it's a solo order (group_size == 1)
-           # Groups with 2+ members who all paid should trigger after 50 seconds
-           if is_scheduled_delivery and not session.get('delivery_triggered') and group_size == 1:
-               # Solo scheduled delivery - delay delivery trigger for full time
-               print(f"⏰ Solo scheduled delivery for {delivery_time} - scheduling delivery trigger")
+           if is_scheduled_delivery and not session.get('delivery_triggered'):
+               # Scheduled delivery - delay delivery trigger for ANY group size
+               print(f"⏰ Scheduled delivery for {delivery_time} - scheduling delivery trigger")
                print(f"   Group size: {group_size}")
                schedule_solo_delivery_trigger(group_data)
                
@@ -1097,10 +1095,7 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                
                return  # Don't trigger delivery immediately
            
-           # Import and trigger delivery IMMEDIATELY (for "now" orders OR complete groups)
-           if is_scheduled_delivery and group_size >= 2:
-               print(f"🚀 All {group_size} members paid for scheduled delivery - triggering early!")
-           
+           # Import and trigger delivery IMMEDIATELY (for "now" orders only)
            try:
                from pangea_uber_direct import create_group_delivery
                delivery_result = create_group_delivery(group_data)
