@@ -5009,6 +5009,7 @@ def create_pangea_graph():
             "proactive_group_yes": "handle_proactive_group_yes",
             "proactive_group_no": "handle_proactive_group_no",
             "order_continuation": "handle_order_continuation",
+            "collect_order_number": "handle_order_continuation",
             "faq_answered": "faq_answered",
             "incomplete_request": "handle_incomplete_request",
             # NEW: Conversational flexibility
