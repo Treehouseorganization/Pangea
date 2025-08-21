@@ -8,7 +8,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.tools import tool
-from typing import Dict, List, TypedDict, Annotated
+from typing import Dict, List, Annotated
+from typing_extensions import TypedDict
 from datetime import datetime
 import json
 

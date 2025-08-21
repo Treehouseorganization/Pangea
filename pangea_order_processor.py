@@ -7,7 +7,8 @@ Integrated with main Pangea system for seamless group ordering
 import os
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, TypedDict, Annotated
+from typing import Dict, List, Optional, Annotated
+from typing_extensions import TypedDict
 from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
