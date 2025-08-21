@@ -304,8 +304,8 @@ Return ONLY valid JSON."""
             
             # Check negotiations
             negotiations = self.db.collection('negotiations')\
-                .where('to_user', '==', user_phone)\
-                .where('status', '==', 'pending')\
+                .where(filter=('to_user', '==', user_phone))\
+                .where(filter=('status', '==', 'pending'))\
                 .get()
             
             for neg in negotiations:
@@ -316,8 +316,8 @@ Return ONLY valid JSON."""
             
             # Check active groups
             groups = self.db.collection('active_groups')\
-                .where('members', 'array_contains', user_phone)\
-                .where('status', 'in', ['pending_responses', 'forming'])\
+                .where(filter=('members', 'array_contains', user_phone))\
+                .where(filter=('status', 'in', ['pending_responses', 'forming']))\
                 .get()
             
             for group in groups:
@@ -360,8 +360,8 @@ Return ONLY valid JSON."""
             
             # Cancel old negotiations
             old_negotiations = self.db.collection('negotiations')\
-                .where('to_user', '==', user_phone)\
-                .where('status', '==', 'pending')\
+                .where(filter=('to_user', '==', user_phone))\
+                .where(filter=('status', '==', 'pending'))\
                 .get()
             
             for neg in old_negotiations:

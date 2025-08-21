@@ -16,7 +16,6 @@ class IntelligentMatcher:
         self.db = db
         self.llm = anthropic_llm
     
-    @tool
     def find_compatible_matches(self, user_phone: str, restaurant: str, location: str, delivery_time: str) -> Dict:
         """Find compatible matches using Claude's intelligence"""
         
@@ -98,7 +97,7 @@ class IntelligentMatcher:
                 "should_create_fake_match": True
             }
     
-    @tool
+    
     def _analyze_time_compatibility(self, time1: str, time2: str) -> Dict:
         """Use Claude to intelligently analyze time compatibility"""
         
