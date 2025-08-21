@@ -676,7 +676,8 @@ class UberDirectClient:
         delivery_time_str = group_data.get('delivery_time', 'now')
         if delivery_time_str != 'now':
             scheduled_time = parse_delivery_time(delivery_time_str)
-            current_time = datetime.now()
+            chicago_tz = pytz.timezone('America/Chicago')
+            current_time = datetime.now(chicago_tz)
             
             # If delivery is scheduled for the future, don't send immediate notifications
             if scheduled_time > current_time + timedelta(minutes=10):
@@ -801,7 +802,8 @@ The driver will meet you at the delivery location. I'll send updates as your ord
         delivery_time_str = group_data.get('delivery_time', 'now')
         if delivery_time_str != 'now':
             scheduled_time = parse_delivery_time(delivery_time_str)
-            current_time = datetime.now()
+            chicago_tz = pytz.timezone('America/Chicago')
+            current_time = datetime.now(chicago_tz)
             
             # If delivery is scheduled for the future, suppress early status updates
             if scheduled_time > current_time + timedelta(minutes=10):

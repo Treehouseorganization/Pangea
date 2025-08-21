@@ -42,7 +42,9 @@ class DeliveryTriggerSystem:
             group_size = order_session.get('group_size', 1)
             
             # Mark user as paid
-            order_session['payment_timestamp'] = datetime.now()
+            import pytz
+            chicago_tz = pytz.timezone('America/Chicago')
+            order_session['payment_timestamp'] = datetime.now(chicago_tz)
             order_session['order_stage'] = 'paid'
             
             # Update both session manager and order processor
@@ -255,7 +257,7 @@ class DeliveryTriggerSystem:
             
             return {
                 'status': 'scheduled',
-                'scheduled_time': scheduled_datetime.isoformat(),
+                'scheduled_time': scheduled_datetime.strftime('%I:%M %p'),
                 'message': f'Delivery scheduled for {scheduled_datetime.strftime("%I:%M %p")}'
             }
             
@@ -316,7 +318,7 @@ class DeliveryTriggerSystem:
             
             return {
                 'status': 'conditional_scheduled',
-                'scheduled_time': scheduled_datetime.isoformat(),
+                'scheduled_time': scheduled_datetime.strftime('%I:%M %p'),
                 'message': f'Delivery will trigger at {scheduled_datetime.strftime("%I:%M %p")} for whoever has paid'
             }
             

@@ -200,9 +200,9 @@ Return ONLY valid JSON."""
             # Check active_groups for fake matches (solo orders)
             # Simplified query to avoid complex index requirement
             fake_groups = self.db.collection('active_groups')\
-                .where(filter=('restaurant', '==', restaurant))\
-                .where(filter=('location', '==', location))\
-                .where(filter=('is_fake_match', '==', True))\
+                .where('restaurant', '==', restaurant)\
+                .where('location', '==', location)\
+                .where('is_fake_match', '==', True)\
                 .get()
             
             for group_doc in fake_groups:
@@ -269,9 +269,9 @@ Return ONLY valid JSON."""
             
             # Query user_sessions for food requests
             sessions = self.db.collection('user_sessions')\
-                .where(filter=('session_type', '==', 'food_request'))\
-                .where(filter=('current_food_request.restaurant', '==', restaurant))\
-                .where(filter=('current_food_request.location', '==', location))\
+                .where('session_type', '==', 'food_request')\
+                .where('current_food_request.restaurant', '==', restaurant)\
+                .where('current_food_request.location', '==', location)\
                 .get()
             
             matches = []

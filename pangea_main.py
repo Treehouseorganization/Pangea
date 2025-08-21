@@ -130,7 +130,10 @@ def handle_incoming_message(user_phone: str, message: str) -> Dict:
     """
     
     print(f"📱 Message from {user_phone}: {message}")
-    print(f"🕐 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    import pytz
+    chicago_tz = pytz.timezone('America/Chicago')
+    chicago_now = datetime.now(chicago_tz)
+    print(f"🕐 Timestamp: {chicago_now.strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
         print(f"🔍 Starting message processing...")
@@ -227,9 +230,29 @@ After payment, I'll coordinate your delivery! 🚚"""
             }
             
         elif payment_result['status'] == 'scheduled':
-            # Scheduled delivery
-            scheduled_time = payment_result.get('scheduled_time', 'scheduled time')
-            response_message = f"Perfect! Your payment is processed. Delivery will be triggered at {scheduled_time}. ⏰"
+            # Scheduled delivery - still need to show payment link
+            context = session_manager.get_user_context(user_phone)
+            order_session = context.active_order_session
+            
+            if order_session:
+                restaurant = order_session.get('restaurant', 'restaurant')
+                group_size = order_session.get('group_size', 1)
+                scheduled_time = payment_result.get('scheduled_time', 'scheduled time')
+                
+                # Generate payment link
+                payment_amount = "$3.50" if group_size == 1 else "$4.50"
+                payment_link = get_payment_link(group_size)
+                
+                response_message = f"""💳 Payment for {restaurant}
+
+Your share: {payment_amount}
+
+Pay here: {payment_link}
+
+After payment, delivery will be triggered at {scheduled_time}! ⏰"""
+            else:
+                response_message = f"Perfect! Your payment is processed. Delivery will be triggered at {scheduled_time}. ⏰"
+            
             send_friendly_message(user_phone, response_message)
             
             return {
@@ -282,7 +305,7 @@ def cleanup_old_data():
         
         # Clean up old user sessions
         old_sessions = db.collection('user_sessions')\
-            .where(filter=('last_activity', '<', cutoff_time))\
+            .where('last_activity', '<', cutoff_time)\
             .get()
         
         for session in old_sessions:
@@ -291,7 +314,7 @@ def cleanup_old_data():
         
         # Clean up old order sessions
         old_orders = db.collection('order_sessions')\
-            .where(filter=('created_at', '<', cutoff_time))\
+            .where('created_at', '<', cutoff_time)\
             .get()
         
         for order in old_orders:
@@ -308,7 +331,7 @@ def cleanup_old_data():
         
         # Clean up old negotiations
         old_negotiations = db.collection('negotiations')\
-            .where(filter=('created_at', '<', cutoff_time))\
+            .where('created_at', '<', cutoff_time)\
             .get()
         
         for neg in old_negotiations:
@@ -317,7 +340,7 @@ def cleanup_old_data():
         
         # Clean up old groups
         old_groups = db.collection('active_groups')\
-            .where(filter=('created_at', '<', cutoff_time))\
+            .where('created_at', '<', cutoff_time)\
             .get()
         
         for group in old_groups:
@@ -335,8 +358,8 @@ def handle_group_invitation_response(user_phone: str, response: str) -> bool:
     try:
         # Check for pending negotiations (existing system)
         pending_negotiations = db.collection('negotiations')\
-            .where(filter=('to_user', '==', user_phone))\
-            .where(filter=('status', '==', 'pending'))\
+            .where('to_user', '==', user_phone)\
+            .where('status', '==', 'pending')\
             .limit(1).get()
         
         if len(pending_negotiations) > 0:
@@ -391,8 +414,8 @@ Your share: $4.50 💳"""
         
         # Check for active groups (new system)
         pending_groups = db.collection('active_groups')\
-            .where(filter=('members', 'array_contains', user_phone))\
-            .where(filter=('status', 'in', ['pending_responses', 'forming']))\
+            .where('members', 'array_contains', user_phone)\
+            .where('status', 'in', ['pending_responses', 'forming'])\
             .limit(1).get()
         
         if len(pending_groups) > 0:

@@ -304,8 +304,8 @@ Return ONLY valid JSON."""
             
             # Check negotiations
             negotiations = self.db.collection('negotiations')\
-                .where(filter=('to_user', '==', user_phone))\
-                .where(filter=('status', '==', 'pending'))\
+                .where('to_user', '==', user_phone)\
+                .where('status', '==', 'pending')\
                 .get()
             
             for neg in negotiations:
@@ -316,8 +316,8 @@ Return ONLY valid JSON."""
             
             # Check active groups
             groups = self.db.collection('active_groups')\
-                .where(filter=('members', 'array_contains', user_phone))\
-                .where(filter=('status', 'in', ['pending_responses', 'forming']))\
+                .where('members', 'array_contains', user_phone)\
+                .where('status', 'in', ['pending_responses', 'forming'])\
                 .get()
             
             for group in groups:
@@ -351,7 +351,7 @@ Return ONLY valid JSON."""
             
             # Clear old order sessions
             old_orders = self.db.collection('order_sessions')\
-                .where(filter=('user_phone', '==', user_phone))\
+                .where('user_phone', '==', user_phone)\
                 .get()
             
             for order in old_orders:
@@ -360,8 +360,8 @@ Return ONLY valid JSON."""
             
             # Cancel old negotiations
             old_negotiations = self.db.collection('negotiations')\
-                .where(filter=('to_user', '==', user_phone))\
-                .where(filter=('status', '==', 'pending'))\
+                .where('to_user', '==', user_phone)\
+                .where('status', '==', 'pending')\
                 .get()
             
             for neg in old_negotiations:
