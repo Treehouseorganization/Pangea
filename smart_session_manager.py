@@ -41,7 +41,6 @@ class SmartSessionManager:
         self.db = db
         self.llm = anthropic_llm
     
-    @tool
     def get_user_context(self, user_phone: str) -> UserContext:
         """Get comprehensive user context with memory"""
         try:
@@ -87,7 +86,6 @@ class SmartSessionManager:
             print(f"❌ Error getting user context: {e}")
             return self._create_fresh_context(user_phone, {}, [])
     
-    @tool
     def update_user_context(self, context: UserContext, new_message: str = None) -> bool:
         """Update user context with new information"""
         try:
@@ -121,7 +119,6 @@ class SmartSessionManager:
             print(f"❌ Error updating user context: {e}")
             return False
     
-    @tool
     def detect_new_food_request(self, user_phone: str, message: str) -> Dict:
         """Use Claude to intelligently detect if this is a new food request"""
         
@@ -203,7 +200,6 @@ Return ONLY valid JSON."""
             # Fallback: simple keyword detection
             return self._simple_new_request_detection(message, context)
     
-    @tool
     def start_fresh_food_request(self, user_phone: str, restaurant: str = None, location: str = None, delivery_time: str = "now") -> UserContext:
         """Start completely fresh food request session"""
         
@@ -229,7 +225,6 @@ Return ONLY valid JSON."""
         print(f"✅ Started fresh food request for {user_phone}: {restaurant} at {location}")
         return context
     
-    @tool
     def transition_to_order_process(self, user_phone: str, group_id: str, restaurant: str, group_size: int) -> bool:
         """Transition user to order process cleanly"""
         

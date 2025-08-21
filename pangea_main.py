@@ -335,8 +335,8 @@ def handle_group_invitation_response(user_phone: str, response: str) -> bool:
     try:
         # Check for pending negotiations (existing system)
         pending_negotiations = db.collection('negotiations')\
-            .where('to_user', '==', user_phone)\
-            .where('status', '==', 'pending')\
+            .where(filter=('to_user', '==', user_phone))\
+            .where(filter=('status', '==', 'pending'))\
             .limit(1).get()
         
         if len(pending_negotiations) > 0:
@@ -391,8 +391,8 @@ Your share: $4.50 💳"""
         
         # Check for active groups (new system)
         pending_groups = db.collection('active_groups')\
-            .where('members', 'array_contains', user_phone)\
-            .where('status', 'in', ['pending_responses', 'forming'])\
+            .where(filter=('members', 'array_contains', user_phone))\
+            .where(filter=('status', 'in', ['pending_responses', 'forming']))\
             .limit(1).get()
         
         if len(pending_groups) > 0:

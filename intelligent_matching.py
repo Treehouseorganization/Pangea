@@ -253,55 +253,6 @@ Return ONLY valid JSON."""
         except Exception as e:
             print(f"❌ Error finding upgradeable solo orders: {e}")
             return []
-        """Query database for potential matches"""
-        
-        try:
-            # Get recent food requests (last 30 minutes)
-            cutoff_time = datetime.now() - timedelta(minutes=30)
-            
-            # Query user_sessions for food requests
-            sessions = self.db.collection('user_sessions')\
-                .where('session_type', '==', 'food_request')\
-                .where('current_food_request.restaurant', '==', restaurant)\
-                .where('current_food_request.location', '==', location)\
-                .get()
-            
-            matches = []
-            
-            for session_doc in sessions:
-                session_data = session_doc.to_dict()
-                user_phone = session_data.get('user_phone')
-                
-                # Skip self
-                if user_phone == excluding_user:
-                    continue
-                
-                # Check if request is recent
-                food_request = session_data.get('current_food_request', {})
-                request_time = food_request.get('timestamp')
-                
-                if request_time:
-                    if hasattr(request_time, 'tzinfo') and request_time.tzinfo:
-                        request_time = request_time.replace(tzinfo=None)
-                    
-                    if request_time < cutoff_time:
-                        continue  # Too old
-                
-                # Add to potential matches
-                matches.append({
-                    'user_phone': user_phone,
-                    'restaurant': restaurant,
-                    'location': location,
-                    'delivery_time': food_request.get('delivery_time', 'now'),
-                    'request_time': request_time,
-                    'session_id': food_request.get('session_id')
-                })
-            
-            return matches
-            
-        except Exception as e:
-            print(f"❌ Error querying potential matches: {e}")
-            return []
     
     def _simple_time_compatibility(self, time1: str, time2: str) -> Dict:
         """Fallback simple time compatibility"""
@@ -348,7 +299,7 @@ Return ONLY valid JSON."""
             "requires_coordination": False
         }
     
-    @tool
+    
     def create_group_match(self, user1_phone: str, user2_phone: str, restaurant: str, location: str, optimal_time: str) -> str:
         """Create a 2-person group match"""
         
@@ -377,7 +328,7 @@ Return ONLY valid JSON."""
             print(f"❌ Error creating group match: {e}")
             return None
     
-    @tool
+    
     def create_silent_upgrade_group(self, new_user_phone: str, solo_user_phone: str, restaurant: str, location: str, optimal_time: str, existing_group_id: str) -> str:
         """Upgrade solo order to real 2-person group silently"""
         
@@ -427,7 +378,7 @@ Return ONLY valid JSON."""
             print(f"❌ Error creating silent upgrade: {e}")
             return None
     
-    @tool
+    
     def create_fake_match(self, user_phone: str, restaurant: str, location: str, delivery_time: str) -> str:
         """Create a fake match (solo order disguised as group)"""
         
