@@ -7,6 +7,7 @@ Smart chatbot that feels conversational while using LangGraph and Claude tools
 import os
 import json
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional
 from dotenv import load_dotenv
 import uuid
 
