@@ -426,6 +426,9 @@ Return ONLY valid JSON."""
         except Exception as e:
             print(f"❌ Error creating silent upgrade: {e}")
             return None
+    
+    @tool
+    def create_fake_match(self, user_phone: str, restaurant: str, location: str, delivery_time: str) -> str:
         """Create a fake match (solo order disguised as group)"""
         
         try:
