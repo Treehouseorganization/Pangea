@@ -2808,6 +2808,40 @@ def route_message_intelligently(phone_number: str, message_body: str):
         action = routing_decision.get('action')
         print(f"📌 Routing action determined: {action}")
 
+        # 🆕 SAFETY CHECK: Handle timing issue with group invitations
+        if action == 'provide_clarification' and message_body.lower().strip() in ['yes', 'y', 'sure', 'ok']:
+            print(f"🔍 SAFETY CHECK: 'Yes' response routed to clarification - checking for recent group activity")
+            
+            # Check for recent groups created for this user (within last 2 minutes)
+            from datetime import timedelta
+            recent_cutoff = datetime.now() - timedelta(minutes=2)
+            
+            try:
+                recent_groups = db.collection('active_groups')\
+                               .where('members', 'array_contains', phone_number)\
+                               .where('created_at', '>=', recent_cutoff)\
+                               .limit(1).get()
+                
+                if len(recent_groups) > 0:
+                    group_doc = recent_groups[0]
+                    group_data = group_doc.to_dict()
+                    group_status = group_data.get('status')
+                    group_id = group_data.get('group_id')
+                    
+                    print(f"🎯 FOUND recent group {group_id} with status {group_status} - overriding to group_response_yes")
+                    
+                    # Override the routing decision
+                    action = 'group_response_yes'
+                    routing_decision['action'] = 'group_response_yes'
+                    routing_decision['confidence'] = 0.95
+                    routing_decision['override_reason'] = f'Found recent group {group_id} - timing issue fix'
+                    
+                else:
+                    print(f"🔍 No recent groups found for timing override")
+                    
+            except Exception as e:
+                print(f"❌ Error in timing safety check: {e}")
+
         if action in ['cancel_current_process', 'handle_correction', 'provide_clarification']:
             try:
                 print("📨 Routing to handle_incoming_sms()...")
@@ -3023,6 +3057,25 @@ def get_system_state_for_claude(user_phone: str, state: PangeaState) -> Dict:
                           .where('status', 'in', ['pending_responses', 'forming'])\
                           .limit(1).get()
         has_pending_group_invitation = len(pending_groups) > 0
+        
+        # 🔍 DEBUG: Log group query results for troubleshooting
+        if len(pending_groups) > 0:
+            group_doc = pending_groups[0]
+            group_data = group_doc.to_dict()
+            print(f"🔍 DEBUG: Found pending group for {user_phone}: {group_data.get('group_id')} (status: {group_data.get('status')})")
+        else:
+            print(f"🔍 DEBUG: No pending groups found for {user_phone}")
+            # Check if there are ANY groups for this user at all
+            all_groups = db.collection('active_groups')\
+                          .where('members', 'array_contains', user_phone)\
+                          .limit(5).get()
+            if len(all_groups) > 0:
+                print(f"🔍 DEBUG: But found {len(all_groups)} groups with any status:")
+                for group_doc in all_groups:
+                    group_data = group_doc.to_dict()
+                    print(f"  - {group_data.get('group_id')}: status={group_data.get('status')}, members={group_data.get('members')}")
+            else:
+                print(f"🔍 DEBUG: No groups found at all for {user_phone}")
         
         # Check proactive notifications
         proactive_notification = check_pending_proactive_notifications(user_phone)
@@ -4231,7 +4284,64 @@ Let me know if you need any help!"""
             print(f"✅ Group accepted and order process started: {negotiation_data['negotiation_id']}")
         
         else:
-            send_friendly_message(user_phone, "I don't see any pending group invitations for you right now. Want to start a new food order?", message_type="general")
+            # FALLBACK: Check if user has ANY active groups they might be responding to
+            all_user_groups = db.collection('active_groups')\
+                             .where('members', 'array_contains', user_phone)\
+                             .where('status', 'in', ['pending_responses', 'forming', 'active'])\
+                             .limit(1).get()
+            
+            if len(all_user_groups) > 0:
+                # Found a group - start order process
+                group_doc = all_user_groups[0]
+                group_data = group_doc.to_dict()
+                
+                group_id = group_data['group_id']
+                restaurant = group_data['restaurant']
+                delivery_time = group_data['delivery_time']
+                group_size = len(group_data['members'])
+                
+                print(f"🔄 FALLBACK: Found group {group_id} for {user_phone}, starting order process")
+                
+                try:
+                    from pangea_order_processor import start_order_process, get_payment_amount
+                    
+                    order_session = start_order_process(
+                        user_phone=user_phone,
+                        group_id=group_id,
+                        restaurant=restaurant,
+                        group_size=group_size,
+                        delivery_time=delivery_time
+                    )
+                    
+                    payment_amount = get_payment_amount(group_size)
+                    
+                    success_message = f"""Great! You're part of the {restaurant} group! 🎉
+
+**Quick steps to get your food:**
+1. Order directly from {restaurant} (app/website/phone) - choose PICKUP, not delivery
+2. Come back here with your confirmation number or name for the order AND what you ordered
+
+Your payment share: {payment_amount} 💳
+
+When you're ready to pay, just text:
+**PAY**
+
+I'll send you the payment link! 💳"""
+                    
+                    send_friendly_message(user_phone, success_message, message_type="order_start")
+                    print(f"✅ FALLBACK: Order process started successfully for {user_phone}")
+                    
+                    # Update group status
+                    group_doc.reference.update({
+                        'responses_received': firestore.ArrayUnion([user_phone]),
+                        'status': 'active'
+                    })
+                    
+                except Exception as e:
+                    print(f"❌ FALLBACK: Error starting order process for {user_phone}: {e}")
+                    send_friendly_message(user_phone, f"Great! You're part of the {restaurant} group! Setting up your order instructions...", message_type="general")
+            else:
+                send_friendly_message(user_phone, "I don't see any pending group invitations for you right now. Want to start a new food order?", message_type="general")
             
     except Exception as e:
         print(f"❌ Error in fake match handling: {e}")
