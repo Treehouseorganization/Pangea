@@ -859,25 +859,34 @@ def create_group_delivery(group_data: Dict) -> Dict:
     
     try:
         print(f"🚚 Creating delivery for {group_data.get('restaurant')} group...")
+        print(f"📋 Group data: {group_data}")
         
         # Step 1: Create quote
+        print(f"📝 Creating quote for pickup: {group_data.get('restaurant')}, dropoff: {group_data.get('location')}")
         quote_result = client.create_delivery_quote(
             pickup_location=group_data.get('restaurant'),
             dropoff_location=group_data.get('location')
         )
         
+        print(f"💰 Quote result: {quote_result}")
         if 'error' in quote_result:
+            print(f"❌ Quote creation failed: {quote_result}")
             return quote_result
         
         quote_id = quote_result['id']
+        print(f"✅ Quote created with ID: {quote_id}")
         
         # Step 2: Create delivery
+        print(f"🚚 Creating delivery with quote ID: {quote_id}")
         delivery_result = client.create_delivery(group_data, quote_id)
         
+        print(f"📦 Delivery result: {delivery_result}")
         if 'error' in delivery_result:
+            print(f"❌ Delivery creation failed: {delivery_result}")
             return delivery_result
         
         print(f"✅ Delivery created successfully: {delivery_result['id']}")
+        print(f"🔗 Tracking URL: {delivery_result.get('tracking_url', 'N/A')}")
         
         return {
             'success': True,

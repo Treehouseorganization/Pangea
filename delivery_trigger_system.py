@@ -181,25 +181,39 @@ class DeliveryTriggerSystem:
         """Trigger delivery immediately"""
         
         try:
+            print(f"🚀 Triggering delivery now for group: {group_id}")
+            print(f"👥 Paid users: {paid_users}")
+            
             # Build delivery data
             delivery_data = self._build_delivery_data(group_id, paid_users, order_session)
+            print(f"📦 Built delivery data: {delivery_data}")
             
             # Create delivery via Uber Direct
+            print(f"📞 Calling Uber Direct API...")
             from pangea_uber_direct import create_group_delivery
             result = create_group_delivery(delivery_data)
+            
+            print(f"🔄 Uber Direct API response: {result}")
             
             if result.get('success'):
                 delivery_id = result.get('delivery_id')
                 tracking_url = result.get('tracking_url')
                 
-                print(f"✅ Delivery created: {delivery_id}")
+                print(f"✅ Delivery created successfully!")
+                print(f"📋 Delivery ID: {delivery_id}")
+                print(f"🔗 Tracking URL: {tracking_url}")
                 
                 # Update all paid users' sessions
+                print(f"📝 Updating user sessions...")
                 for user_phone in paid_users:
+                    print(f"   ✏️ Updating session for {user_phone}")
                     self._mark_delivery_triggered(user_phone, delivery_id, tracking_url)
                 
                 # Send notifications after delay
+                print(f"📱 Scheduling delivery notifications...")
                 self._schedule_delivery_notifications(delivery_data, result)
+                
+                print(f"🎉 Delivery trigger completed successfully!")
                 
                 return {
                     'status': 'success',
@@ -207,7 +221,8 @@ class DeliveryTriggerSystem:
                     'message': 'Delivery triggered successfully'
                 }
             else:
-                print(f"❌ Delivery creation failed: {result}")
+                print(f"❌ Delivery creation failed!")
+                print(f"💥 Failure details: {result}")
                 return {
                     'status': 'error',
                     'message': 'Failed to create delivery'
@@ -244,11 +259,15 @@ class DeliveryTriggerSystem:
                 return self._trigger_delivery_now(group_id, paid_users, order_session)
             
             print(f"⏰ Scheduling delivery in {delay_seconds} seconds ({scheduled_datetime.strftime('%I:%M %p')})")
+            print(f"📅 Scheduled for: {scheduled_datetime}")
+            print(f"👥 Users for scheduled delivery: {paid_users}")
             
             # Start background thread to trigger delivery
             def delayed_trigger():
+                print(f"⏰ Timer started for {delay_seconds} seconds...")
                 time.sleep(delay_seconds)
-                print(f"⏰ Triggering scheduled delivery for {group_id}")
+                print(f"🔔 Timer expired! Triggering scheduled delivery for {group_id}")
+                print(f"👥 Triggering for users: {paid_users}")
                 self._trigger_delivery_now(group_id, paid_users, order_session)
             
             thread = threading.Thread(target=delayed_trigger)
@@ -406,9 +425,16 @@ class DeliveryTriggerSystem:
     def _schedule_delivery_notifications(self, delivery_data: Dict, delivery_result: Dict):
         """Schedule delayed delivery notifications"""
         
+        print(f"📱 Scheduling delivery notifications in 50 seconds...")
+        print(f"   📦 Delivery ID: {delivery_result.get('delivery_id', 'N/A')}")
+        print(f"   👥 Recipients: {delivery_data.get('members', [])}")
+        
         def send_delayed_notifications():
+            print(f"⏱️ Starting 50-second notification delay...")
             # Wait 50 seconds before sending notifications
             time.sleep(50)
+            
+            print(f"📬 Sending delivery notifications now!")
             
             restaurant = delivery_data.get('restaurant')
             location = delivery_data.get('location')

@@ -261,6 +261,39 @@ After payment, delivery will be triggered at {scheduled_time}! ⏰"""
                 'response_sent': True
             }
             
+        elif payment_result['status'] == 'conditional_scheduled':
+            # Conditional scheduled delivery - show payment link and explain timing
+            context = session_manager.get_user_context(user_phone)
+            order_session = context.active_order_session
+            
+            if order_session:
+                restaurant = order_session.get('restaurant', 'restaurant')
+                group_size = order_session.get('group_size', 1)
+                scheduled_time = payment_result.get('scheduled_time', 'scheduled time')
+                
+                # Generate payment link
+                payment_amount = "$3.50" if group_size == 1 else "$4.50"
+                payment_link = get_payment_link(group_size)
+                
+                response_message = f"""💳 Payment for {restaurant}
+
+Your share: {payment_amount}
+
+Pay here: {payment_link}
+
+Delivery will be triggered at {scheduled_time}! ⏰"""
+            else:
+                scheduled_time = payment_result.get('scheduled_time', 'scheduled time')
+                response_message = f"Perfect! Your payment is processed. Delivery will be triggered at {scheduled_time}! ⏰"
+            
+            send_friendly_message(user_phone, response_message)
+            
+            return {
+                'status': 'success',
+                'action': 'payment_conditional_scheduled',
+                'response_sent': True
+            }
+            
         else:
             # Payment error
             error_message = payment_result.get('message', 'Payment processing error')
