@@ -84,7 +84,6 @@ class SmartChatbotWorkflow:
         
         return workflow.compile()
     
-    @tool
     def _understand_intent_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Understand user intent with full context awareness"""
         
@@ -221,7 +220,6 @@ Return ONLY valid JSON."""
         """Route to appropriate handler based on intent"""
         return state['current_intent']
     
-    @tool
     def _handle_new_food_request_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Handle new food request with extraction and validation"""
         
@@ -267,7 +265,6 @@ Return ONLY valid JSON."""
         
         return state
     
-    @tool
     def _handle_missing_info_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Handle when user provides missing information"""
         
@@ -314,7 +311,6 @@ Return ONLY valid JSON."""
         
         return state
     
-    @tool
     def _find_matches_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Find matches using intelligent matching system"""
         
@@ -436,7 +432,6 @@ Let's get your food! 🍕"""
         
         return state
     
-    @tool
     def _handle_group_response_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Handle YES/NO responses to group invitations"""
         
@@ -464,7 +459,6 @@ Let's get your food! 🍕"""
         
         return state
     
-    @tool
     def _handle_order_process_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Handle order process messages - integrate with existing order processor"""
         
@@ -493,22 +487,23 @@ Let's get your food! 🍕"""
         
         return state
     
-    @tool
     def _handle_general_conversation_node(self, state: SmartChatbotState) -> SmartChatbotState:
-        """Handle general conversation and FAQ"""
+        """Handle general conversation with full LLM conversational capabilities"""
         
         user_message = state['messages'][-1].content
         user_phone = state['user_phone']
+        context = state['user_context']
         
-        print(f"💬 Processing general conversation from {user_phone}")
+        print(f"💬 Processing dynamic conversation from {user_phone}")
         
-        # Generate helpful FAQ response
-        state['response_message'] = self._generate_faq_response(user_message)
-        state['action_taken'] = "faq_response"
+        # Generate contextual, conversational response using LLM
+        state['response_message'] = self._generate_dynamic_conversation_response(
+            user_message, user_phone, context
+        )
+        state['action_taken'] = "dynamic_conversation"
         
         return state
     
-    @tool
     def _send_response_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Send response to user"""
         
@@ -708,6 +703,58 @@ Try: "I want McDonald's at the library" 🍔"""
 Example: "I want Chipotle delivered to the library"
 
 **Questions?** Ask about restaurants, locations, pricing, or how it works! 😊🍕"""
+    
+    def _generate_dynamic_conversation_response(self, message: str, user_phone: str, context: Dict) -> str:
+        """Generate dynamic, contextual conversation responses using LLM"""
+        
+        # Build comprehensive context for the LLM
+        context_info = f"""
+User Context:
+- Phone: {user_phone}
+- Previous interactions: {context.get('conversation_history', [])}
+- Active food request: {context.get('current_food_request', 'None')}
+- Recent activity: {context.get('recent_activity', 'None')}
+
+Available Services:
+- Restaurants: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks  
+- Locations: Richard J Daley Library, Student Center East, Student Center West, Student Services Building, University Hall
+- Service: Group food delivery coordination to split costs
+
+Current Status: {context.get('status', 'No active orders')}
+"""
+        
+        prompt = f"""You are Pangea, a friendly AI assistant that helps university students coordinate group food deliveries to split delivery costs. 
+
+{context_info}
+
+User just said: "{message}"
+
+Guidelines:
+- Be conversational, helpful, and natural
+- Remember context from previous interactions  
+- For food requests, guide them to specify restaurant + location
+- For questions about service, explain how group ordering works
+- For general chat, be friendly but try to guide toward food ordering
+- Use appropriate emojis to be engaging
+- Keep responses concise but helpful
+- If they seem confused, offer specific examples
+
+Respond naturally as if you're having a real conversation with this student:"""
+
+        try:
+            response = self.llm.invoke([{"role": "user", "content": prompt}])
+            response_text = response.content.strip()
+            
+            # Ensure response isn't too long (SMS limit consideration)
+            if len(response_text) > 1500:
+                response_text = response_text[:1450] + "... 📱"
+            
+            return response_text
+            
+        except Exception as e:
+            print(f"❌ LLM conversation error: {e}")
+            # Fallback to basic FAQ if LLM fails
+            return self._generate_faq_response(message)
     
     def process_message(self, user_phone: str, message: str) -> Dict:
         """Main entry point - process incoming message"""

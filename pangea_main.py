@@ -16,7 +16,6 @@ from langchain_anthropic import ChatAnthropic
 from twilio.rest import Client
 import firebase_admin
 from firebase_admin import credentials, firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 from flask import Flask, request
 
 # Our enhanced modules
@@ -336,8 +335,8 @@ def handle_group_invitation_response(user_phone: str, response: str) -> bool:
     try:
         # Check for pending negotiations (existing system)
         pending_negotiations = db.collection('negotiations')\
-            .where(filter=FieldFilter('to_user', '==', user_phone))\
-            .where(filter=FieldFilter('status', '==', 'pending'))\
+            .where('to_user', '==', user_phone)\
+            .where('status', '==', 'pending')\
             .limit(1).get()
         
         if len(pending_negotiations) > 0:
@@ -392,8 +391,8 @@ Your share: $4.50 💳"""
         
         # Check for active groups (new system)
         pending_groups = db.collection('active_groups')\
-            .where(filter=FieldFilter('members', 'array_contains', user_phone))\
-            .where(filter=FieldFilter('status', 'in', ['pending_responses', 'forming']))\
+            .where('members', 'array_contains', user_phone)\
+            .where('status', 'in', ['pending_responses', 'forming'])\
             .limit(1).get()
         
         if len(pending_groups) > 0:
