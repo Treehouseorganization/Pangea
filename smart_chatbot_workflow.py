@@ -1,0 +1,746 @@
+# smart_chatbot_workflow.py
+"""
+Smart Chatbot LangGraph Workflow
+Feels like intelligent conversation while maintaining agent structure
+"""
+
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langchain_core.tools import tool
+from typing import Dict, List, TypedDict, Annotated
+from datetime import datetime
+import json
+
+# State for our smart chatbot
+class SmartChatbotState(TypedDict):
+    messages: Annotated[List, add_messages]
+    user_phone: str
+    user_context: Dict  # Rich context from session manager
+    current_intent: str  # What user wants to do
+    extracted_data: Dict  # Extracted information
+    response_message: str  # Response to send to user
+    action_taken: str  # What action was performed
+    needs_followup: bool  # Whether followup is needed
+
+class SmartChatbotWorkflow:
+    """Intelligent chatbot workflow using LangGraph and Claude tools"""
+    
+    def __init__(self, session_manager, matcher, anthropic_llm, send_sms_func):
+        self.session_manager = session_manager
+        self.matcher = matcher
+        self.llm = anthropic_llm
+        self.send_sms = send_sms_func
+        self.workflow = self._create_workflow()
+    
+    def _create_workflow(self) -> StateGraph:
+        """Create the smart chatbot workflow"""
+        
+        workflow = StateGraph(SmartChatbotState)
+        
+        # Add nodes
+        workflow.add_node("understand_intent", self._understand_intent_node)
+        workflow.add_node("handle_new_food_request", self._handle_new_food_request_node)
+        workflow.add_node("handle_missing_info", self._handle_missing_info_node)
+        workflow.add_node("find_matches", self._find_matches_node)
+        workflow.add_node("handle_group_response", self._handle_group_response_node)
+        workflow.add_node("handle_order_process", self._handle_order_process_node)
+        workflow.add_node("handle_general_conversation", self._handle_general_conversation_node)
+        workflow.add_node("send_response", self._send_response_node)
+        
+        # Entry point
+        workflow.set_entry_point("understand_intent")
+        
+        # Smart routing based on intent
+        workflow.add_conditional_edges(
+            "understand_intent",
+            self._route_by_intent,
+            {
+                "new_food_request": "handle_new_food_request",
+                "missing_info": "handle_missing_info", 
+                "group_response": "handle_group_response",
+                "order_process": "handle_order_process",
+                "general_conversation": "handle_general_conversation"
+            }
+        )
+        
+        # Food request flow
+        workflow.add_conditional_edges(
+            "handle_new_food_request",
+            lambda state: "find_matches" if not state.get('extracted_data', {}).get('missing_info') else "send_response",
+            {
+                "find_matches": "find_matches",
+                "send_response": "send_response"
+            }
+        )
+        
+        workflow.add_edge("handle_missing_info", "find_matches")
+        workflow.add_edge("find_matches", "send_response")
+        workflow.add_edge("handle_group_response", "send_response")
+        workflow.add_edge("handle_order_process", "send_response")
+        workflow.add_edge("handle_general_conversation", "send_response")
+        workflow.add_edge("send_response", END)
+        
+        return workflow.compile()
+    
+    @tool
+    def _understand_intent_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Understand user intent with full context awareness"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        # Get rich user context
+        context = self.session_manager.get_user_context(user_phone)
+        state['user_context'] = context.__dict__
+        
+        print(f"🧠 Understanding intent for {user_phone}: '{user_message}'")
+        print(f"📋 Context: {context.session_type}, active_order={context.active_order_session is not None}")
+        
+        # Check for new food request first
+        new_request_analysis = self.session_manager.detect_new_food_request(user_phone, user_message)
+        
+        if new_request_analysis.get('is_new_food_request'):
+            state['current_intent'] = "new_food_request"
+            state['extracted_data'] = new_request_analysis.get('extracted_request', {})
+            print(f"🍕 Detected new food request")
+            return state
+        
+        # Use Claude to understand intent with context
+        intent_analysis = self._analyze_intent_with_claude(user_message, context)
+        
+        state['current_intent'] = intent_analysis['intent']
+        state['extracted_data'] = intent_analysis.get('extracted_data', {})
+        
+        print(f"🎯 Intent: {state['current_intent']}")
+        return state
+    
+    def _analyze_intent_with_claude(self, message: str, context) -> Dict:
+        """Use Claude to analyze user intent with full context"""
+        
+        intent_prompt = f"""Analyze the user's intent based on their message and current context.
+
+USER MESSAGE: "{message}"
+
+CURRENT CONTEXT:
+- Session type: {context.session_type}
+- Has active order: {context.active_order_session is not None}
+- Pending group invites: {len(context.pending_group_invites)}
+- Recent conversation: {context.conversation_memory[-2:] if context.conversation_memory else []}
+
+POSSIBLE INTENTS:
+1. **new_food_request**: Starting fresh food order (even if in other session)
+2. **missing_info**: Providing missing restaurant/location info for current request
+3. **group_response**: Responding YES/NO to group invitation
+4. **order_process**: In order flow (providing order details, payment)
+5. **general_conversation**: Questions, help, or general chat
+
+CONTEXT CLUES:
+- If they mention restaurant + location + time → likely new_food_request
+- If they say "yes"/"no" and have pending invites → group_response  
+- If they provide order number/name and in order process → order_process
+- If they ask questions about service → general_conversation
+- If they're filling in previously missing info → missing_info
+
+Return JSON:
+{{
+    "intent": "one of the 5 intents above",
+    "confidence": "high/medium/low",
+    "reasoning": "explanation of decision",
+    "extracted_data": {{"any relevant extracted info"}} or {{}},
+    "context_used": ["list of context factors that influenced decision"]
+}}
+
+Examples:
+- "I want Chipotle at library" → intent: "new_food_request"
+- "Yes" (with pending invite) → intent: "group_response"
+- "Order #ABC123" (in order process) → intent: "order_process"
+- "What restaurants are available?" → intent: "general_conversation"
+
+Return ONLY valid JSON."""
+        
+        try:
+            response = self.llm.invoke([{"role": "user", "content": intent_prompt}])
+            response_text = response.content.strip()
+            
+            # Clean JSON
+            if '```json' in response_text:
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                response_text = response_text[start:end]
+            elif '```' in response_text:
+                response_text = response_text.replace('```', '').strip()
+            
+            if not response_text.startswith('{'):
+                import re
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group()
+            
+            result = json.loads(response_text)
+            
+            print(f"🤖 Intent analysis: {result.get('intent')} (confidence: {result.get('confidence')})")
+            print(f"   Reasoning: {result.get('reasoning')}")
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Intent analysis failed: {e}")
+            
+            # Fallback logic
+            return self._fallback_intent_analysis(message, context)
+    
+    def _fallback_intent_analysis(self, message: str, context) -> Dict:
+        """Simple fallback intent analysis"""
+        
+        message_lower = message.lower()
+        
+        # Check for group responses
+        if context.pending_group_invites and message_lower.strip() in ['yes', 'y', 'no', 'n', 'sure', 'ok']:
+            return {"intent": "group_response", "confidence": "high", "reasoning": "Simple yes/no with pending invites"}
+        
+        # Check for order process
+        if context.active_order_session:
+            if 'pay' in message_lower:
+                return {"intent": "order_process", "confidence": "high", "reasoning": "Payment request in order session"}
+            elif any(word in message_lower for word in ['order', 'name', 'number']):
+                return {"intent": "order_process", "confidence": "medium", "reasoning": "Order details in active session"}
+        
+        # Check for food requests
+        restaurants = ['chipotle', 'mcdonalds', 'chick-fil-a', 'portillos', 'starbucks']
+        food_words = ['want', 'craving', 'hungry', 'order']
+        
+        if any(rest in message_lower for rest in restaurants) or any(word in message_lower for word in food_words):
+            return {"intent": "new_food_request", "confidence": "medium", "reasoning": "Food-related keywords"}
+        
+        # Default to general conversation
+        return {"intent": "general_conversation", "confidence": "low", "reasoning": "No clear intent detected"}
+    
+    def _route_by_intent(self, state: SmartChatbotState) -> str:
+        """Route to appropriate handler based on intent"""
+        return state['current_intent']
+    
+    @tool
+    def _handle_new_food_request_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle new food request with extraction and validation"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"🍕 Processing new food request from {user_phone}")
+        
+        # Extract food request details with Claude
+        extracted = self._extract_food_request_details(user_message)
+        
+        restaurant = extracted.get('restaurant')
+        location = extracted.get('location')
+        delivery_time = extracted.get('delivery_time', 'now')
+        missing_info = extracted.get('missing_info', [])
+        
+        if missing_info:
+            # Generate helpful response for missing info
+            state['response_message'] = self._generate_missing_info_response(missing_info, restaurant, location)
+            state['action_taken'] = "asked_for_missing_info"
+            
+            # Update context but don't start full request yet
+            context = self.session_manager.get_user_context(user_phone)
+            context.session_type = "food_request"
+            context.current_food_request = {
+                "restaurant": restaurant,
+                "location": location,
+                "delivery_time": delivery_time,
+                "missing_info": missing_info
+            }
+            self.session_manager.update_user_context(context, user_message)
+            
+        else:
+            # Complete request - start fresh food request
+            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
+            state['extracted_data'] = {
+                "restaurant": restaurant,
+                "location": location, 
+                "delivery_time": delivery_time,
+                "missing_info": []
+            }
+            state['action_taken'] = "started_food_request"
+        
+        return state
+    
+    @tool
+    def _handle_missing_info_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle when user provides missing information"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"📝 Processing missing info from {user_phone}")
+        
+        # Get current context
+        context = self.session_manager.get_user_context(user_phone)
+        current_request = context.current_food_request or {}
+        
+        # Extract new information
+        extracted = self._extract_food_request_details(user_message, current_request)
+        
+        restaurant = extracted.get('restaurant') or current_request.get('restaurant')
+        location = extracted.get('location') or current_request.get('location')
+        delivery_time = extracted.get('delivery_time') or current_request.get('delivery_time', 'now')
+        missing_info = extracted.get('missing_info', [])
+        
+        if missing_info:
+            # Still missing info
+            state['response_message'] = self._generate_missing_info_response(missing_info, restaurant, location)
+            state['action_taken'] = "still_missing_info"
+            
+            # Update context
+            context.current_food_request.update({
+                "restaurant": restaurant,
+                "location": location,
+                "delivery_time": delivery_time,
+                "missing_info": missing_info
+            })
+            self.session_manager.update_user_context(context, user_message)
+        else:
+            # Complete now - start matching
+            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
+            state['extracted_data'] = {
+                "restaurant": restaurant,
+                "location": location,
+                "delivery_time": delivery_time,
+                "missing_info": []
+            }
+            state['action_taken'] = "completed_food_request"
+        
+        return state
+    
+    @tool
+    def _find_matches_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Find matches using intelligent matching system"""
+        
+        user_phone = state['user_phone']
+        extracted = state['extracted_data']
+        
+        restaurant = extracted['restaurant']
+        location = extracted['location']
+        delivery_time = extracted['delivery_time']
+        
+        print(f"🔍 Finding matches for {restaurant} at {location} ({delivery_time})")
+        
+        # Use intelligent matcher
+        match_result = self.matcher.find_compatible_matches(user_phone, restaurant, location, delivery_time)
+        
+        if match_result['has_real_match']:
+            best_match = match_result['matches'][0]
+            match_phone = best_match['user_phone']
+            
+            # Check if this is a silent upgrade scenario
+            if match_result.get('is_silent_upgrade'):
+                print(f"🤫 Silent upgrade scenario: {match_phone} (solo) + {user_phone} (new)")
+                
+                # Silent upgrade: solo user gets upgraded, new user gets "found someone" message
+                existing_group_id = best_match.get('group_id')
+                optimal_time = best_match.get('delivery_time', delivery_time)
+                
+                # Create silent upgrade
+                group_id = self.matcher.create_silent_upgrade_group(
+                    user_phone, match_phone, restaurant, location, optimal_time, existing_group_id
+                )
+                
+                # Transition new user to order process
+                self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
+                
+                # Send message to NEW user (they get told they found someone)
+                state['response_message'] = f"""🎉 Perfect! I found someone who also wants {restaurant} at {location}!
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Let's get your food! 🍕"""
+                
+                # SOLO user gets NO notification (silent upgrade)
+                # Their fake match just became real, but they don't know
+                
+                state['action_taken'] = "silent_upgrade_group"
+                
+            else:
+                # Regular real match found
+                print(f"🎯 Real match found: {match_phone}")
+                
+                # Create group and send invitation
+                group_id = self.matcher.create_group_match(
+                    user_phone, match_phone, restaurant, location, 
+                    best_match.get('time_analysis', {}).get('optimal_time', delivery_time)
+                )
+                
+                # Transition both users to order process
+                self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
+                self.session_manager.transition_to_order_process(match_phone, group_id, restaurant, 2)
+                
+                # Send messages to both users
+                state['response_message'] = f"""🎉 Perfect match found! You and another student both want {restaurant} at {location}!
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Let's get your food! 🍕"""
+                
+                match_message = f"""🎉 Great news! Another student wants {restaurant} at {location} too!
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)  
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Time to order! 🍕"""
+                
+                # Send to matched user
+                self.send_sms(match_phone, match_message)
+                
+                state['action_taken'] = "created_real_group"
+            
+        else:
+            # No real match - create fake match (solo order)
+            print(f"🎭 Creating fake match for {user_phone}")
+            
+            group_id = self.matcher.create_fake_match(user_phone, restaurant, location, delivery_time)
+            
+            # Transition to order process as solo
+            self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 1)
+            
+            state['response_message'] = f"""Great news! I found someone who also wants {restaurant} at {location}! 🎉
+
+Your share will be $3.50 instead of the full delivery fee.
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered  
+3. Text "PAY" when ready
+
+Let's get your food! 🍕"""
+            
+            state['action_taken'] = "created_fake_match"
+        
+        return state
+    
+    @tool
+    def _handle_group_response_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle YES/NO responses to group invitations"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"👥 Processing group response from {user_phone}: {user_message}")
+        
+        # This would integrate with existing group invitation system
+        # For now, provide helpful response
+        
+        message_lower = user_message.lower().strip()
+        
+        if message_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
+            state['response_message'] = "I don't see any pending group invitations for you right now. Want to start a new food order? Just tell me what you're craving! 🍕"
+            state['action_taken'] = "no_pending_invites"
+            
+        elif message_lower in ['no', 'n', 'nah', 'pass']:
+            state['response_message'] = "No worries! I'll keep looking for other opportunities. Want to try a different restaurant or time? 😊"
+            state['action_taken'] = "declined_group"
+            
+        else:
+            state['response_message'] = "I didn't catch that. If you have a pending group invitation, please reply YES to join or NO to pass. Otherwise, let me know what you'd like to order! 🍕"
+            state['action_taken'] = "unclear_group_response"
+        
+        return state
+    
+    @tool
+    def _handle_order_process_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle order process messages - integrate with existing order processor"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"📋 Processing order message from {user_phone}")
+        
+        # Use existing order processor
+        try:
+            from pangea_order_processor import process_order_message
+            result = process_order_message(user_phone, user_message)
+            
+            if result:
+                state['response_message'] = "Order processed successfully! ✅"
+                state['action_taken'] = "order_processed"
+            else:
+                # Fallback response
+                state['response_message'] = self._generate_order_process_response(user_message, user_phone)
+                state['action_taken'] = "order_response_generated"
+                
+        except Exception as e:
+            print(f"❌ Order processing error: {e}")
+            state['response_message'] = self._generate_order_process_response(user_message, user_phone)
+            state['action_taken'] = "order_fallback_response"
+        
+        return state
+    
+    @tool
+    def _handle_general_conversation_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle general conversation and FAQ"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"💬 Processing general conversation from {user_phone}")
+        
+        # Generate helpful FAQ response
+        state['response_message'] = self._generate_faq_response(user_message)
+        state['action_taken'] = "faq_response"
+        
+        return state
+    
+    @tool
+    def _send_response_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Send response to user"""
+        
+        user_phone = state['user_phone']
+        message = state.get('response_message', '')
+        
+        if message:
+            success = self.send_sms(user_phone, message)
+            print(f"📤 Response sent to {user_phone}: {'✅' if success else '❌'}")
+            
+            # Update conversation memory
+            context = self.session_manager.get_user_context(user_phone)
+            self.session_manager.update_user_context(context, state['messages'][-1].content)
+        
+        return state
+    
+    # Helper methods
+    def _extract_food_request_details(self, message: str, existing_request: Dict = None) -> Dict:
+        """Extract food request details using Claude"""
+        
+        prompt = f"""Extract food order details from this message:
+
+Message: "{message}"
+Existing request: {existing_request or {}}
+
+Available restaurants: Chipotle, McDonald's, Chick-fil-A, Portillo's, Starbucks
+Available locations: Richard J Daley Library, Student Center East, Student Center West, Student Services Building, University Hall
+
+Extract and return JSON:
+{{
+    "restaurant": "exact restaurant name or null",
+    "location": "exact location name or null",
+    "delivery_time": "parsed time or 'now'",
+    "missing_info": ["restaurant", "location"] // what's still missing
+}}
+
+Return ONLY valid JSON."""
+        
+        try:
+            response = self.llm.invoke([{"role": "user", "content": prompt}])
+            response_text = response.content.strip()
+            
+            # Clean JSON
+            if '```json' in response_text:
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                response_text = response_text[start:end]
+            elif '```' in response_text:
+                response_text = response_text.replace('```', '').strip()
+            
+            if not response_text.startswith('{'):
+                import re
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group()
+            
+            result = json.loads(response_text)
+            
+            # Normalize location
+            location = result.get('location')
+            if location:
+                from pangea_locations import normalize_location
+                result['location'] = normalize_location(location)
+            
+            # Determine missing info
+            missing = []
+            if not result.get('restaurant'):
+                missing.append('restaurant')
+            if not result.get('location'):
+                missing.append('location')
+            result['missing_info'] = missing
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Food extraction failed: {e}")
+            return {"restaurant": None, "location": None, "delivery_time": "now", "missing_info": ["restaurant", "location"]}
+    
+    def _generate_missing_info_response(self, missing_info: List[str], restaurant: str = None, location: str = None) -> str:
+        """Generate helpful response for missing information"""
+        
+        if set(missing_info) == {'restaurant', 'location'}:
+            return """I'd love to help you order! I need to know:
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
+
+Example: "I want Chipotle delivered to the library" """
+        
+        elif 'restaurant' in missing_info:
+            return f"""Got it - you want food delivered to {location}! 
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+Just tell me which one sounds good! 😊"""
+        
+        elif 'location' in missing_info:
+            return f"""Perfect - {restaurant} it is! 
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library
+• Student Center East  
+• Student Center West
+• Student Services Building
+• University Hall
+
+Which location works for you?"""
+        
+        else:
+            return "I think I have everything I need! Let me find you a group..."
+    
+    def _generate_order_process_response(self, message: str, user_phone: str) -> str:
+        """Generate helpful order process response"""
+        
+        context = self.session_manager.get_user_context(user_phone)
+        
+        if context.active_order_session:
+            order_stage = context.active_order_session.get('order_stage', 'unknown')
+            restaurant = context.active_order_session.get('restaurant', 'restaurant')
+            
+            if 'pay' in message.lower():
+                if order_stage == 'ready_to_pay':
+                    return "Processing your payment... 💳"
+                else:
+                    return "I need your order details first before you can pay. Please provide your order number/name and what you ordered."
+            
+            elif order_stage == 'need_order_number':
+                return f"""I need your order details for {restaurant}.
+
+Please provide:
+• Your order confirmation number (like "ABC123")
+• OR your name if there's no order number
+• What you ordered
+
+Example: "Order #123, Big Mac meal" or "Name is John, chicken nuggets" """
+            
+            else:
+                return f"I'm here to help with your {restaurant} order! Text PAY when you're ready to pay, or let me know if you need help. 😊"
+        
+        else:
+            return "You don't have an active order. Want to start a new food order? Just tell me what you're craving! 🍕"
+    
+    def _generate_faq_response(self, message: str) -> str:
+        """Generate FAQ response"""
+        
+        message_lower = message.lower()
+        
+        if 'restaurant' in message_lower or 'food' in message_lower:
+            return """🍕 Available restaurants:
+
+• **Chipotle** - Mexican bowls & burritos
+• **McDonald's** - Burgers & fries
+• **Chick-fil-A** - Chicken sandwiches  
+• **Portillo's** - Chicago-style hot dogs & Italian beef
+• **Starbucks** - Coffee & pastries
+
+Just tell me what you're craving! Example: "I want Chipotle at the library" ��"""
+        
+        elif 'location' in message_lower or 'where' in message_lower:
+            return """📍 Delivery locations:
+
+• **Richard J Daley Library**
+• **Student Center East**
+• **Student Center West** 
+• **Student Services Building**
+• **University Hall**
+
+Where would you like your food delivered? 🚚"""
+        
+        elif 'cost' in message_lower or 'price' in message_lower:
+            return """💰 **Pricing:**
+
+2-person group: $4.50 per person
+Solo orders: $3.50 per person
+
+You order your own food from the restaurant - we coordinate delivery to save money! 🍕💳"""
+        
+        elif 'how' in message_lower or 'work' in message_lower:
+            return """🤝 **Here's how it works:**
+
+1. Tell me what restaurant + location you want
+2. I'll find someone with similar orders
+3. You both order your own food from the restaurant  
+4. Split the delivery fee ($4.50 each vs $8+ solo)
+5. Get your food delivered together!
+
+Try: "I want McDonald's at the library" 🍔"""
+        
+        else:
+            return """👋 I'm your AI food coordinator! I help you find others to split delivery fees with.
+
+**Quick start:** Tell me what you're craving!
+Example: "I want Chipotle delivered to the library"
+
+**Questions?** Ask about restaurants, locations, pricing, or how it works! 😊🍕"""
+    
+    def process_message(self, user_phone: str, message: str) -> Dict:
+        """Main entry point - process incoming message"""
+        
+        initial_state = SmartChatbotState(
+            messages=[HumanMessage(content=message)],
+            user_phone=user_phone,
+            user_context={},
+            current_intent="",
+            extracted_data={},
+            response_message="",
+            action_taken="",
+            needs_followup=False
+        )
+        
+        try:
+            final_state = self.workflow.invoke(initial_state)
+            
+            return {
+                'status': 'success',
+                'action': final_state.get('action_taken', 'unknown'),
+                'response_sent': bool(final_state.get('response_message')),
+                'intent': final_state.get('current_intent', 'unknown')
+            }
+            
+        except Exception as e:
+            print(f"❌ Workflow error: {e}")
+            
+            # Send friendly error message
+            error_response = "Sorry, I had a technical hiccup! Can you try again? 😊"
+            self.send_sms(user_phone, error_response)
+            
+            return {
+                'status': 'error',
+                'error': str(e),
+                'response_sent': True
+            }
