@@ -289,12 +289,16 @@ def find_potential_matches_contextual(
 
             if order_time:
                 try:
-                    if hasattr(order_time, 'tzinfo') and order_time.tzinfo is not None:
-                        order_time = order_time.replace(tzinfo=None)
-                    if hasattr(current_time, 'tzinfo') and current_time.tzinfo is not None:
-                        current_time = current_time.replace(tzinfo=None)
+                    # Create separate variables to avoid modifying the originals
+                    order_time_normalized = order_time
+                    current_time_normalized = current_time
+                    
+                    if hasattr(order_time_normalized, 'tzinfo') and order_time_normalized.tzinfo is not None:
+                        order_time_normalized = order_time_normalized.replace(tzinfo=None)
+                    if hasattr(current_time_normalized, 'tzinfo') and current_time_normalized.tzinfo is not None:
+                        current_time_normalized = current_time_normalized.replace(tzinfo=None)
 
-                    time_diff = current_time - order_time
+                    time_diff = current_time_normalized - order_time_normalized
 
                     if time_diff > timedelta(minutes=30):
                         print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago (user: {order_data.get('user_phone')})")
@@ -415,12 +419,16 @@ def _match_candidates(
             # Skip stale or different meal period orders
             if order_time:
                 try:
-                    if hasattr(order_time, 'tzinfo') and order_time.tzinfo:
-                        order_time = order_time.replace(tzinfo=None)
-                    if hasattr(current_time, 'tzinfo') and current_time.tzinfo:
-                        current_time = current_time.replace(tzinfo=None)
+                    # Create separate variables to avoid modifying the originals
+                    order_time_normalized = order_time
+                    current_time_normalized = current_time
+                    
+                    if hasattr(order_time_normalized, 'tzinfo') and order_time_normalized.tzinfo:
+                        order_time_normalized = order_time_normalized.replace(tzinfo=None)
+                    if hasattr(current_time_normalized, 'tzinfo') and current_time_normalized.tzinfo:
+                        current_time_normalized = current_time_normalized.replace(tzinfo=None)
 
-                    time_diff = current_time - order_time
+                    time_diff = current_time_normalized - order_time_normalized
                     if time_diff > timedelta(minutes=30):
                         print(f"   ⏰ Skipping stale order: {order_time_pref} from {time_diff} ago")
                         continue
@@ -5588,6 +5596,17 @@ Then your payment will be $3.50 💳"""
            
            should_cleanup = False
            
+           # 🔧 FIX: Normalize timezone awareness for datetime comparison
+           try:
+               if hasattr(created_at, 'tzinfo') and created_at.tzinfo is not None:
+                   created_at = created_at.replace(tzinfo=None)
+               if hasattr(current_time, 'tzinfo') and current_time.tzinfo is not None:
+                   current_time = current_time.replace(tzinfo=None)
+           except Exception as e:
+               print(f"⚠️ Timezone normalization error: {e}")
+               # Default to current time if there's an issue
+               created_at = current_time
+           
            # Standard cleanup logic for non-protected orders
            if delivery_time_str.lower() == 'now':
                if current_time - created_at > timedelta(hours=2):
@@ -5596,9 +5615,13 @@ Then your payment will be $3.50 💳"""
                try:
                    from pangea_uber_direct import parse_delivery_time
                    scheduled_time = parse_delivery_time(delivery_time_str)
+                   # 🔧 FIX: Normalize scheduled_time timezone too
+                   if hasattr(scheduled_time, 'tzinfo') and scheduled_time.tzinfo is not None:
+                       scheduled_time = scheduled_time.replace(tzinfo=None)
                    if current_time > scheduled_time + timedelta(hours=2):
                        should_cleanup = True
-               except:
+               except Exception as parse_error:
+                   print(f"⚠️ Parse delivery time error: {parse_error}")
                    if current_time - created_at > timedelta(hours=6):
                        should_cleanup = True
            
