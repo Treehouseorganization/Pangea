@@ -481,14 +481,18 @@ def health_check():
     }, 200
 
 @app.route('/webhook/sms', methods=['POST'])
-@app.route('/webhook', methods=['POST'])  # Backward compatibility
+@app.route('/webhook', methods=['POST'])  # Backward compatibility  
 def sms_webhook():
     """Handle incoming SMS messages with enhanced error handling"""
     
-    print("🚀 WEBHOOK STARTED - Incoming SMS request")
-    start_time = datetime.now()
-    
     try:
+        # Force immediate log flush
+        import sys
+        print("🚀 WEBHOOK STARTED - Incoming SMS request", flush=True)
+        sys.stdout.flush()
+        
+        start_time = datetime.now()
+        
         print("🔍 Extracting form data...")
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
@@ -527,11 +531,13 @@ def sms_webhook():
         return '', 200
         
     except Exception as e:
-        processing_time = (datetime.now() - start_time).total_seconds()
-        print(f"❌ Webhook error after {processing_time:.2f}s: {e}")
-        
+        print(f"❌ WEBHOOK CATASTROPHIC ERROR: {e}")
+        print(f"❌ Error type: {type(e).__name__}")
         import traceback
+        print("❌ FULL WEBHOOK TRACEBACK:")
         traceback.print_exc()
+        print("❌ END WEBHOOK TRACEBACK")
+        sys.stdout.flush()
         
         # Try to send error message to user
         try:
