@@ -282,7 +282,7 @@ def cleanup_old_data():
         
         # Clean up old user sessions
         old_sessions = db.collection('user_sessions')\
-            .where('last_activity', '<', cutoff_time)\
+            .where(filter=('last_activity', '<', cutoff_time))\
             .get()
         
         for session in old_sessions:
@@ -291,7 +291,7 @@ def cleanup_old_data():
         
         # Clean up old order sessions
         old_orders = db.collection('order_sessions')\
-            .where('created_at', '<', cutoff_time)\
+            .where(filter=('created_at', '<', cutoff_time))\
             .get()
         
         for order in old_orders:
@@ -308,7 +308,7 @@ def cleanup_old_data():
         
         # Clean up old negotiations
         old_negotiations = db.collection('negotiations')\
-            .where('created_at', '<', cutoff_time)\
+            .where(filter=('created_at', '<', cutoff_time))\
             .get()
         
         for neg in old_negotiations:
@@ -317,7 +317,7 @@ def cleanup_old_data():
         
         # Clean up old groups
         old_groups = db.collection('active_groups')\
-            .where('created_at', '<', cutoff_time)\
+            .where(filter=('created_at', '<', cutoff_time))\
             .get()
         
         for group in old_groups:

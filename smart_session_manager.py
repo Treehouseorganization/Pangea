@@ -351,7 +351,7 @@ Return ONLY valid JSON."""
             
             # Clear old order sessions
             old_orders = self.db.collection('order_sessions')\
-                .where('user_phone', '==', user_phone)\
+                .where(filter=('user_phone', '==', user_phone))\
                 .get()
             
             for order in old_orders:

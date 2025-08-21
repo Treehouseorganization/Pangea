@@ -6,7 +6,6 @@ Maximum 2-person groups with smart time analysis
 
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from langchain_core.tools import tool
 import json
 
 class IntelligentMatcher:
@@ -199,16 +198,24 @@ Return ONLY valid JSON."""
             cutoff_time = datetime.now() - timedelta(minutes=30)  # Recent solo orders only
             
             # Check active_groups for fake matches (solo orders)
+            # Simplified query to avoid complex index requirement
             fake_groups = self.db.collection('active_groups')\
-                .where('restaurant', '==', restaurant)\
-                .where('location', '==', location)\
-                .where('is_fake_match', '==', True)\
-                .where('group_size', '==', 1)\
-                .where('created_at', '>=', cutoff_time)\
+                .where(filter=('restaurant', '==', restaurant))\
+                .where(filter=('location', '==', location))\
+                .where(filter=('is_fake_match', '==', True))\
                 .get()
             
             for group_doc in fake_groups:
                 group_data = group_doc.to_dict()
+                
+                # Filter manually to avoid complex index requirement
+                if group_data.get('group_size') != 1:
+                    continue
+                
+                created_at = group_data.get('created_at')
+                if created_at and created_at < cutoff_time:
+                    continue
+                
                 solo_user_phone = group_data.get('members', [None])[0]
                 
                 # Skip self
@@ -251,6 +258,57 @@ Return ONLY valid JSON."""
             
         except Exception as e:
             print(f"❌ Error finding upgradeable solo orders: {e}")
+            return []
+    
+    def _query_potential_matches(self, restaurant: str, location: str, excluding_user: str) -> List[Dict]:
+        """Query database for potential matches"""
+        
+        try:
+            # Get recent food requests (last 30 minutes)
+            cutoff_time = datetime.now() - timedelta(minutes=30)
+            
+            # Query user_sessions for food requests
+            sessions = self.db.collection('user_sessions')\
+                .where(filter=('session_type', '==', 'food_request'))\
+                .where(filter=('current_food_request.restaurant', '==', restaurant))\
+                .where(filter=('current_food_request.location', '==', location))\
+                .get()
+            
+            matches = []
+            
+            for session_doc in sessions:
+                session_data = session_doc.to_dict()
+                user_phone = session_data.get('user_phone')
+                
+                # Skip self
+                if user_phone == excluding_user:
+                    continue
+                
+                # Check if request is recent
+                food_request = session_data.get('current_food_request', {})
+                request_time = food_request.get('timestamp')
+                
+                if request_time:
+                    if hasattr(request_time, 'tzinfo') and request_time.tzinfo:
+                        request_time = request_time.replace(tzinfo=None)
+                    
+                    if request_time < cutoff_time:
+                        continue  # Too old
+                
+                # Add to potential matches
+                matches.append({
+                    'user_phone': user_phone,
+                    'restaurant': restaurant,
+                    'location': location,
+                    'delivery_time': food_request.get('delivery_time', 'now'),
+                    'request_time': request_time,
+                    'session_id': food_request.get('session_id')
+                })
+            
+            return matches
+            
+        except Exception as e:
+            print(f"❌ Error querying potential matches: {e}")
             return []
     
     def _simple_time_compatibility(self, time1: str, time2: str) -> Dict:

@@ -21,7 +21,6 @@ class DeliveryTriggerSystem:
         self.db = db
         self.session_manager = session_manager
     
-    @tool
     def handle_user_payment(self, user_phone: str) -> Dict:
         """Handle when user texts PAY - core delivery trigger logic"""
         
@@ -437,7 +436,6 @@ Your driver will contact you when they arrive! 🎉"""
         thread.start()
         print(f"⏰ Scheduled delivery notifications for 50 seconds")
     
-    @tool
     def check_and_trigger_group_delivery(self, group_id: str) -> Dict:
         """Check if group is ready for delivery and trigger if needed"""
         
