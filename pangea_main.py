@@ -485,11 +485,14 @@ def health_check():
 def sms_webhook():
     """Handle incoming SMS messages with enhanced error handling"""
     
+    print("🚀 WEBHOOK STARTED - Incoming SMS request")
     start_time = datetime.now()
     
     try:
+        print("🔍 Extracting form data...")
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
+        print(f"🔍 Extracted - From: {from_number}, Body: {message_body}")
         
         if not from_number or not message_body:
             print(f"❌ Missing required fields - From: {from_number}, Body: {message_body}")
@@ -497,13 +500,22 @@ def sms_webhook():
         
         print(f"📱 Webhook received: {from_number} -> {message_body}")
         
+        print("🔍 Checking for group invitation response...")
         # Check if this is a group response first (for backward compatibility)
         if handle_group_invitation_response(from_number, message_body):
             print(f"✅ Handled as group invitation response")
             return '', 200
         
+        print("🔍 Routing to enhanced chatbot system...")
         # Route through enhanced chatbot system
-        result = handle_incoming_message(from_number, message_body)
+        try:
+            result = handle_incoming_message(from_number, message_body)
+            print(f"✅ handle_incoming_message returned: {result}")
+        except Exception as handler_error:
+            print(f"❌ HANDLER ERROR: {handler_error}")
+            import traceback
+            traceback.print_exc()
+            raise handler_error
         
         processing_time = (datetime.now() - start_time).total_seconds()
         
