@@ -101,10 +101,27 @@ def send_friendly_message(phone_number: str, message: str, message_type: str = "
         return False
 
 # Initialize our smart systems
+print("🔧 Initializing session manager...")
 session_manager = SmartSessionManager(db, anthropic_llm)
+print("✅ Session manager initialized")
+
+print("🔧 Initializing intelligent matcher...")
 matcher = IntelligentMatcher(db, anthropic_llm)
+print("✅ Intelligent matcher initialized")
+
+print("🔧 Initializing delivery system...")
 delivery_system = DeliveryTriggerSystem(db, session_manager)
-chatbot_workflow = SmartChatbotWorkflow(session_manager, matcher, anthropic_llm, send_friendly_message)
+print("✅ Delivery system initialized")
+
+print("🔧 Initializing chatbot workflow...")
+try:
+    chatbot_workflow = SmartChatbotWorkflow(session_manager, matcher, anthropic_llm, send_friendly_message)
+    print("✅ Chatbot workflow initialized successfully")
+except Exception as init_error:
+    print(f"❌ CHATBOT WORKFLOW INIT FAILED: {init_error}")
+    import traceback
+    traceback.print_exc()
+    raise init_error
 
 def handle_incoming_message(user_phone: str, message: str) -> Dict:
     """
@@ -116,12 +133,24 @@ def handle_incoming_message(user_phone: str, message: str) -> Dict:
     print(f"🕐 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
+        print(f"🔍 Starting message processing...")
+        
         # Check if this is a payment message first (special handling)
         if message.lower().strip() == 'pay':
+            print(f"💳 Detected PAY message - routing to payment handler")
             return handle_payment_message(user_phone)
         
+        print(f"🤖 Routing to chatbot workflow...")
+        
         # Route through smart chatbot workflow
-        result = chatbot_workflow.process_message(user_phone, message)
+        try:
+            result = chatbot_workflow.process_message(user_phone, message)
+            print(f"✅ Chatbot workflow completed successfully")
+        except Exception as workflow_error:
+            print(f"❌ Chatbot workflow failed: {workflow_error}")
+            import traceback
+            traceback.print_exc()
+            raise workflow_error
         
         print(f"🤖 Workflow result: {result['status']}")
         print(f"🎯 Action: {result.get('action', 'unknown')}")
@@ -130,9 +159,13 @@ def handle_incoming_message(user_phone: str, message: str) -> Dict:
         return result
         
     except Exception as e:
-        print(f"❌ Message handling failed: {e}")
+        print(f"❌ FULL MESSAGE HANDLING FAILED: {e}")
+        print(f"❌ Error type: {type(e).__name__}")
+        print(f"❌ Error args: {e.args}")
         import traceback
+        print("❌ FULL TRACEBACK:")
         traceback.print_exc()
+        print("❌ END TRACEBACK")
         
         # Send friendly error message
         error_response = "Sorry, I had a technical hiccup! Can you try that again? 😊"
@@ -302,8 +335,8 @@ def handle_group_invitation_response(user_phone: str, response: str) -> bool:
     try:
         # Check for pending negotiations (existing system)
         pending_negotiations = db.collection('negotiations')\
-            .where('to_user', '==', user_phone)\
-            .where('status', '==', 'pending')\
+            .where(filter=FieldFilter('to_user', '==', user_phone))\
+            .where(filter=FieldFilter('status', '==', 'pending'))\
             .limit(1).get()
         
         if len(pending_negotiations) > 0:
@@ -358,8 +391,8 @@ Your share: $4.50 💳"""
         
         # Check for active groups (new system)
         pending_groups = db.collection('active_groups')\
-            .where('members', 'array_contains', user_phone)\
-            .where('status', 'in', ['pending_responses', 'forming'])\
+            .where(filter=FieldFilter('members', 'array_contains', user_phone))\
+            .where(filter=FieldFilter('status', 'in', ['pending_responses', 'forming']))\
             .limit(1).get()
         
         if len(pending_groups) > 0:
