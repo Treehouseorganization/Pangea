@@ -195,7 +195,9 @@ Return ONLY valid JSON."""
             print(f"🤫 Searching for solo orders to upgrade: {restaurant} at {location}")
             
             upgradeable_solos = []
-            cutoff_time = datetime.now() - timedelta(minutes=30)  # Recent solo orders only
+            import pytz
+            chicago_tz = pytz.timezone('America/Chicago')
+            cutoff_time = datetime.now(chicago_tz) - timedelta(minutes=30)  # Recent solo orders only
             
             # Check active_groups for fake matches (solo orders)
             # Simplified query to avoid complex index requirement
@@ -213,8 +215,17 @@ Return ONLY valid JSON."""
                     continue
                 
                 created_at = group_data.get('created_at')
-                if created_at and created_at < cutoff_time:
-                    continue
+                if created_at:
+                    # Handle timezone comparison safely
+                    if hasattr(created_at, 'tzinfo') and created_at.tzinfo is not None:
+                        # created_at is timezone-aware
+                        if created_at < cutoff_time:
+                            continue
+                    else:
+                        # created_at is timezone-naive, assume it's in Chicago time
+                        created_at_chicago = chicago_tz.localize(created_at)
+                        if created_at_chicago < cutoff_time:
+                            continue
                 
                 solo_user_phone = group_data.get('members', [None])[0]
                 
@@ -251,7 +262,7 @@ Return ONLY valid JSON."""
                     continue
             
             # Sort by creation time (most recent first)
-            upgradeable_solos.sort(key=lambda x: x.get('created_at', datetime.min), reverse=True)
+            upgradeable_solos.sort(key=lambda x: x.get('created_at', datetime.min.replace(tzinfo=chicago_tz)), reverse=True)
             
             print(f"🤫 Found {len(upgradeable_solos)} upgradeable solo orders")
             return upgradeable_solos[:1]  # Return max 1 for 2-person group
@@ -265,7 +276,9 @@ Return ONLY valid JSON."""
         
         try:
             # Get recent food requests (last 30 minutes)
-            cutoff_time = datetime.now() - timedelta(minutes=30)
+            import pytz
+            chicago_tz = pytz.timezone('America/Chicago')
+            cutoff_time = datetime.now(chicago_tz) - timedelta(minutes=30)
             
             # Query user_sessions for food requests
             sessions = self.db.collection('user_sessions')\
@@ -289,11 +302,16 @@ Return ONLY valid JSON."""
                 request_time = food_request.get('timestamp')
                 
                 if request_time:
-                    if hasattr(request_time, 'tzinfo') and request_time.tzinfo:
-                        request_time = request_time.replace(tzinfo=None)
-                    
-                    if request_time < cutoff_time:
-                        continue  # Too old
+                    # Handle timezone comparison safely
+                    if hasattr(request_time, 'tzinfo') and request_time.tzinfo is not None:
+                        # request_time is timezone-aware, compare directly
+                        if request_time < cutoff_time:
+                            continue  # Too old
+                    else:
+                        # request_time is timezone-naive, assume it's in Chicago time
+                        request_time_chicago = chicago_tz.localize(request_time)
+                        if request_time_chicago < cutoff_time:
+                            continue  # Too old
                 
                 # Add to potential matches
                 matches.append({
