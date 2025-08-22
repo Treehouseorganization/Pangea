@@ -111,15 +111,18 @@ class DeliveryTriggerSystem:
         print(f"📊 Group status: {len(paid_users)}/{total_users} paid")
         
         if len(paid_users) == total_users:
-            # Both users paid
-            if delivery_time == 'now' or delivery_time in ['asap', 'soon', 'immediately']:
+            # Both users paid - calculate optimal group delivery time
+            optimal_delivery_time = self._calculate_group_delivery_time(group_id, paid_users)
+            print(f"🎯 Both users paid - calculated optimal delivery time: {optimal_delivery_time}")
+            
+            if optimal_delivery_time == 'now' or optimal_delivery_time in ['asap', 'soon', 'immediately']:
                 # Immediate delivery - trigger right away
                 print(f"🚚 Both users paid - triggering immediate group delivery")
                 return self._trigger_delivery_now(group_id, paid_users, order_session)
             else:
                 # Scheduled delivery - set up timer
-                print(f"⏰ Both users paid - scheduling group delivery for {delivery_time}")
-                return self._schedule_delivery(group_id, paid_users, delivery_time, order_session)
+                print(f"⏰ Both users paid - scheduling group delivery for {optimal_delivery_time}")
+                return self._schedule_delivery(group_id, paid_users, optimal_delivery_time, order_session)
         
         else:
             # Only one user paid so far
@@ -177,12 +180,77 @@ class DeliveryTriggerSystem:
             print(f"❌ Error getting total users: {e}")
             return 0
     
+    def _calculate_group_delivery_time(self, group_id: str, paid_users: List[str]) -> str:
+        """Calculate optimal delivery time for group based on all users' preferences"""
+        
+        try:
+            delivery_times = []
+            
+            # Get delivery time preferences from each user
+            for user_phone in paid_users:
+                try:
+                    context = self.session_manager.get_user_context(user_phone)
+                    if context.current_food_request:
+                        user_delivery_time = context.current_food_request.get('delivery_time', 'now')
+                        delivery_times.append((user_phone, user_delivery_time))
+                        print(f"   📋 {user_phone} wants delivery at: {user_delivery_time}")
+                except Exception as e:
+                    print(f"⚠️ Could not get delivery time for {user_phone}: {e}")
+                    delivery_times.append((user_phone, 'now'))
+            
+            # If any user wants immediate delivery, deliver immediately
+            if any(time in ['now', 'asap', 'soon', 'immediately'] for _, time in delivery_times):
+                print(f"⚡ At least one user wants immediate delivery - choosing 'now'")
+                return 'now'
+            
+            # For scheduled deliveries, find the optimal time
+            # For this version, use the first user's delivery time as the group time
+            if delivery_times:
+                chosen_time = delivery_times[0][1]
+                print(f"🎯 Using {delivery_times[0][0]}'s delivery time as group time: {chosen_time}")
+                return chosen_time
+            
+            # Fallback
+            return 'now'
+            
+        except Exception as e:
+            print(f"❌ Error calculating group delivery time: {e}")
+            return 'now'
+    
+    def _delivery_already_triggered(self, group_id: str) -> bool:
+        """Check if delivery has already been triggered for this group"""
+        
+        try:
+            # Check if any user in the group has delivery_triggered = True
+            order_sessions = self.db.collection('order_sessions')\
+                .where('group_id', '==', group_id)\
+                .get()
+            
+            for session_doc in order_sessions:
+                session_data = session_doc.to_dict()
+                if session_data.get('delivery_triggered', False):
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error checking delivery status: {e}")
+            return False
+    
     def _trigger_delivery_now(self, group_id: str, paid_users: List[str], order_session: Dict) -> Dict:
         """Trigger delivery immediately"""
         
         try:
             print(f"🚀 Triggering delivery now for group: {group_id}")
             print(f"👥 Paid users: {paid_users}")
+            
+            # Check if delivery has already been triggered for this group
+            if self._delivery_already_triggered(group_id):
+                print(f"⚠️ Delivery already triggered for group {group_id} - skipping duplicate")
+                return {
+                    'status': 'already_triggered',
+                    'message': 'Delivery already triggered for this group'
+                }
             
             # Build delivery data
             delivery_data = self._build_delivery_data(group_id, paid_users, order_session)
