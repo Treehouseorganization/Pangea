@@ -183,6 +183,11 @@ Return ONLY valid JSON."""
             
         except Exception as e:
             print(f"❌ Intent analysis failed: {e}")
+            print(f"❌ Error type: {type(e).__name__}")
+            print(f"❌ Error details: {str(e)}")
+            import traceback
+            print("❌ Full traceback:")
+            traceback.print_exc()
             
             # Fallback logic
             return self._fallback_intent_analysis(message, context)

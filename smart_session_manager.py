@@ -196,6 +196,11 @@ Return ONLY valid JSON."""
             
         except Exception as e:
             print(f"❌ New request detection failed: {e}")
+            print(f"❌ Error type: {type(e).__name__}")
+            print(f"❌ Error details: {str(e)}")
+            import traceback
+            print("❌ Full traceback:")
+            traceback.print_exc()
             
             # Fallback: simple keyword detection
             return self._simple_new_request_detection(message, context)
