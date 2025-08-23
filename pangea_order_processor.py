@@ -434,7 +434,7 @@ def collect_order_description_node(state: OrderState) -> OrderState:
     
     try:
         # Use Claude to extract order description
-        llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.1)
+        llm = ChatAnthropic(model="claude-opus-4-20250514", temperature=0.1)
         
         extraction_prompt = f"""
         The user already provided their order identifier but we need their food order description.
