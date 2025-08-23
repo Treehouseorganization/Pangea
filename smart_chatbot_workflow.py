@@ -218,15 +218,25 @@ Return ONLY valid JSON."""
             elif any(word in message_lower for word in ['order', 'name', 'number']):
                 return {"intent": "order_process", "confidence": "medium", "reasoning": "Order details in active session"}
         
-        # Check for food requests (including restaurant/location changes)
+        # Check for food requests (including restaurant/location/time changes)
         restaurants = ['chipotle', 'mcdonalds', 'chick-fil-a', 'portillos', 'starbucks']
         locations = ['library', 'student center', 'university hall', 'student services']
         food_words = ['want', 'craving', 'hungry', 'order']
-        change_phrases = ['actually i want', 'actually i', 'instead', 'let me get', 'change to', 'deliver to']
+        time_words = ['1pm', '2pm', '3pm', '4pm', '5pm', '11am', '12pm', '1:00', '2:00', '3:00', '4:00', '5:00', 'noon', 'morning', 'afternoon', 'evening', 'later', 'earlier']
+        change_phrases = ['actually i want', 'actually i', 'instead', 'let me get', 'change to', 'deliver to', 'make it', 'change delivery time', 'change time', 'delivery time']
         
-        # High confidence for explicit restaurant or location changes
-        if any(phrase in message_lower for phrase in change_phrases) and (any(rest in message_lower for rest in restaurants) or any(loc in message_lower for loc in locations)):
-            return {"intent": "new_food_request", "confidence": "high", "reasoning": "Restaurant or location change detected"}
+        # High confidence for explicit restaurant, location, or time changes
+        has_change_phrase = any(phrase in message_lower for phrase in change_phrases)
+        has_restaurant = any(rest in message_lower for rest in restaurants)
+        has_location = any(loc in message_lower for loc in locations)
+        has_time = any(time in message_lower for time in time_words)
+        
+        if has_change_phrase and (has_restaurant or has_location or has_time):
+            change_type = []
+            if has_restaurant: change_type.append("restaurant")
+            if has_location: change_type.append("location")
+            if has_time: change_type.append("time")
+            return {"intent": "new_food_request", "confidence": "high", "reasoning": f"Change detected: {', '.join(change_type)}"}
         
         # Medium confidence for general food requests
         if any(rest in message_lower for rest in restaurants) or any(word in message_lower for word in food_words):
@@ -286,6 +296,13 @@ Return ONLY valid JSON."""
                 "missing_info": []
             }
             state['action_taken'] = "started_food_request"
+            
+            # Store change context for contextual messaging
+            user_message = state['messages'][-1].content.lower()
+            state['change_context'] = {
+                "is_change": any(phrase in user_message for phrase in ['actually', 'instead', 'change', 'make it']),
+                "original_message": state['messages'][-1].content
+            }
         
         return state
     
@@ -384,7 +401,7 @@ Return ONLY valid JSON."""
         
         restaurant = extracted['restaurant']
         location = extracted['location']
-        delivery_time = extracted['delivery_time']
+        delivery_time = extracted.get('delivery_time', 'now')
         
         print(f"🔍 Finding matches for {restaurant} at {location} ({delivery_time})")
         
@@ -412,17 +429,10 @@ Return ONLY valid JSON."""
                 self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
                 
                 # Send message to NEW user (they get told they found someone)
-                state['response_message'] = f"""🎉 Perfect! I found someone who also wants {restaurant} at {location}!
-
-**Group Confirmed (2 people)**
-Your share: $4.50 each (vs $8+ solo)
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered
-3. Text "PAY" when ready
-
-Let's get your food! 🍕"""
+                state['response_message'] = self._generate_contextual_match_message(
+                    restaurant, location, optimal_time, 
+                    state.get('change_context', {}), is_fake_match=False
+                )
                 
                 # SOLO user gets NO notification (silent upgrade)
                 # Their fake match just became real, but they don't know
@@ -443,18 +453,11 @@ Let's get your food! 🍕"""
                 self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
                 self.session_manager.transition_to_order_process(match_phone, group_id, restaurant, 2)
                 
-                # Send messages to both users
-                state['response_message'] = f"""🎉 Perfect match found! You and another student both want {restaurant} at {location}!
-
-**Group Confirmed (2 people)**
-Your share: $4.50 each (vs $8+ solo)
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered
-3. Text "PAY" when ready
-
-Let's get your food! 🍕"""
+                # Send messages to both users with contextual intro
+                state['response_message'] = self._generate_contextual_match_message(
+                    restaurant, location, best_match.get('time_analysis', {}).get('optimal_time', delivery_time), 
+                    state.get('change_context', {}), is_fake_match=False
+                )
                 
                 match_message = f"""🎉 Great news! Another student wants {restaurant} at {location} too!
 
@@ -482,16 +485,10 @@ Time to order! 🍕"""
             # Transition to order process as solo
             self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 1)
             
-            state['response_message'] = f"""Great news! I found someone who also wants {restaurant} at {location}! 🎉
-
-Your share will be $3.50 instead of the full delivery fee.
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered  
-3. Text "PAY" when ready
-
-Let's get your food! 🍕"""
+            # Generate contextual message
+            state['response_message'] = self._generate_contextual_match_message(
+                restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True
+            )
             
             state['action_taken'] = "created_fake_match"
         
@@ -831,6 +828,63 @@ Example: "I want Chipotle delivered to the library"
 
 **Questions?** Ask about restaurants, locations, pricing, or how it works! 😊🍕"""
     
+    def _generate_contextual_match_message(self, restaurant: str, location: str, delivery_time: str, change_context: Dict, is_fake_match: bool = True) -> str:
+        """Generate contextual match message based on user's change request"""
+        
+        is_change = change_context.get('is_change', False)
+        original_message = change_context.get('original_message', '')
+        
+        # Base message structure
+        if is_change:
+            # Acknowledge the change contextually
+            if 'actually' in original_message.lower():
+                intro = f"No problem! I found someone who also wants {restaurant} at {location}"
+            elif 'instead' in original_message.lower():
+                intro = f"Got it! I found someone who also wants {restaurant} at {location}"
+            elif 'change' in original_message.lower():
+                intro = f"Perfect! I found someone who also wants {restaurant} at {location}"
+            else:
+                intro = f"Great news! I found someone who also wants {restaurant} at {location}"
+        else:
+            # Standard new request
+            intro = f"Great news! I found someone who also wants {restaurant} at {location}"
+        
+        # Add time context if specific time mentioned
+        time_context = ""
+        if delivery_time != 'now' and delivery_time not in ['asap', 'soon']:
+            time_context = f" for {delivery_time}"
+        
+        # Complete intro
+        intro += time_context + "! 🎉"
+        
+        # Standard continuation (business logic preserved)
+        if is_fake_match:
+            message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered  
+3. Text "PAY" when ready
+
+Let's get your food! 🍕"""
+        else:
+            # Real group match
+            message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Let's get your food! 🍕"""
+        
+        return message
+
     def _generate_dynamic_conversation_response(self, message: str, user_phone: str, context: Dict) -> str:
         """Generate dynamic, contextual conversation responses using LLM"""
         
