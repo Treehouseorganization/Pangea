@@ -100,16 +100,7 @@ class SmartChatbotWorkflow:
         print(f"🧠 Understanding intent for {user_phone}: '{user_message}'")
         print(f"📋 Context: {context.session_type}, active_order={context.active_order_session is not None}")
         
-        # Check for new food request first
-        new_request_analysis = self.session_manager.detect_new_food_request(user_phone, user_message)
-        
-        if new_request_analysis.get('is_new_food_request'):
-            state['current_intent'] = "new_food_request"
-            state['extracted_data'] = new_request_analysis.get('extracted_request', {})
-            print(f"🍕 Detected new food request")
-            return state
-        
-        # Use Claude to understand intent with context
+        # Always use Claude for intelligent intent analysis first
         intent_analysis = self._analyze_intent_with_claude(user_message, context)
         
         state['current_intent'] = intent_analysis['intent']
