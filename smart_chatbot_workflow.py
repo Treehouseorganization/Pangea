@@ -58,6 +58,7 @@ class SmartChatbotWorkflow:
             self._route_by_intent,
             {
                 "new_food_request": "handle_new_food_request",
+                "cancellation": "handle_cancellation",
                 "missing_info": "handle_missing_info", 
                 "group_response": "handle_group_response",
                 "order_process": "handle_order_process",
@@ -77,6 +78,7 @@ class SmartChatbotWorkflow:
         
         workflow.add_edge("handle_missing_info", "find_matches")
         workflow.add_edge("find_matches", "send_response")
+        workflow.add_edge("handle_cancellation", "send_response")
         workflow.add_edge("handle_group_response", "send_response")
         workflow.add_edge("handle_order_process", "send_response")
         workflow.add_edge("handle_general_conversation", "send_response")
@@ -130,13 +132,15 @@ CURRENT CONTEXT:
 
 POSSIBLE INTENTS:
 1. **new_food_request**: Starting fresh food order (even if in other session)
-2. **missing_info**: Providing missing restaurant/location info for current request
-3. **group_response**: Responding YES/NO to group invitation
-4. **order_process**: In order flow (providing order details, payment)
-5. **general_conversation**: Questions, help, or general chat
+2. **cancellation**: Canceling/no longer wanting current food request/order
+3. **missing_info**: Providing missing restaurant/location info for current request
+4. **group_response**: Responding YES/NO to group invitation
+5. **order_process**: In order flow (providing order details, payment)
+6. **general_conversation**: Questions, help, or general chat
 
 CONTEXT CLUES:
 - If they mention restaurant + location + time → likely new_food_request
+- If they express not wanting current request ("don't want", "never mind", "cancel") → cancellation
 - If they say "yes"/"no" and have pending invites → group_response  
 - If they provide order number/name and in order process → order_process
 - If they ask questions about service → general_conversation
@@ -144,7 +148,7 @@ CONTEXT CLUES:
 
 Return JSON:
 {{
-    "intent": "one of the 5 intents above",
+    "intent": "one of the 6 intents above",
     "confidence": "high/medium/low",
     "reasoning": "explanation of decision",
     "extracted_data": {{"any relevant extracted info"}} or {{}},
@@ -153,6 +157,7 @@ Return JSON:
 
 Examples:
 - "I want Chipotle at library" → intent: "new_food_request"
+- "Actually I don't want that anymore" → intent: "cancellation"
 - "Yes" (with pending invite) → intent: "group_response"
 - "Order #ABC123" (in order process) → intent: "order_process"
 - "What restaurants are available?" → intent: "general_conversation"
@@ -194,6 +199,16 @@ Return ONLY valid JSON."""
         """Simple fallback intent analysis"""
         
         message_lower = message.lower()
+        
+        # Check for cancellation phrases
+        cancellation_phrases = [
+            "don't want", "dont want", "not want", "no longer want",
+            "never mind", "nevermind", "cancel", "not anymore", 
+            "change my mind", "changed my mind", "forget it",
+            "actually no", "not interested"
+        ]
+        if any(phrase in message_lower for phrase in cancellation_phrases):
+            return {"intent": "cancellation", "confidence": "high", "reasoning": "Detected cancellation phrases"}
         
         # Check for group responses
         if context.pending_group_invites and message_lower.strip() in ['yes', 'y', 'no', 'n', 'sure', 'ok']:
@@ -262,6 +277,47 @@ Return ONLY valid JSON."""
                 "missing_info": []
             }
             state['action_taken'] = "started_food_request"
+        
+        return state
+    
+    def _handle_cancellation_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle order cancellation - clear current request and respond appropriately"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"🚫 Processing cancellation from {user_phone}: '{user_message}'")
+        
+        # Get current context to see what they're canceling
+        context = self.session_manager.get_user_context(user_phone)
+        
+        if context.session_type in ['food_request', 'order_process'] or context.active_order_session:
+            # They have something active to cancel
+            if context.active_order_session:
+                response_message = "Got it! I've canceled your current order. No worries at all! 😊\n\nReady for something else? Just let me know what you're craving and I'll help you get it delivered! 🍴"
+                print(f"📋 Canceled active order for {user_phone}")
+            elif context.current_food_request:
+                restaurant = context.current_food_request.get('restaurant', 'food')
+                response_message = f"No problem! I've canceled your {restaurant} request. 😊\n\nWhenever you're ready for delivery, just tell me what you want and where you want it delivered! 🍴"
+                print(f"🍽️ Canceled food request for {user_phone}: {restaurant}")
+            else:
+                response_message = "Sure thing! I've cleared everything out. 😊\n\nWhenever you're hungry, just let me know what you want delivered! 🍴"
+                print(f"🧹 General cancellation for {user_phone}")
+            
+            # Clear all sessions and context
+            self.session_manager.clear_user_session(user_phone)
+            context = self.session_manager.get_user_context(user_phone)  # Get fresh context
+            
+        else:
+            # Nothing specific to cancel
+            response_message = "No worries! You don't have any active orders right now. 😊\n\nWhenever you're ready to order some food, just tell me what you want and where you want it delivered! 🍴"
+            print(f"❓ Nothing to cancel for {user_phone}")
+        
+        # Update conversation memory
+        self.session_manager.update_user_context(context, user_message, "cancellation")
+        
+        state['response_message'] = response_message
+        state['action_taken'] = "cancelled_request"
         
         return state
     
