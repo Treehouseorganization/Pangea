@@ -222,10 +222,17 @@ Return ONLY valid JSON."""
             elif any(word in message_lower for word in ['order', 'name', 'number']):
                 return {"intent": "order_process", "confidence": "medium", "reasoning": "Order details in active session"}
         
-        # Check for food requests
+        # Check for food requests (including restaurant/location changes)
         restaurants = ['chipotle', 'mcdonalds', 'chick-fil-a', 'portillos', 'starbucks']
+        locations = ['library', 'student center', 'university hall', 'student services']
         food_words = ['want', 'craving', 'hungry', 'order']
+        change_phrases = ['actually i want', 'actually i', 'instead', 'let me get', 'change to', 'deliver to']
         
+        # High confidence for explicit restaurant or location changes
+        if any(phrase in message_lower for phrase in change_phrases) and (any(rest in message_lower for rest in restaurants) or any(loc in message_lower for loc in locations)):
+            return {"intent": "new_food_request", "confidence": "high", "reasoning": "Restaurant or location change detected"}
+        
+        # Medium confidence for general food requests
         if any(rest in message_lower for rest in restaurants) or any(word in message_lower for word in food_words):
             return {"intent": "new_food_request", "confidence": "medium", "reasoning": "Food-related keywords"}
         
@@ -245,7 +252,12 @@ Return ONLY valid JSON."""
         print(f"🍕 Processing new food request from {user_phone}")
         
         # Extract food request details with Claude
-        extracted = self._extract_food_request_details(user_message)
+        try:
+            extracted = self._extract_food_request_details(user_message)
+        except Exception as e:
+            print(f"❌ Food request extraction failed: {e}")
+            # Fallback: basic extraction from message
+            extracted = self._basic_food_request_extraction(user_message)
         
         restaurant = extracted.get('restaurant')
         location = extracted.get('location')
@@ -638,6 +650,68 @@ Return ONLY valid JSON."""
         except Exception as e:
             print(f"❌ Food extraction failed: {e}")
             return {"restaurant": None, "location": None, "delivery_time": "now", "missing_info": ["restaurant", "location"]}
+    
+    def _basic_food_request_extraction(self, message: str) -> Dict:
+        """Basic fallback extraction without Claude API"""
+        
+        message_lower = message.lower()
+        
+        # Extract restaurant
+        restaurants = {
+            'chipotle': 'Chipotle',
+            'mcdonalds': "McDonald's", 
+            'mcdonald': "McDonald's",
+            'chick-fil-a': 'Chick-fil-A',
+            'chick fil a': 'Chick-fil-A',
+            'portillos': "Portillo's",
+            'portillo': "Portillo's", 
+            'starbucks': 'Starbucks'
+        }
+        
+        restaurant = None
+        for key, value in restaurants.items():
+            if key in message_lower:
+                restaurant = value
+                break
+        
+        # Extract location (basic detection)
+        locations = {
+            'library': 'Richard J Daley Library',
+            'student center east': 'Student Center East',
+            'student center west': 'Student Center West', 
+            'student services': 'Student Services Building',
+            'university hall': 'University Hall'
+        }
+        
+        location = None
+        for key, value in locations.items():
+            if key in message_lower:
+                location = value
+                break
+        
+        # Extract time (basic detection)
+        delivery_time = "now"
+        if any(time in message_lower for time in ['1pm', '2pm', '3pm', '4pm', '5pm', '11am', '12pm']):
+            for time in ['1pm', '2pm', '3pm', '4pm', '5pm', '11am', '12pm']:
+                if time in message_lower:
+                    delivery_time = time
+                    break
+        
+        # Determine missing info
+        missing_info = []
+        if not restaurant:
+            missing_info.append("restaurant")
+        if not location:
+            missing_info.append("location")
+        
+        print(f"🔄 Basic extraction: restaurant={restaurant}, location={location}, time={delivery_time}, missing={missing_info}")
+        
+        return {
+            "restaurant": restaurant,
+            "location": location, 
+            "delivery_time": delivery_time,
+            "missing_info": missing_info
+        }
     
     def _generate_missing_info_response(self, missing_info: List[str], restaurant: str = None, location: str = None) -> str:
         """Generate helpful response for missing information"""
