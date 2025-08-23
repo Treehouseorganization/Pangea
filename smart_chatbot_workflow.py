@@ -42,6 +42,7 @@ class SmartChatbotWorkflow:
         # Add nodes
         workflow.add_node("understand_intent", self._understand_intent_node)
         workflow.add_node("handle_new_food_request", self._handle_new_food_request_node)
+        workflow.add_node("handle_cancellation", self._handle_cancellation_node)
         workflow.add_node("handle_missing_info", self._handle_missing_info_node)
         workflow.add_node("find_matches", self._find_matches_node)
         workflow.add_node("handle_group_response", self._handle_group_response_node)
