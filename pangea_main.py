@@ -110,7 +110,7 @@ matcher = IntelligentMatcher(db, anthropic_llm)
 print("✅ Intelligent matcher initialized")
 
 print("🔧 Initializing delivery system...")
-delivery_system = DeliveryTriggerSystem(db, session_manager)
+delivery_system = DeliveryTriggerSystem(db, session_manager, send_friendly_message)
 print("✅ Delivery system initialized")
 
 print("🔧 Initializing chatbot workflow...")

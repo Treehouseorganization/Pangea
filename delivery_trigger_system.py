@@ -17,9 +17,10 @@ import time
 class DeliveryTriggerSystem:
     """Manages delivery triggering with exact business rules"""
     
-    def __init__(self, db, session_manager):
+    def __init__(self, db, session_manager, send_message_func=None):
         self.db = db
         self.session_manager = session_manager
+        self.send_friendly_message = send_message_func
     
     def handle_user_payment(self, user_phone: str) -> Dict:
         """Handle when user texts PAY - core delivery trigger logic"""
@@ -164,6 +165,29 @@ class DeliveryTriggerSystem:
             
         except Exception as e:
             print(f"❌ Error getting paid users: {e}")
+            return []
+    
+    def _get_all_users_in_group(self, group_id: str) -> List[str]:
+        """Get list of all users in this group (paid and unpaid)"""
+        
+        try:
+            all_users = []
+            
+            # Check order_sessions collection
+            order_sessions = self.db.collection('order_sessions')\
+                .where('group_id', '==', group_id)\
+                .get()
+            
+            for session_doc in order_sessions:
+                session_data = session_doc.to_dict()
+                user_phone = session_data.get('user_phone')
+                if user_phone:
+                    all_users.append(user_phone)
+            
+            return all_users
+            
+        except Exception as e:
+            print(f"❌ Error getting all users: {e}")
             return []
     
     def _get_total_users_in_group(self, group_id: str) -> int:
@@ -392,8 +416,21 @@ class DeliveryTriggerSystem:
                     print(f"✅ Both users paid - triggering group delivery")
                     self._trigger_delivery_now(group_id, current_paid_users, order_session)
                 elif len(current_paid_users) > 0:
-                    # Only some paid - trigger solo delivery for paid users
+                    # Only some paid - trigger solo delivery for paid users and send missed delivery message to unpaid users
                     print(f"⚠️ Only {len(current_paid_users)} users paid - triggering solo delivery")
+                    
+                    # Get all users in group and identify unpaid users
+                    all_users = self._get_all_users_in_group(group_id)
+                    unpaid_users = [user for user in all_users if user not in current_paid_users]
+                    
+                    # Send missed delivery messages to unpaid users
+                    if unpaid_users and self.send_friendly_message:
+                        for unpaid_user in unpaid_users:
+                            missed_message = "⏰ You missed your scheduled delivery because you didn't complete your payment in time. Your group partner's order was delivered without you. Reply 'ORDER' to start a new order! 🍴"
+                            print(f"📱 Sending missed delivery message to {unpaid_user}")
+                            self.send_friendly_message(unpaid_user, missed_message)
+                    
+                    # Trigger delivery for paid users only
                     self._trigger_delivery_now(group_id, current_paid_users, order_session)
                 else:
                     # Nobody paid - no delivery
