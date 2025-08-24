@@ -566,8 +566,17 @@ Time to order! 🍕"""
             print(f"⚠️ Legacy order processor failed: {e}")
         
         # Use LLM for intelligent order processing with full conversation context
+        # Build proper context dict with conversation history
+        conversation_context = {
+            'conversation_history': getattr(context, 'conversation_memory', []),
+            'current_food_request': getattr(context, 'current_food_request', {}),
+            'active_order_session': getattr(context, 'active_order_session', {}),
+            'session_type': getattr(context, 'session_type', 'unknown'),
+            'status': f"Active order for {context.active_order_session.get('restaurant', 'unknown restaurant') if context.active_order_session else 'No active order'}"
+        }
+        
         state['response_message'] = self._generate_dynamic_conversation_response(
-            user_message, user_phone, context.__dict__
+            user_message, user_phone, conversation_context
         )
         state['action_taken'] = "intelligent_order_conversation"
         
