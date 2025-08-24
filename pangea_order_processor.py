@@ -1129,11 +1129,22 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
                # Send confirmation message to users with 50-second delay
                def send_delayed_confirmation():
                    time.sleep(50)  # 50-second delay
-                   from pangea_main import send_friendly_message
-                   for member in members_who_paid:
-                       user_phone_member = member['user_phone']
-                       send_friendly_message(user_phone_member, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="scheduled_payment_confirmation")
-                       print(f"✅ Sent delayed payment confirmation to {user_phone_member}")
+                   try:
+                       from pangea_main import send_friendly_message
+                       for member in members_who_paid:
+                           user_phone_member = member['user_phone']
+                           send_friendly_message(user_phone_member, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="scheduled_payment_confirmation")
+                           print(f"✅ Sent delayed payment confirmation to {user_phone_member}")
+                   except Exception as e:
+                       print(f"❌ Failed to send delayed confirmation: {e}")
+                       # Fallback using the fallback function
+                       try:
+                           for member in members_who_paid:
+                               user_phone_member = member['user_phone']
+                               send_friendly_message_fallback(user_phone_member, f"Perfect! Your delivery will be triggered at {delivery_time}. ⏰", message_type="scheduled_payment_confirmation")
+                               print(f"✅ Sent delayed confirmation (fallback) to {user_phone_member}")
+                       except Exception as e2:
+                           print(f"❌ Fallback confirmation also failed: {e2}")
                
                # Start delayed notification thread
                thread = threading.Thread(target=send_delayed_confirmation)
