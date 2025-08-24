@@ -552,20 +552,33 @@ Time to order! 🍕"""
         # Get user context to preserve food order details
         context = self.session_manager.get_user_context(user_phone)
         
-        # First try the legacy order processor
-        try:
-            from pangea_order_processor import process_order_message
-            result = process_order_message(user_phone, user_message)
-            
-            if result:
-                state['response_message'] = "Order processed successfully! ✅"
-                state['action_taken'] = "order_processed"
-                return state
-                
-        except Exception as e:
-            print(f"⚠️ Legacy order processor failed: {e}")
+        # Check if this is a conversational message that should use LLM instead of legacy processor
+        message_lower = user_message.lower()
         
-        # Use LLM for intelligent order processing with full conversation context
+        # Conversational patterns that should use LLM, not legacy processor
+        conversational_patterns = [
+            'my name is', 'name is', 'i\'m', 'im ', 'it\'s', 'its ',
+            'hi ', 'hello', 'hey', 'thanks', 'thank you'
+        ]
+        
+        is_conversational = any(pattern in message_lower for pattern in conversational_patterns) or \
+                           (len(user_message.split()) <= 3 and not any(word in message_lower for word in ['order', 'number', '#', 'pay']))
+        
+        if not is_conversational:
+            # Try legacy processor for structured order data (PAY, order numbers, etc.)
+            try:
+                from pangea_order_processor import process_order_message
+                result = process_order_message(user_phone, user_message)
+                
+                if result:
+                    state['response_message'] = "Order processed successfully! ✅"
+                    state['action_taken'] = "order_processed"
+                    return state
+                    
+            except Exception as e:
+                print(f"⚠️ Legacy order processor failed: {e}")
+        
+        # Use LLM for intelligent conversational order processing
         # Build proper context dict with conversation history
         conversation_context = {
             'conversation_history': getattr(context, 'conversation_memory', []),
