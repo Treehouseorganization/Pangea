@@ -431,10 +431,38 @@ Return ONLY valid JSON."""
                 # Send message to NEW user (they get told they found someone)
                 # Check if user provided complete info in their first message
                 user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
-                state['response_message'] = self._generate_contextual_match_message(
-                    restaurant, location, optimal_time, 
-                    state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
-                )
+                
+                # Try to extract order details from initial message if they provided complete info
+                ready_to_pay = False
+                if user_provided_complete_info:
+                    ready_to_pay = self._extract_order_details_from_initial_message(
+                        state['messages'][-1].content, user_phone, restaurant
+                    )
+                
+                if ready_to_pay:
+                    # Send payment instructions immediately since they provided everything
+                    from pangea_order_processor import get_user_order_session, get_payment_amount
+                    session = get_user_order_session(user_phone)
+                    payment_amount = get_payment_amount(2)  # Real group match
+                    
+                    state['response_message'] = f"""🎉 Perfect! I found someone who also wants {restaurant} at {location} for {optimal_time}!
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+I've got your order details: {session.get('customer_name', 'your info')} - {session.get('order_description', 'your order')} ✅
+
+**Important:** When you place your order at {restaurant}, choose PICKUP (not delivery).
+
+When you're ready to pay, just text:
+**PAY**
+
+I'll send you the payment link! 💳"""
+                else:
+                    state['response_message'] = self._generate_contextual_match_message(
+                        restaurant, location, optimal_time, 
+                        state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
+                    )
                 
                 # SOLO user gets NO notification (silent upgrade)
                 # Their fake match just became real, but they don't know
@@ -458,10 +486,39 @@ Return ONLY valid JSON."""
                 # Send messages to both users with contextual intro
                 # Check if user provided complete info in their first message
                 user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
-                state['response_message'] = self._generate_contextual_match_message(
-                    restaurant, location, best_match.get('time_analysis', {}).get('optimal_time', delivery_time), 
-                    state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
-                )
+                optimal_time = best_match.get('time_analysis', {}).get('optimal_time', delivery_time)
+                
+                # Try to extract order details from initial message if they provided complete info
+                ready_to_pay = False
+                if user_provided_complete_info:
+                    ready_to_pay = self._extract_order_details_from_initial_message(
+                        state['messages'][-1].content, user_phone, restaurant
+                    )
+                
+                if ready_to_pay:
+                    # Send payment instructions immediately since they provided everything
+                    from pangea_order_processor import get_user_order_session, get_payment_amount
+                    session = get_user_order_session(user_phone)
+                    payment_amount = get_payment_amount(2)  # Real group match
+                    
+                    state['response_message'] = f"""🎉 Great news! I found someone who also wants {restaurant} at {location} for {optimal_time}!
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+I've got your order details: {session.get('customer_name', 'your info')} - {session.get('order_description', 'your order')} ✅
+
+**Important:** When you place your order at {restaurant}, choose PICKUP (not delivery).
+
+When you're ready to pay, just text:
+**PAY**
+
+I'll send you the payment link! 💳"""
+                else:
+                    state['response_message'] = self._generate_contextual_match_message(
+                        restaurant, location, optimal_time, 
+                        state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
+                    )
                 
                 match_message = f"""🎉 Great news! Another student wants {restaurant} at {location} too!
 
@@ -492,9 +549,36 @@ Time to order! 🍕"""
             # Generate contextual message
             # Check if user provided complete info in their first message
             user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
-            state['response_message'] = self._generate_contextual_match_message(
-                restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True, user_provided_complete_info=user_provided_complete_info
-            )
+            
+            # Try to extract order details from initial message if they provided complete info
+            ready_to_pay = False
+            if user_provided_complete_info:
+                ready_to_pay = self._extract_order_details_from_initial_message(
+                    state['messages'][-1].content, user_phone, restaurant
+                )
+            
+            if ready_to_pay:
+                # Send payment instructions immediately since they provided everything
+                from pangea_order_processor import get_user_order_session, get_payment_amount
+                session = get_user_order_session(user_phone)
+                payment_amount = get_payment_amount(1)  # Solo order
+                
+                state['response_message'] = f"""Great news! I found someone who also wants {restaurant} at {location}! 🎉
+
+Your share will be $3.50 instead of the full delivery fee.
+
+I've got your order details: {session.get('customer_name', 'your info')} - {session.get('order_description', 'your order')} ✅
+
+**Important:** When you place your order at {restaurant}, choose PICKUP (not delivery).
+
+When you're ready to pay, just text:
+**PAY**
+
+I'll send you the payment link! 💳"""
+            else:
+                state['response_message'] = self._generate_contextual_match_message(
+                    restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True, user_provided_complete_info=user_provided_complete_info
+                )
             
             state['action_taken'] = "created_fake_match"
         
@@ -945,6 +1029,82 @@ Let's get your food! 🍕"""
         # User provided complete info if they have restaurant + location + (food specifics OR clear order intent)
         # This indicates they're ready to order specific items, not just browsing
         return has_restaurant and has_location and (has_food_specifics or has_order_context)
+    
+    def _extract_order_details_from_initial_message(self, message: str, user_phone: str, restaurant: str) -> bool:
+        """Extract order details (name, food) from initial message if user provided everything upfront"""
+        
+        try:
+            # Use Claude to extract order details from the initial message
+            extraction_prompt = f"""
+            The user provided their food order request. Extract order details if available.
+            
+            User message: "{message}"
+            Restaurant: {restaurant}
+            
+            Extract:
+            1. Customer name (if they mentioned their name)
+            2. What they want to order (specific food items)
+            
+            Return JSON with:
+            - "customer_name": name or null
+            - "order_description": what they want to order or null
+            
+            Examples:
+            - "I want McDonald's delivered to library and my name is John, I want a Big Mac meal" → {{"customer_name": "John", "order_description": "Big Mac meal"}}
+            - "Get me Chipotle at the library, name is Maria, I want a chicken bowl" → {{"customer_name": "Maria", "order_description": "chicken bowl"}}
+            - "I want Starbucks at library" → {{"customer_name": null, "order_description": null}}
+            
+            IMPORTANT: Return ONLY valid JSON, no other text.
+            """
+            
+            response = self.llm.invoke([{"role": "user", "content": extraction_prompt}])
+            response_text = response.content.strip()
+            
+            # Clean JSON
+            if '```json' in response_text:
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                response_text = response_text[start:end]
+            elif '```' in response_text:
+                response_text = response_text.replace('```', '').strip()
+            
+            if not response_text.startswith('{'):
+                import re
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group()
+            
+            extracted_data = json.loads(response_text)
+            
+            customer_name = extracted_data.get("customer_name")
+            order_description = extracted_data.get("order_description")
+            
+            # If we extracted order details, store them in the order session
+            if customer_name or order_description:
+                # Get order session
+                from pangea_order_processor import get_user_order_session, update_order_session
+                session = get_user_order_session(user_phone)
+                
+                if session:
+                    if customer_name:
+                        session['customer_name'] = customer_name
+                    if order_description:
+                        session['order_description'] = order_description
+                    
+                    # If we have both name/order number AND description, they're ready to pay
+                    if (customer_name or session.get('order_number')) and order_description:
+                        session['order_stage'] = 'ready_to_pay'
+                        update_order_session(user_phone, session)
+                        return True  # Indicates they should get payment instructions immediately
+                    else:
+                        # Update session but they still need more info
+                        update_order_session(user_phone, session)
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Initial message extraction failed: {e}")
+            return False
 
     def _generate_dynamic_conversation_response(self, message: str, user_phone: str, context: Dict) -> str:
         """Generate dynamic, contextual conversation responses using LLM"""
