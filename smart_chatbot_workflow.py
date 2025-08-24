@@ -698,16 +698,42 @@ Your solo share: $3.50 💳"""
         # Check if this is a conversational message that should use LLM instead of legacy processor
         message_lower = user_message.lower()
         
-        # Conversational patterns that should use LLM, not legacy processor
+        # Check if user provided their name (final order detail)
+        name_patterns = ['my name is', 'name is', 'i\'m', 'im ']
+        is_providing_name = any(pattern in message_lower for pattern in name_patterns) or \
+                           (len(user_message.split()) <= 3 and not any(word in message_lower for word in ['order', 'number', '#', 'pay']) and 
+                            not any(word in message_lower for word in ['want', 'craving', 'hungry']))
+        
+        if is_providing_name:
+            # User provided name - this might be the final order detail needed
+            # Check if we now have everything needed for payment
+            if context.active_order_session:
+                restaurant = context.active_order_session.get('restaurant', 'restaurant')
+                group_size = context.active_order_session.get('group_size', 1)
+                payment_amount = "$3.50" if group_size == 1 else "$4.50"
+                
+                # Generate payment instructions
+                state['response_message'] = f"""Perfect! I've got your name recorded. 👍
+
+You're all set for {restaurant} delivery!
+
+**Ready to pay and trigger delivery?**
+💳 Your share: {payment_amount}
+📱 Text "PAY" when you're ready
+
+I'll send you the payment link and coordinate your delivery! 🚚"""
+                
+                state['action_taken'] = "name_recorded_ready_for_payment"
+                return state
+        
+        # Conversational patterns that should use LLM, not legacy processor  
         conversational_patterns = [
-            'my name is', 'name is', 'i\'m', 'im ', 'it\'s', 'its ',
             'hi ', 'hello', 'hey', 'thanks', 'thank you'
         ]
         
-        is_conversational = any(pattern in message_lower for pattern in conversational_patterns) or \
-                           (len(user_message.split()) <= 3 and not any(word in message_lower for word in ['order', 'number', '#', 'pay']))
+        is_conversational = any(pattern in message_lower for pattern in conversational_patterns)
         
-        if not is_conversational:
+        if not is_conversational and not is_providing_name:
             # Try legacy processor for structured order data (PAY, order numbers, etc.)
             try:
                 from pangea_order_processor import process_order_message
