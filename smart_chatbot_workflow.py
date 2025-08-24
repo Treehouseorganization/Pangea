@@ -479,7 +479,7 @@ Your share: $4.50 each (vs $8+ solo)
 
 **Next steps:**
 1. Order from {restaurant} (choose PICKUP, not delivery)  
-2. Come back with your order number/name AND what you ordered
+2. Come back with your order number OR name and what you ordered
 3. Text "PAY" when ready
 
 Time to order! 🍕"""
@@ -542,14 +542,17 @@ Time to order! 🍕"""
         return state
     
     def _handle_order_process_node(self, state: SmartChatbotState) -> SmartChatbotState:
-        """Handle order process messages - integrate with existing order processor"""
+        """Handle order process messages with context awareness"""
         
         user_message = state['messages'][-1].content
         user_phone = state['user_phone']
         
         print(f"📋 Processing order message from {user_phone}")
         
-        # Use existing order processor
+        # Get user context to preserve food order details
+        context = self.session_manager.get_user_context(user_phone)
+        
+        # First try the legacy order processor
         try:
             from pangea_order_processor import process_order_message
             result = process_order_message(user_phone, user_message)
@@ -557,15 +560,16 @@ Time to order! 🍕"""
             if result:
                 state['response_message'] = "Order processed successfully! ✅"
                 state['action_taken'] = "order_processed"
-            else:
-                # Fallback response
-                state['response_message'] = self._generate_order_process_response(user_message, user_phone)
-                state['action_taken'] = "order_response_generated"
+                return state
                 
         except Exception as e:
-            print(f"❌ Order processing error: {e}")
-            state['response_message'] = self._generate_order_process_response(user_message, user_phone)
-            state['action_taken'] = "order_fallback_response"
+            print(f"⚠️ Legacy order processor failed: {e}")
+        
+        # Use LLM for intelligent order processing with full conversation context
+        state['response_message'] = self._generate_dynamic_conversation_response(
+            user_message, user_phone, context.__dict__
+        )
+        state['action_taken'] = "intelligent_order_conversation"
         
         return state
     
@@ -763,8 +767,57 @@ Which location works for you?"""
         else:
             return "I think I have everything I need! Let me find you a group..."
     
+    def _generate_context_aware_order_response(self, message: str, user_phone: str, context, state: SmartChatbotState) -> str:
+        """Generate context-aware order process response using LLM with full conversation memory"""
+        
+        message_lower = message.lower()
+        
+        if context.active_order_session:
+            restaurant = context.active_order_session.get('restaurant', 'restaurant')
+            
+            # Check if this looks like just providing a name
+            name_patterns = ['my name is', 'name is', 'i\'m', 'im ', 'it\'s', 'its ']
+            is_name_only = any(pattern in message_lower for pattern in name_patterns) or \
+                          (len(message.split()) <= 3 and not any(word in message_lower for word in ['order', 'number', '#', 'pay']))
+            
+            if is_name_only:
+                # User just provided their name - use LLM with full conversation context
+                return self._generate_name_provided_response(message, user_phone, context, restaurant)
+            
+            elif 'pay' in message_lower:
+                return "Processing your payment... 💳"
+            
+            else:
+                # They might be providing order details
+                return f"Perfect! Processing your {restaurant} order details... 🍕"
+        
+        else:
+            return "You don't have an active order. Want to start a new food order? Just tell me what you're craving! 🍕"
+    
+    def _extract_original_food_context(self, context) -> str:
+        """Extract original food order context from conversation memory"""
+        
+        # Look through conversation memory for the original food request
+        if hasattr(context, 'conversation_memory') and context.conversation_memory:
+            for msg in context.conversation_memory:
+                if isinstance(msg, str):
+                    msg_lower = msg.lower()
+                    # Look for specific food items mentioned
+                    food_items = ['burger', 'meal', 'sandwich', 'fries', 'drink', 'combo', 'double', 'big mac', 'whopper']
+                    if any(food in msg_lower for food in food_items):
+                        # Found original food context
+                        return f"Remember, you wanted to order the items you mentioned earlier."
+        
+        # Look in current food request if available
+        if hasattr(context, 'current_food_request') and context.current_food_request:
+            food_request = context.current_food_request
+            if 'food_items' in food_request:
+                return f"You mentioned wanting: {food_request['food_items']}"
+        
+        return "Please let me know what specific food items you're ordering."
+    
     def _generate_order_process_response(self, message: str, user_phone: str) -> str:
-        """Generate helpful order process response"""
+        """Generate helpful order process response (legacy fallback)"""
         
         context = self.session_manager.get_user_context(user_phone)
         
@@ -776,7 +829,7 @@ Which location works for you?"""
                 if order_stage == 'ready_to_pay':
                     return "Processing your payment... 💳"
                 else:
-                    return "I need your order details first before you can pay. Please provide your order number/name and what you ordered."
+                    return "I need your order details first before you can pay. Please provide your order number OR name and what you ordered."
             
             elif order_stage == 'need_order_number':
                 return f"""I need your order details for {restaurant}.
@@ -867,7 +920,7 @@ Example: "I want Chipotle delivered to the library"
         CRITICAL ORDER INSTRUCTIONS (must always include):
         - User MUST order from {restaurant} app or call them directly
         - When ordering, they MUST choose PICKUP (never delivery)
-        - After ordering, they come back with their order number/confirmation AND their name
+        - After ordering, they come back with their order number/confirmation OR their name
         - Then they text "PAY" to get payment link and trigger delivery
         
         BUSINESS LOGIC CONTEXT:
@@ -899,7 +952,7 @@ Example: "I want Chipotle delivered to the library"
         3. Explains the pricing ({pricing_info})
         4. Asks for their name (I need this to coordinate pickup)
         5. Gives clear pickup ordering instructions (use the app/call, choose PICKUP not delivery)
-        6. Explains next steps (come back with order number + name, then text PAY)
+        6. Explains next steps (come back with order number OR name, then text PAY)
         
         Be conversational like Claude, not templated. Make it feel natural and excited.
         Use emojis appropriately. Keep it concise but complete.
@@ -919,7 +972,7 @@ Example: "I want Chipotle delivered to the library"
 
 What's your name? I need this to coordinate pickup.
 
-Please order from {restaurant} (app or call) - choose PICKUP, not delivery. Then come back with your order number and name, and text "PAY" when ready! 🍕"""
+Please order from {restaurant} (app or call) - choose PICKUP, not delivery. Then come back with your order number OR name and what you ordered, then text "PAY" when ready! 🍕"""
 
     def _user_provided_complete_info_initially(self, message: str) -> bool:
         """Check if user provided complete order information (restaurant + location + specifics) in their first message"""
