@@ -309,7 +309,12 @@ Return ONLY valid JSON."""
             state['change_context'] = {
                 "is_change": any(phrase in user_message for phrase in ['actually', 'instead', 'change', 'make it']),
                 "original_message": state['messages'][-1].content,
-                "has_complete_order_info": bool(customer_name and order_description)
+                "has_complete_order_info": bool(customer_name and order_description),
+                "has_partial_order_info": bool(customer_name or order_description),
+                "missing_name": not bool(customer_name),
+                "missing_order": not bool(order_description),
+                "customer_name": customer_name,
+                "order_description": order_description
             }
         
         return state
@@ -441,9 +446,18 @@ Return ONLY valid JSON."""
                     self._store_order_info_in_session(user_phone, state['extracted_data'])
                 
                 # Send message to NEW user (they get told they found someone)
+                # Update change_context with actual order info
+                change_context = state.get('change_context', {})
+                change_context.update({
+                    'has_complete_order_info': bool(state['extracted_data'].get('customer_name') and state['extracted_data'].get('order_description')),
+                    'has_partial_order_info': bool(state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description')),
+                    'missing_name': not bool(state['extracted_data'].get('customer_name')),
+                    'missing_order': not bool(state['extracted_data'].get('order_description'))
+                })
+                
                 state['response_message'] = self._generate_contextual_match_message(
                     restaurant, location, optimal_time, 
-                    state.get('change_context', {}), is_fake_match=False
+                    change_context, is_fake_match=False
                 )
                 
                 # SOLO user gets NO notification (silent upgrade)
@@ -470,9 +484,18 @@ Return ONLY valid JSON."""
                     self._store_order_info_in_session(user_phone, state['extracted_data'])
                 
                 # Send messages to both users with contextual intro
+                # Update change_context with actual order info
+                change_context = state.get('change_context', {})
+                change_context.update({
+                    'has_complete_order_info': bool(state['extracted_data'].get('customer_name') and state['extracted_data'].get('order_description')),
+                    'has_partial_order_info': bool(state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description')),
+                    'missing_name': not bool(state['extracted_data'].get('customer_name')),
+                    'missing_order': not bool(state['extracted_data'].get('order_description'))
+                })
+                
                 state['response_message'] = self._generate_contextual_match_message(
                     restaurant, location, best_match.get('time_analysis', {}).get('optimal_time', delivery_time), 
-                    state.get('change_context', {}), is_fake_match=False
+                    change_context, is_fake_match=False
                 )
                 
                 match_message = f"""🎉 Great news! Another student wants {restaurant} at {location} too!
@@ -506,8 +529,17 @@ Time to order! 🍕"""
                 self._store_order_info_in_session(user_phone, state['extracted_data'])
             
             # Generate contextual message
+            # Update change_context with actual order info
+            change_context = state.get('change_context', {})
+            change_context.update({
+                'has_complete_order_info': bool(state['extracted_data'].get('customer_name') and state['extracted_data'].get('order_description')),
+                'has_partial_order_info': bool(state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description')),
+                'missing_name': not bool(state['extracted_data'].get('customer_name')),
+                'missing_order': not bool(state['extracted_data'].get('order_description'))
+            })
+            
             state['response_message'] = self._generate_contextual_match_message(
-                restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True
+                restaurant, location, delivery_time, change_context, is_fake_match=True
             )
             
             state['action_taken'] = "created_fake_match"
@@ -899,13 +931,16 @@ Example: "I want Chipotle delivered to the library"
         # Complete intro
         intro += time_context + "! 🎉"
         
-        # Check if user provided complete order info in their original message  
+        # Check what order info was provided in their original message  
         has_complete_order_info = change_context.get('has_complete_order_info', False)
+        has_partial_order_info = change_context.get('has_partial_order_info', False)
+        missing_name = change_context.get('missing_name', True)
+        missing_order = change_context.get('missing_order', True)
         
         # Standard continuation (business logic preserved)
         if is_fake_match:
             if has_complete_order_info:
-                # User provided name/order in initial message - skip to payment
+                # User provided both name and order - skip to payment
                 message = f"""{intro}
 
 Your share will be $3.50 instead of the full delivery fee.
@@ -913,8 +948,41 @@ Your share will be $3.50 instead of the full delivery fee.
 **Remember to order PICKUP (not delivery) from {restaurant}**
 
 I got your order info - you just need to text "PAY" to receive your payment link and then I'll finish coordinating your delivery! 💳"""
+            elif has_partial_order_info:
+                # User provided some order info - tell them what's missing specifically
+                if missing_name and not missing_order:
+                    # They provided order but missing name - very specific message
+                    message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+Great! I got your order details. I just need your name or order number for the {restaurant} order, then you can text "PAY" to get your payment link! 🍕"""
+                elif missing_order and not missing_name:
+                    # They provided name but missing order
+                    message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+Perfect! I have your name. Just let me know what you ordered from {restaurant}, then you can text "PAY" to get your payment link! 🍕"""
+                else:
+                    # Fallback for edge cases
+                    missing_items = []
+                    if missing_name:
+                        missing_items.append("your name or order number")
+                    if missing_order:
+                        missing_items.append("what you ordered")
+                    
+                    missing_text = " and ".join(missing_items)
+                    
+                    message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+**Remember to order PICKUP (not delivery) from {restaurant}**
+
+I just need {missing_text} and then you can text "PAY" to get your payment link! 🍕"""
             else:
-                # Standard flow - need order info
+                # Standard flow - need all order info
                 message = f"""{intro}
 
 Your share will be $3.50 instead of the full delivery fee.
@@ -937,6 +1005,40 @@ Your share: $4.50 each (vs $8+ solo)
 **Remember to order PICKUP (not delivery) from {restaurant}**
 
 I got your order info - you just need to text "PAY" to receive your payment link and then I'll finish coordinating your delivery! 💳"""
+            elif has_partial_order_info:
+                # User provided some order info - tell them what's missing specifically
+                if missing_name and not missing_order:
+                    # They provided order but missing name - very specific message
+                    message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+Great! I got your order details. I just need your name or order number for the {restaurant} order, then you can text "PAY" to get your payment link! 🍕"""
+                elif missing_order and not missing_name:
+                    # They provided name but missing order
+                    message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+Perfect! I have your name. Just let me know what you ordered from {restaurant}, then you can text "PAY" to get your payment link! 🍕"""
+                else:
+                    # Fallback for edge cases
+                    missing_items = []
+                    if missing_name:
+                        missing_items.append("your name or order number")
+                    if missing_order:
+                        missing_items.append("what you ordered")
+                    
+                    missing_text = " and ".join(missing_items)
+                    
+                    message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+I just need {missing_text} and then you can text "PAY" to get your payment link! 🍕"""
             else:
                 # Standard flow - need order info
                 message = f"""{intro}

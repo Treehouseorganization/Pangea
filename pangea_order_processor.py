@@ -190,12 +190,21 @@ def classify_order_intent_node(state: OrderState) -> OrderState:
     
     current_stage = session.get('order_stage', 'need_order_number')
     
-    # Check for payment trigger (only if they have order number)
-    if 'pay' in last_message and len(last_message) <= 10:
+    # Check for payment trigger - improved detection for combined messages like "John PAY"
+    contains_pay = 'pay' in last_message
+    
+    # Simple PAY message
+    if contains_pay and len(last_message) <= 10:
         if current_stage == 'ready_to_pay':
             state['order_stage'] = "payment_request"
         else:
             state['order_stage'] = "need_order_first"
+        return state
+    
+    # Combined message like "John PAY" or "My name is Sarah PAY"
+    elif contains_pay and current_stage == 'need_order_number':
+        # Let collect_order_number handle both name extraction AND payment
+        state['order_stage'] = "collect_order_number_with_payment"
         return state
     
     # Handle based on current stage
@@ -218,6 +227,9 @@ def collect_order_number_node(state: OrderState) -> OrderState:
     user_phone = state['user_phone']
     user_message = state['messages'][-1].content.strip()
     session = get_user_order_session(user_phone)
+    
+    # Check if this is a combined name+payment message
+    is_combined_payment = state['order_stage'] == "collect_order_number_with_payment"
     
     # Use Claude to extract order number, name, and what they ordered
     extraction_prompt = f"""
@@ -342,6 +354,34 @@ This helps me coordinate pickup with {session.get('restaurant', 'the restaurant'
         
         payment_amount = get_payment_amount(session.get('group_size', 2))
         
+        # Special handling for combined name+PAY messages
+        if is_combined_payment:
+            # User provided both name and PAY - process payment immediately
+            session['order_stage'] = 'payment_initiated'
+            session['payment_requested_at'] = datetime.now()
+            update_order_session(user_phone, session)
+            
+            payment_link = get_payment_link(session.get('group_size', 2))
+            restaurant = session.get('restaurant', 'your group')
+            
+            message = f"""Perfect! I've got your {identifier_for_message} for {restaurant}! ✅
+
+💳 Here's your payment link:
+{payment_link}
+
+Your share: {payment_amount}
+
+After payment, I'll coordinate with your group to place the order! 🍕"""
+            
+            send_friendly_message(user_phone, message, message_type="payment")
+            
+            # Check if this completes the group and triggers delivery
+            check_group_completion_and_trigger_delivery(user_phone)
+            
+            state['messages'].append(AIMessage(content=message))
+            return state
+        
+        # Regular flow - just collected order info, ask them to PAY later
         # ✅ FIXED: Use identifier_for_message which is always defined
         message = f"""Perfect! I've got your {identifier_for_message} for {session.get('restaurant')}! ✅
 
@@ -741,6 +781,7 @@ def create_order_graph():
         route_order_flow,
         {
             "collect_order_number": "collect_order_number",
+            "collect_order_number_with_payment": "collect_order_number",
             "collect_order_description": "collect_order_description",
             "payment_request": "handle_payment_request",
             "redirect_to_payment": "handle_redirect_to_payment",
