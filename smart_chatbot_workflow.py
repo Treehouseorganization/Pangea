@@ -289,10 +289,17 @@ Return ONLY valid JSON."""
         else:
             # Complete request - start fresh food request
             self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
+            
+            # Extract additional order info (name and order description)
+            customer_name = extracted.get('customer_name')
+            order_description = extracted.get('order_description')
+            
             state['extracted_data'] = {
                 "restaurant": restaurant,
                 "location": location, 
                 "delivery_time": delivery_time,
+                "customer_name": customer_name,
+                "order_description": order_description,
                 "missing_info": []
             }
             state['action_taken'] = "started_food_request"
@@ -301,7 +308,8 @@ Return ONLY valid JSON."""
             user_message = state['messages'][-1].content.lower()
             state['change_context'] = {
                 "is_change": any(phrase in user_message for phrase in ['actually', 'instead', 'change', 'make it']),
-                "original_message": state['messages'][-1].content
+                "original_message": state['messages'][-1].content,
+                "has_complete_order_info": bool(customer_name and order_description)
             }
         
         return state
@@ -428,6 +436,10 @@ Return ONLY valid JSON."""
                 # Transition new user to order process
                 self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
                 
+                # Store order info if provided in initial message
+                if state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description'):
+                    self._store_order_info_in_session(user_phone, state['extracted_data'])
+                
                 # Send message to NEW user (they get told they found someone)
                 state['response_message'] = self._generate_contextual_match_message(
                     restaurant, location, optimal_time, 
@@ -452,6 +464,10 @@ Return ONLY valid JSON."""
                 # Transition both users to order process
                 self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
                 self.session_manager.transition_to_order_process(match_phone, group_id, restaurant, 2)
+                
+                # Store order info if provided in initial message
+                if state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description'):
+                    self._store_order_info_in_session(user_phone, state['extracted_data'])
                 
                 # Send messages to both users with contextual intro
                 state['response_message'] = self._generate_contextual_match_message(
@@ -484,6 +500,10 @@ Time to order! 🍕"""
             
             # Transition to order process as solo
             self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 1)
+            
+            # Store order info if provided in initial message
+            if state['extracted_data'].get('customer_name') or state['extracted_data'].get('order_description'):
+                self._store_order_info_in_session(user_phone, state['extracted_data'])
             
             # Generate contextual message
             state['response_message'] = self._generate_contextual_match_message(
@@ -583,6 +603,22 @@ Time to order! 🍕"""
         return state
     
     # Helper methods
+    def _store_order_info_in_session(self, user_phone: str, extracted_data: Dict):
+        """Store order information (name/description) in user's order session"""
+        try:
+            from pangea_order_processor import get_user_order_session, update_order_session
+            
+            session = get_user_order_session(user_phone)
+            if session:
+                if extracted_data.get('customer_name'):
+                    session['customer_name'] = extracted_data['customer_name']
+                if extracted_data.get('order_description'):
+                    session['order_description'] = extracted_data['order_description']
+                
+                update_order_session(user_phone, session)
+                print(f"✅ Stored order info in session for {user_phone}: name={extracted_data.get('customer_name')}, order={extracted_data.get('order_description')}")
+        except Exception as e:
+            print(f"❌ Failed to store order info in session: {e}")
     def _extract_food_request_details(self, message: str, existing_request: Dict = None) -> Dict:
         """Extract food request details using Claude"""
         
@@ -599,8 +635,14 @@ Extract and return JSON:
     "restaurant": "exact restaurant name or null",
     "location": "exact location name or null",
     "delivery_time": "parsed time or 'now'",
-    "missing_info": ["restaurant", "location"] // what's still missing
+    "customer_name": "person's name if mentioned or null",
+    "order_description": "specific food items mentioned or null",
+    "missing_info": ["restaurant", "location"] // what's still missing from core requirements
 }}
+
+Examples:
+- "McDonald's library 10pm Big Mac meal" → {{"restaurant": "McDonald's", "location": "Richard J Daley Library", "delivery_time": "10pm", "customer_name": null, "order_description": "Big Mac meal", "missing_info": []}}
+- "I want chipotle at student center, my name is Sarah" → {{"restaurant": "Chipotle", "location": "Student Center East", "delivery_time": "now", "customer_name": "Sarah", "order_description": null, "missing_info": []}}
 
 Return ONLY valid JSON."""
         
@@ -857,9 +899,23 @@ Example: "I want Chipotle delivered to the library"
         # Complete intro
         intro += time_context + "! 🎉"
         
+        # Check if user provided complete order info in their original message  
+        has_complete_order_info = change_context.get('has_complete_order_info', False)
+        
         # Standard continuation (business logic preserved)
         if is_fake_match:
-            message = f"""{intro}
+            if has_complete_order_info:
+                # User provided name/order in initial message - skip to payment
+                message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+**Remember to order PICKUP (not delivery) from {restaurant}**
+
+I got your order info - you just need to text "PAY" to receive your payment link and then I'll finish coordinating your delivery! 💳"""
+            else:
+                # Standard flow - need order info
+                message = f"""{intro}
 
 Your share will be $3.50 instead of the full delivery fee.
 
@@ -871,7 +927,19 @@ Your share will be $3.50 instead of the full delivery fee.
 Let's get your food! 🍕"""
         else:
             # Real group match
-            message = f"""{intro}
+            if has_complete_order_info:
+                # User provided name/order in initial message - skip to payment
+                message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Remember to order PICKUP (not delivery) from {restaurant}**
+
+I got your order info - you just need to text "PAY" to receive your payment link and then I'll finish coordinating your delivery! 💳"""
+            else:
+                # Standard flow - need order info
+                message = f"""{intro}
 
 **Group Confirmed (2 people)**
 Your share: $4.50 each (vs $8+ solo)
