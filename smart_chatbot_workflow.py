@@ -956,12 +956,16 @@ I got your order info - you just need to text "PAY" to receive your payment link
 
 Your share will be $3.50 instead of the full delivery fee.
 
+**Remember to order PICKUP (not delivery) from {restaurant}**
+
 Great! I got your order details. I just need your name or order number for the {restaurant} order, then you can text "PAY" to get your payment link! 🍕"""
                 elif missing_order and not missing_name:
                     # They provided name but missing order
                     message = f"""{intro}
 
 Your share will be $3.50 instead of the full delivery fee.
+
+**Remember to order PICKUP (not delivery) from {restaurant}**
 
 Perfect! I have your name. Just let me know what you ordered from {restaurant}, then you can text "PAY" to get your payment link! 🍕"""
                 else:
@@ -1014,6 +1018,8 @@ I got your order info - you just need to text "PAY" to receive your payment link
 **Group Confirmed (2 people)**
 Your share: $4.50 each (vs $8+ solo)
 
+**Remember to order PICKUP (not delivery) from {restaurant}**
+
 Great! I got your order details. I just need your name or order number for the {restaurant} order, then you can text "PAY" to get your payment link! 🍕"""
                 elif missing_order and not missing_name:
                     # They provided name but missing order
@@ -1021,6 +1027,8 @@ Great! I got your order details. I just need your name or order number for the {
 
 **Group Confirmed (2 people)**
 Your share: $4.50 each (vs $8+ solo)
+
+**Remember to order PICKUP (not delivery) from {restaurant}**
 
 Perfect! I have your name. Just let me know what you ordered from {restaurant}, then you can text "PAY" to get your payment link! 🍕"""
                 else:

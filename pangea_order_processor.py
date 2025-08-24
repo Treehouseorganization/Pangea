@@ -285,15 +285,28 @@ def collect_order_number_node(state: OrderState) -> OrderState:
         customer_name = extracted_data.get("customer_name")
         order_description = extracted_data.get("order_description")
         
+        # CRITICAL FIX: Check for existing info in session
+        if not order_description and session.get('order_description'):
+            order_description = session.get('order_description')
+            print(f"🔄 Using existing order description from session: {order_description}")
+            
+        if not customer_name and session.get('customer_name'):
+            customer_name = session.get('customer_name')
+            print(f"🔄 Using existing customer name from session: {customer_name}")
+            
+        if not order_number and session.get('order_number'):
+            order_number = session.get('order_number')
+            print(f"🔄 Using existing order number from session: {order_number}")
+        
+        # Update session with extracted or existing values
         if order_number:
             session['order_number'] = order_number
             identifier_for_message = f"order number: {order_number}"
         elif customer_name:
             session['customer_name'] = customer_name
-            name = customer_name
-            identifier_for_message = f"name: {name}"
+            identifier_for_message = f"name: {customer_name}"
         
-        # Store order description if provided
+        # Store order description if we have it (extracted or existing)
         if order_description:
             session['order_description'] = order_description
             
