@@ -135,6 +135,7 @@ CONTEXT CLUES:
 - If they express not wanting current request ("don't want", "never mind", "cancel") → cancellation
 - If they say "yes"/"no" and have pending invites → group_response  
 - If they provide order number/name and in order process → order_process
+- **CRITICAL**: If they have active_order_session=True and provide name/personal info → order_process
 - If they ask questions about service → general_conversation
 - If they're filling in previously missing info → missing_info
 
@@ -152,6 +153,8 @@ Examples:
 - "Actually I don't want that anymore" → intent: "cancellation"
 - "Yes" (with pending invite) → intent: "group_response"
 - "Order #ABC123" (in order process) → intent: "order_process"
+- "My name is Jake" (has active_order_session) → intent: "order_process"
+- "Jake" (has active_order_session) → intent: "order_process"  
 - "What restaurants are available?" → intent: "general_conversation"
 
 Return ONLY valid JSON."""
@@ -217,6 +220,11 @@ Return ONLY valid JSON."""
                 return {"intent": "order_process", "confidence": "high", "reasoning": "Payment request in order session"}
             elif any(word in message_lower for word in ['order', 'name', 'number']):
                 return {"intent": "order_process", "confidence": "medium", "reasoning": "Order details in active session"}
+            elif any(phrase in message_lower for phrase in ['my name is', 'name is', 'i\'m', 'im ']):
+                return {"intent": "order_process", "confidence": "high", "reasoning": "Providing name in active order session"}
+            elif len(message.split()) <= 3 and not any(food in message_lower for food in ['want', 'craving', 'hungry']):
+                # Short response in order session likely continuing order process
+                return {"intent": "order_process", "confidence": "medium", "reasoning": "Short response in active order session"}
         
         # Check for food requests (including restaurant/location/time changes)
         restaurants = ['chipotle', 'mcdonalds', 'chick-fil-a', 'portillos', 'starbucks']
