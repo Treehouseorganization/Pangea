@@ -385,143 +385,6 @@ def cleanup_old_data():
     except Exception as e:
         print(f"❌ Cleanup failed: {e}")
 
-def handle_group_invitation_response(user_phone: str, response: str) -> bool:
-    """Handle YES/NO responses to group invitations from existing system"""
-    
-    try:
-        # Check for pending negotiations (existing system)
-        pending_negotiations = db.collection('negotiations')\
-            .where('to_user', '==', user_phone)\
-            .where('status', '==', 'pending')\
-            .limit(1).get()
-        
-        if len(pending_negotiations) > 0:
-            negotiation_doc = pending_negotiations[0]
-            negotiation_data = negotiation_doc.to_dict()
-            
-            proposal = negotiation_data.get('proposal', {})
-            restaurant = proposal.get('restaurant', 'food')
-            group_id = negotiation_data['negotiation_id']
-            
-            response_lower = response.lower().strip()
-            
-            if response_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
-                # User accepted - start order process
-                negotiation_doc.reference.update({'status': 'accepted'})
-                
-                # Transition to order process
-                session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
-                
-                # Send confirmation
-                accept_message = f"""🎉 Perfect! You've joined the {restaurant} group!
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered
-3. Text "PAY" when ready
-
-Your share: $4.50 💳"""
-                
-                send_friendly_message(user_phone, accept_message)
-                
-                # Notify requesting user
-                requesting_user = negotiation_data['from_user']
-                notify_message = f"Great news! Your {restaurant} group partner has joined! You can both place your orders now. 🎉"
-                send_friendly_message(requesting_user, notify_message)
-                
-                return True
-                
-            elif response_lower in ['no', 'n', 'nah', 'pass']:
-                # User declined
-                negotiation_doc.reference.update({'status': 'declined'})
-                
-                # Send acknowledgment
-                decline_message = "No worries! I'll keep looking for other opportunities for you. 😊"
-                send_friendly_message(user_phone, decline_message)
-                
-                # Convert requesting user to solo order
-                requesting_user = negotiation_data['from_user']
-                convert_to_solo_order(requesting_user, restaurant)
-                
-                return True
-        
-        # Check for active groups (new system)
-        pending_groups = db.collection('active_groups')\
-            .where('members', 'array_contains', user_phone)\
-            .where('status', 'in', ['pending_responses', 'forming'])\
-            .limit(1).get()
-        
-        if len(pending_groups) > 0:
-            group_doc = pending_groups[0]
-            group_data = group_doc.to_dict()
-            
-            group_id = group_data['group_id']
-            restaurant = group_data['restaurant']
-            
-            response_lower = response.lower().strip()
-            
-            if response_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
-                # Accept group invitation
-                session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
-                
-                group_doc.reference.update({
-                    'responses_received': firestore.ArrayUnion([user_phone]),
-                    'status': 'active'
-                })
-                
-                accept_message = f"""🎉 Welcome to the {restaurant} group!
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order number/name AND what you ordered
-3. Text "PAY" when ready
-
-Your share: $4.50 💳"""
-                
-                send_friendly_message(user_phone, accept_message)
-                return True
-                
-            elif response_lower in ['no', 'n', 'nah', 'pass']:
-                # Decline group invitation
-                group_doc.reference.update({'status': 'declined'})
-                
-                decline_message = "No worries! I'll keep looking for other opportunities for you. 😊"
-                send_friendly_message(user_phone, decline_message)
-                return True
-        
-        return False
-        
-    except Exception as e:
-        print(f"❌ Error handling group invitation response: {e}")
-        return False
-
-def convert_to_solo_order(user_phone: str, restaurant: str):
-    """Convert user to solo order when group invitation is declined"""
-    
-    try:
-        # Create solo group ID
-        solo_group_id = f"solo_{user_phone}_{datetime.now().timestamp()}"
-        
-        # Transition to solo order process
-        session_manager.transition_to_order_process(user_phone, solo_group_id, restaurant, 1)
-        
-        # Send solo order message
-        solo_message = f"""The other person couldn't join this time, but no worries!
-
-You can still get your {restaurant} order as a solo delivery.
-
-**Next steps:**
-1. Order from {restaurant} (choose PICKUP, not delivery)
-2. Come back with your order details
-3. Text "PAY" when ready
-
-Your solo share: $3.50 💳"""
-        
-        send_friendly_message(user_phone, solo_message)
-        print(f"✅ Converted {user_phone} to solo order")
-        
-    except Exception as e:
-        print(f"❌ Error converting to solo order: {e}")
 
 # Flask webhook server
 app = Flask(__name__)
@@ -560,19 +423,13 @@ def sms_webhook():
         
         print(f"📱 Webhook received: {from_number} -> {message_body}")
         
-        print("🔍 Checking for group invitation response...")
-        # Check if this is a group response first (for backward compatibility)
-        if handle_group_invitation_response(from_number, message_body):
-            print(f"✅ Handled as group invitation response")
-            return '', 200
-        
-        print("🔍 Routing to enhanced chatbot system...")
-        # Route through enhanced chatbot system
+        print("🔍 Routing to smart chatbot workflow...")
+        # Route through smart chatbot workflow (handles all message types)
         try:
             result = handle_incoming_message(from_number, message_body)
-            print(f"✅ handle_incoming_message returned: {result}")
+            print(f"✅ Smart workflow returned: {result}")
         except Exception as handler_error:
-            print(f"❌ HANDLER ERROR: {handler_error}")
+            print(f"❌ SMART WORKFLOW ERROR: {handler_error}")
             import traceback
             traceback.print_exc()
             raise handler_error

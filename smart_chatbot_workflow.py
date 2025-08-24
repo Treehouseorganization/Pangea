@@ -530,24 +530,159 @@ Time to order! 🍕"""
         
         print(f"👥 Processing group response from {user_phone}: {user_message}")
         
-        # This would integrate with existing group invitation system
-        # For now, provide helpful response
-        
-        message_lower = user_message.lower().strip()
-        
-        if message_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
-            state['response_message'] = "I don't see any pending group invitations for you right now. Want to start a new food order? Just tell me what you're craving! 🍕"
-            state['action_taken'] = "no_pending_invites"
+        # Check for pending negotiations or groups in database
+        try:
+            from firebase_admin import firestore
+            db = firestore.client()
             
-        elif message_lower in ['no', 'n', 'nah', 'pass']:
-            state['response_message'] = "No worries! I'll keep looking for other opportunities. Want to try a different restaurant or time? 😊"
-            state['action_taken'] = "declined_group"
+            # Check for pending negotiations (existing system)
+            pending_negotiations = db.collection('negotiations')\
+                .where('to_user', '==', user_phone)\
+                .where('status', '==', 'pending')\
+                .limit(1).get()
             
-        else:
-            state['response_message'] = "I didn't catch that. If you have a pending group invitation, please reply YES to join or NO to pass. Otherwise, let me know what you'd like to order! 🍕"
-            state['action_taken'] = "unclear_group_response"
+            message_lower = user_message.lower().strip()
+            
+            if len(pending_negotiations) > 0:
+                negotiation_doc = pending_negotiations[0]
+                negotiation_data = negotiation_doc.to_dict()
+                
+                proposal = negotiation_data.get('proposal', {})
+                restaurant = proposal.get('restaurant', 'food')
+                group_id = negotiation_data['negotiation_id']
+                
+                if message_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
+                    # User accepted - start order process
+                    negotiation_doc.reference.update({'status': 'accepted'})
+                    
+                    # Transition to order process
+                    self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
+                    
+                    state['response_message'] = f"""🎉 Perfect! You've joined the {restaurant} group!
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Your share: $4.50 💳"""
+                    state['action_taken'] = "accepted_group_invitation"
+                    
+                    # Notify requesting user
+                    requesting_user = negotiation_data['from_user']
+                    notify_message = f"Great news! Your {restaurant} group partner has joined! You can both place your orders now. 🎉"
+                    self.send_sms(requesting_user, notify_message)
+                    
+                elif message_lower in ['no', 'n', 'nah', 'pass']:
+                    # User declined
+                    negotiation_doc.reference.update({'status': 'declined'})
+                    
+                    state['response_message'] = "No worries! I'll keep looking for other opportunities for you. 😊"
+                    state['action_taken'] = "declined_group_invitation"
+                    
+                    # Convert requesting user to solo order
+                    requesting_user = negotiation_data['from_user']
+                    self._convert_to_solo_order(requesting_user, restaurant)
+                    
+                else:
+                    state['response_message'] = "Please reply YES to join the group or NO to pass. 😊"
+                    state['action_taken'] = "unclear_group_response"
+                
+                return state
+            
+            # Check for active groups (new system)
+            pending_groups = db.collection('active_groups')\
+                .where('members', 'array_contains', user_phone)\
+                .where('status', 'in', ['pending_responses', 'forming'])\
+                .limit(1).get()
+            
+            if len(pending_groups) > 0:
+                group_doc = pending_groups[0]
+                group_data = group_doc.to_dict()
+                
+                group_id = group_data['group_id']
+                restaurant = group_data['restaurant']
+                
+                if message_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
+                    # Accept group invitation
+                    self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
+                    
+                    group_doc.reference.update({
+                        'responses_received': firestore.ArrayUnion([user_phone]),
+                        'status': 'active'
+                    })
+                    
+                    state['response_message'] = f"""🎉 Welcome to the {restaurant} group!
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order number/name AND what you ordered
+3. Text "PAY" when ready
+
+Your share: $4.50 💳"""
+                    state['action_taken'] = "joined_active_group"
+                    
+                elif message_lower in ['no', 'n', 'nah', 'pass']:
+                    # Decline group invitation
+                    group_doc.reference.update({'status': 'declined'})
+                    
+                    state['response_message'] = "No worries! I'll keep looking for other opportunities for you. 😊"
+                    state['action_taken'] = "declined_active_group"
+                    
+                else:
+                    state['response_message'] = "Please reply YES to join the group or NO to pass. 😊"
+                    state['action_taken'] = "unclear_group_response"
+                
+                return state
+            
+            # No pending invitations found
+            if message_lower in ['yes', 'y', 'sure', 'ok', 'yeah']:
+                state['response_message'] = "I don't see any pending group invitations for you right now. Want to start a new food order? Just tell me what you're craving! 🍕"
+                state['action_taken'] = "no_pending_invites"
+                
+            elif message_lower in ['no', 'n', 'nah', 'pass']:
+                state['response_message'] = "No worries! I'll keep looking for other opportunities. Want to try a different restaurant or time? 😊"
+                state['action_taken'] = "declined_group"
+                
+            else:
+                state['response_message'] = "I didn't catch that. If you have a pending group invitation, please reply YES to join or NO to pass. Otherwise, let me know what you'd like to order! 🍕"
+                state['action_taken'] = "unclear_group_response"
+            
+        except Exception as e:
+            print(f"❌ Error handling group response: {e}")
+            state['response_message'] = "Sorry, I had trouble processing that. Can you try again? 😊"
+            state['action_taken'] = "group_response_error"
         
         return state
+    
+    def _convert_to_solo_order(self, user_phone: str, restaurant: str):
+        """Convert user to solo order when group invitation is declined"""
+        
+        try:
+            # Create solo group ID
+            from datetime import datetime
+            solo_group_id = f"solo_{user_phone}_{datetime.now().timestamp()}"
+            
+            # Transition to solo order process
+            self.session_manager.transition_to_order_process(user_phone, solo_group_id, restaurant, 1)
+            
+            # Send solo order message
+            solo_message = f"""The other person couldn't join this time, but no worries!
+
+You can still get your {restaurant} order as a solo delivery.
+
+**Next steps:**
+1. Order from {restaurant} (choose PICKUP, not delivery)
+2. Come back with your order details
+3. Text "PAY" when ready
+
+Your solo share: $3.50 💳"""
+            
+            self.send_sms(user_phone, solo_message)
+            print(f"✅ Converted {user_phone} to solo order")
+            
+        except Exception as e:
+            print(f"❌ Error converting to solo order: {e}")
     
     def _handle_order_process_node(self, state: SmartChatbotState) -> SmartChatbotState:
         """Handle order process messages with context awareness"""
@@ -952,6 +1087,10 @@ Example: "I want Chipotle delivered to the library"
         - When ordering, they MUST choose PICKUP (never delivery)
         - After ordering, they come back with their order number/confirmation OR their name
         - Then they text "PAY" to get payment link and trigger delivery
+        
+        STANDARD ORDER INSTRUCTION TEMPLATES:
+        Group orders (2+ people): "**Next steps:** 1. Order from {restaurant} (choose PICKUP, not delivery) 2. Come back with your order number/name AND what you ordered 3. Text 'PAY' when ready. Your share: $4.50 💳"
+        Solo orders (1 person): "**Next steps:** 1. Order from {restaurant} (choose PICKUP, not delivery) 2. Come back with your order details 3. Text 'PAY' when ready. Your solo share: $3.50 💳"
         
         BUSINESS LOGIC CONTEXT:
         - This is a {group_status}
