@@ -429,9 +429,11 @@ Return ONLY valid JSON."""
                 self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 2)
                 
                 # Send message to NEW user (they get told they found someone)
+                # Check if user provided complete info in their first message
+                user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
                 state['response_message'] = self._generate_contextual_match_message(
                     restaurant, location, optimal_time, 
-                    state.get('change_context', {}), is_fake_match=False
+                    state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
                 )
                 
                 # SOLO user gets NO notification (silent upgrade)
@@ -454,9 +456,11 @@ Return ONLY valid JSON."""
                 self.session_manager.transition_to_order_process(match_phone, group_id, restaurant, 2)
                 
                 # Send messages to both users with contextual intro
+                # Check if user provided complete info in their first message
+                user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
                 state['response_message'] = self._generate_contextual_match_message(
                     restaurant, location, best_match.get('time_analysis', {}).get('optimal_time', delivery_time), 
-                    state.get('change_context', {}), is_fake_match=False
+                    state.get('change_context', {}), is_fake_match=False, user_provided_complete_info=user_provided_complete_info
                 )
                 
                 match_message = f"""🎉 Great news! Another student wants {restaurant} at {location} too!
@@ -486,8 +490,10 @@ Time to order! 🍕"""
             self.session_manager.transition_to_order_process(user_phone, group_id, restaurant, 1)
             
             # Generate contextual message
+            # Check if user provided complete info in their first message
+            user_provided_complete_info = self._user_provided_complete_info_initially(state['messages'][-1].content)
             state['response_message'] = self._generate_contextual_match_message(
-                restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True
+                restaurant, location, delivery_time, state.get('change_context', {}), is_fake_match=True, user_provided_complete_info=user_provided_complete_info
             )
             
             state['action_taken'] = "created_fake_match"
@@ -828,8 +834,8 @@ Example: "I want Chipotle delivered to the library"
 
 **Questions?** Ask about restaurants, locations, pricing, or how it works! 😊🍕"""
     
-    def _generate_contextual_match_message(self, restaurant: str, location: str, delivery_time: str, change_context: Dict, is_fake_match: bool = True) -> str:
-        """Generate contextual match message based on user's change request"""
+    def _generate_contextual_match_message(self, restaurant: str, location: str, delivery_time: str, change_context: Dict, is_fake_match: bool = True, user_provided_complete_info: bool = False) -> str:
+        """Generate contextual match message based on user's change request and whether they provided complete info initially"""
         
         is_change = change_context.get('is_change', False)
         original_message = change_context.get('original_message', '')
@@ -857,9 +863,39 @@ Example: "I want Chipotle delivered to the library"
         # Complete intro
         intro += time_context + "! 🎉"
         
-        # Standard continuation (business logic preserved)
-        if is_fake_match:
-            message = f"""{intro}
+        # If user provided complete info initially (restaurant + location + specifics in first message),
+        # skip generic instructions and go straight to order collection
+        if user_provided_complete_info:
+            if is_fake_match:
+                message = f"""{intro}
+
+Your share will be $3.50 instead of the full delivery fee.
+
+**Ready to order? Here's what I need:**
+• Your order number/confirmation (like "ABC123") OR your name for pickup
+• What you ordered (like "Big Mac meal")
+
+**Important:** When you place your order at {restaurant}, choose PICKUP (not delivery).
+
+Once you have those details, come back and share them with me!"""
+            else:
+                # Real group match
+                message = f"""{intro}
+
+**Group Confirmed (2 people)**
+Your share: $4.50 each (vs $8+ solo)
+
+**Ready to order? Here's what I need:**
+• Your order number/confirmation (like "ABC123") OR your name for pickup
+• What you ordered (like "Big Mac meal")
+
+**Important:** When you place your order at {restaurant}, choose PICKUP (not delivery).
+
+Once you have those details, come back and share them with me!"""
+        else:
+            # Standard continuation (business logic preserved)
+            if is_fake_match:
+                message = f"""{intro}
 
 Your share will be $3.50 instead of the full delivery fee.
 
@@ -869,9 +905,9 @@ Your share will be $3.50 instead of the full delivery fee.
 3. Text "PAY" when ready
 
 Let's get your food! 🍕"""
-        else:
-            # Real group match
-            message = f"""{intro}
+            else:
+                # Real group match
+                message = f"""{intro}
 
 **Group Confirmed (2 people)**
 Your share: $4.50 each (vs $8+ solo)
@@ -884,6 +920,31 @@ Your share: $4.50 each (vs $8+ solo)
 Let's get your food! 🍕"""
         
         return message
+
+    def _user_provided_complete_info_initially(self, message: str) -> bool:
+        """Check if user provided complete order information (restaurant + location + specifics) in their first message"""
+        
+        message_lower = message.lower()
+        
+        # Check if message contains restaurant
+        restaurants = ['chipotle', 'mcdonalds', 'mcdonald', 'chick-fil-a', 'chick fil a', 'portillos', 'portillo', 'starbucks']
+        has_restaurant = any(rest in message_lower for rest in restaurants)
+        
+        # Check if message contains location
+        locations = ['library', 'student center', 'student services', 'university hall']
+        has_location = any(loc in message_lower for loc in locations)
+        
+        # Check if message contains specific food items (indicates they know what they want)
+        food_specifics = ['big mac', 'quarter pounder', 'chicken', 'nuggets', 'fries', 'burger', 'meal', 'bowl', 'burrito', 'sandwich', 'coffee', 'latte']
+        has_food_specifics = any(food in message_lower for food in food_specifics)
+        
+        # Check if message contains delivery/order context
+        order_context = ['delivered', 'delivery', 'order', 'want', 'get']
+        has_order_context = any(context in message_lower for context in order_context)
+        
+        # User provided complete info if they have restaurant + location + (food specifics OR clear order intent)
+        # This indicates they're ready to order specific items, not just browsing
+        return has_restaurant and has_location and (has_food_specifics or has_order_context)
 
     def _generate_dynamic_conversation_response(self, message: str, user_phone: str, context: Dict) -> str:
         """Generate dynamic, contextual conversation responses using LLM"""
