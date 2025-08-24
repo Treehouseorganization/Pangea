@@ -242,8 +242,12 @@ Return ONLY valid JSON."""
                         # Check time compatibility
                         solo_delivery_time = group_data.get('delivery_time', 'now')
                         
-                        # Quick compatibility check (can be more sophisticated)
                         print(f"   🔍 Checking solo user {solo_user_phone}: {solo_delivery_time}")
+                        
+                        # Actually check if times are compatible - don't match if they're different
+                        if solo_delivery_time != delivery_time:
+                            print(f"   ❌ Time mismatch: {solo_delivery_time} vs {delivery_time} - skipping")
+                            continue
                         
                         upgradeable_solos.append({
                             'user_phone': solo_user_phone,
