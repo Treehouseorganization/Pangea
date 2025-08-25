@@ -20,20 +20,8 @@ class ConversationController:
         self.send_sms = send_sms_func
         self.db = db
         
-        # Import existing business logic modules
-        try:
-            from pangea_order_processor import (
-                get_user_order_session, update_order_session, 
-                check_group_completion_and_trigger_delivery,
-                get_payment_link, get_payment_amount
-            )
-            self.get_order_session = get_user_order_session
-            self.update_order_session = update_order_session
-            self.check_group_completion = check_group_completion_and_trigger_delivery
-            self.get_payment_link = get_payment_link
-            self.get_payment_amount = get_payment_amount
-        except ImportError as e:
-            print(f"Warning: Could not import order processor functions: {e}")
+        # Store references for accessing business logic functions later
+        # Import functions locally to avoid circular imports
     
     def handle_message(self, user_phone: str, message: str) -> Dict:
         """Main entry point - handle any user message conversationally"""
@@ -88,8 +76,18 @@ CURRENT USER CONTEXT:
 - Active order session: {context.active_order_session is not None}
 - Current food request: {context.current_food_request}
 - Pending group invites: {len(context.pending_group_invites)}
-- Recent conversation: {context.conversation_memory[-3:] if context.conversation_memory else []}
+- Recent conversation: {context.conversation_memory if context.conversation_memory else []}
 - User preferences: {context.user_preferences}
+
+ACTIVE ORDER SESSION DETAILS:
+{f"- Restaurant: {context.active_order_session.get('restaurant')}" if context.active_order_session else "- No active order session"}
+{f"- Location: {context.active_order_session.get('delivery_location')}" if context.active_order_session else ""}
+{f"- Customer name: {context.active_order_session.get('customer_name')}" if context.active_order_session and context.active_order_session.get('customer_name') else ""}
+{f"- Order description: {context.active_order_session.get('order_description')}" if context.active_order_session and context.active_order_session.get('order_description') else ""}
+{f"- Order number: {context.active_order_session.get('order_number')}" if context.active_order_session and context.active_order_session.get('order_number') else ""}
+{f"- Order stage: {context.active_order_session.get('order_stage')}" if context.active_order_session else ""}
+
+IMPORTANT: If the user has already provided order details above, DO NOT ask for them again. Only ask for missing information.
 
 BUSINESS RULES TO PRESERVE:
 1. Order completion requires: (order_number OR customer_name) AND order_description
@@ -109,6 +107,7 @@ INTENTS TO DETECT:
 - provide_order_details: Giving order number/name/description for active order
 - request_payment: Saying "pay" or asking for payment link
 - group_response: Answering yes/no to group invitation
+- conflict_response: Responding to order conflict (CANCEL/KEEP/YES/NO)
 - ask_question: General questions about service/restaurants/etc
 - general_chat: Casual conversation, greetings
 
@@ -207,6 +206,9 @@ Be thorough in extraction - this drives all business logic."""
         elif intent == 'group_response':
             return self._handle_group_response_conversationally(extracted, context, analysis)
             
+        elif intent == 'conflict_response':
+            return self._handle_conflict_response_conversationally(extracted, context, analysis)
+            
         elif intent == 'ask_question':
             return self._handle_question_conversationally(analysis, context)
             
@@ -248,8 +250,13 @@ Be thorough in extraction - this drives all business logic."""
                 'response_message': response
             }
         
-        # Complete request - start matching
-        print(f"🍕 Starting fresh food request: {restaurant} at {location} ({delivery_time})")
+        # Complete request - check for conflicts first
+        print(f"🍕 Processing food request: {restaurant} at {location} ({delivery_time})")
+        
+        # Check for conflicting existing orders
+        conflict_response = self._check_for_order_conflicts(context, restaurant, location, delivery_time)
+        if conflict_response:
+            return conflict_response
         
         # Clear any old sessions and start fresh
         self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
@@ -368,7 +375,11 @@ When you're ready to pay, just text: **PAY**
 I'll send you the payment link!"""
         
         # Update order session
-        self.update_order_session(context.user_phone, order_session)
+        try:
+            from pangea_order_processor import update_order_session
+            update_order_session(context.user_phone, order_session)
+        except ImportError:
+            print("Warning: Could not import update_order_session")
         
         return {
             'business_action': 'order_details_processed',
@@ -411,16 +422,20 @@ Please provide these first, then you can pay."""
         
         # Ready to pay - use existing payment logic
         group_size = order_session.get('group_size', 2)
-        payment_link = self.get_payment_link(group_size)
-        payment_amount = self.get_payment_amount(group_size)
         restaurant = order_session.get('restaurant', 'restaurant')
         
-        # Mark payment as requested
-        order_session['order_stage'] = 'payment_initiated'
-        order_session['payment_requested_at'] = datetime.now()
-        self.update_order_session(context.user_phone, order_session)
-        
-        response = f"""Payment for {restaurant}
+        try:
+            from pangea_order_processor import get_payment_link, get_payment_amount, update_order_session, check_group_completion_and_trigger_delivery
+            
+            payment_link = get_payment_link(group_size)
+            payment_amount = get_payment_amount(group_size)
+            
+            # Mark payment as requested
+            order_session['order_stage'] = 'payment_initiated'
+            order_session['payment_requested_at'] = datetime.now()
+            update_order_session(context.user_phone, order_session)
+            
+            response = f"""Payment for {restaurant}
 
 Your share: {payment_amount}
 
@@ -428,9 +443,17 @@ Click here to pay:
 {payment_link}
 
 After payment, I'll coordinate with your group to place the order!"""
-        
-        # Trigger delivery check (preserve existing logic)
-        self.check_group_completion(context.user_phone)
+            
+            # Trigger delivery check (preserve existing logic)
+            check_group_completion_and_trigger_delivery(context.user_phone)
+            
+        except ImportError as e:
+            print(f"Warning: Could not import payment functions: {e}")
+            response = f"""Payment for {restaurant}
+
+Your share: $3.50
+
+Please text back when you're ready to proceed with payment."""
         
         return {
             'business_action': 'payment_link_sent',
@@ -743,6 +766,16 @@ This helps me coordinate pickup!"""
                 'original_message': message
             }
         
+        # Detect conflict responses
+        if any(word in message_lower for word in ['cancel', 'keep', 'yes', 'no', 'switch', 'stay']):
+            return {
+                'primary_intent': 'conflict_response',
+                'confidence': 'medium',
+                'extracted_data': {'response': message_lower},
+                'reasoning': 'Fallback conflict response detection',
+                'original_message': message
+            }
+        
         # Detect food requests
         restaurants = ['chipotle', 'mcdonalds', 'chick-fil-a', 'portillos', 'starbucks']
         if any(rest in message_lower for rest in restaurants):
@@ -762,3 +795,210 @@ This helps me coordinate pickup!"""
             'reasoning': 'Fallback default',
             'original_message': message
         }
+    
+    def _check_for_order_conflicts(self, context, new_restaurant: str, new_location: str, new_delivery_time: str) -> Optional[Dict]:
+        """Check if new request conflicts with existing order and ask user to confirm cancellation"""
+        
+        existing_request = None
+        conflict_type = None
+        
+        # Check for active order session
+        if context.active_order_session:
+            existing_restaurant = context.active_order_session.get('restaurant')
+            existing_location = context.active_order_session.get('delivery_location')
+            existing_time = context.active_order_session.get('delivery_time', 'now')
+            existing_stage = context.active_order_session.get('order_stage', 'unknown')
+            
+            # Check for conflicts
+            if (existing_restaurant and existing_restaurant.lower() != new_restaurant.lower()) or \
+               (existing_location and existing_location.lower() != new_location.lower()):
+                existing_request = f"{existing_restaurant} at {existing_location} ({existing_time})"
+                conflict_type = "active_order"
+                
+                # More urgent if they're deeper in the process
+                if existing_stage in ['payment_initiated', 'order_details_complete']:
+                    conflict_type = "active_payment_order"
+        
+        # Check for pending food request (if no active order)
+        elif context.current_food_request:
+            existing_restaurant = context.current_food_request.get('restaurant')
+            existing_location = context.current_food_request.get('location')  
+            existing_time = context.current_food_request.get('delivery_time', 'now')
+            
+            # Check for conflicts
+            if (existing_restaurant and existing_restaurant.lower() != new_restaurant.lower()) or \
+               (existing_location and existing_location.lower() != new_location.lower()):
+                existing_request = f"{existing_restaurant} at {existing_location} ({existing_time})"
+                conflict_type = "pending_request"
+        
+        # If there's a conflict, ask for confirmation
+        if existing_request:
+            if conflict_type == "active_payment_order":
+                response = f"""Hold on! You already have an active order in progress:
+
+**Current order:** {existing_request}
+**New request:** {new_restaurant} at {new_location}
+
+You're already in the payment/ordering process for your current order. Do you want to:
+
+• **"CANCEL"** your current order and start fresh with {new_restaurant}
+• **"KEEP"** your current {existing_restaurant} order (I'll ignore this new request)
+
+What would you like to do?"""
+            
+            elif conflict_type == "active_order":
+                response = f"""I notice you already have an order in progress:
+
+**Current:** {existing_request}  
+**New request:** {new_restaurant} at {new_location}
+
+Would you like me to **"CANCEL"** your current order and start fresh with {new_restaurant}? Or do you want to **"KEEP"** your current order?"""
+            
+            else:  # pending_request
+                response = f"""I see you were already looking for:
+
+**Previous:** {existing_request}
+**New request:** {new_restaurant} at {new_location}
+
+Should I switch you to {new_restaurant} instead? Just say **"YES"** to switch or **"NO"** to keep your original request."""
+            
+            # Store the pending decision in context
+            context.session_type = "order_conflict_pending"
+            context.pending_new_request = {
+                'restaurant': new_restaurant,
+                'location': new_location, 
+                'delivery_time': new_delivery_time,
+                'timestamp': datetime.now()
+            }
+            self.session_manager.update_user_context(context)
+            
+            return {
+                'business_action': 'order_conflict_detected',
+                'response_message': response
+            }
+        
+        return None  # No conflict
+    
+    def _handle_conflict_response_conversationally(self, extracted: Dict, context, analysis: Dict) -> Dict:
+        """Handle user's response to order conflict"""
+        
+        user_phone = context.user_phone
+        message = analysis.get('original_message', '').lower().strip()
+        
+        # Check if user has a pending conflict to resolve
+        if context.session_type != "order_conflict_pending" or not context.pending_new_request:
+            return {
+                'business_action': 'no_pending_conflict',
+                'response_message': "I don't see any pending order conflicts to resolve. What can I help you with?"
+            }
+        
+        pending_request = context.pending_new_request
+        new_restaurant = pending_request['restaurant']
+        new_location = pending_request['location']
+        new_delivery_time = pending_request['delivery_time']
+        
+        # Determine user's choice
+        wants_to_cancel = False
+        if any(word in message for word in ['cancel', 'yes', 'switch', 'new', 'fresh']):
+            wants_to_cancel = True
+        elif any(word in message for word in ['keep', 'no', 'stay', 'continue']):
+            wants_to_cancel = False
+        else:
+            # Unclear response
+            return {
+                'business_action': 'unclear_conflict_response',
+                'response_message': """I didn't catch that. Please say:
+• **"CANCEL"** to cancel your current order and start fresh
+• **"KEEP"** to stick with your current order
+
+What would you like to do?"""
+            }
+        
+        if wants_to_cancel:
+            # Cancel old order and start new one
+            print(f"🔄 User chose to cancel existing order, starting fresh with {new_restaurant}")
+            
+            # Clear old sessions
+            self.session_manager.start_fresh_food_request(user_phone, new_restaurant, new_location, new_delivery_time)
+            
+            # Clear the pending conflict
+            context.session_type = "food_request"
+            context.pending_new_request = None
+            self.session_manager.update_user_context(context)
+            
+            # Start matching process
+            match_result = self.matcher.find_compatible_matches(user_phone, new_restaurant, new_location, new_delivery_time)
+            
+            response = f"Perfect! I've canceled your previous order and started fresh with {new_restaurant} at {new_location}."
+            
+            # Process the match
+            if match_result['has_real_match']:
+                response += f"\n\nGreat news! I found someone else who wants {new_restaurant} too! You'll both save money by grouping up. Sending you the details now..."
+                
+                # Handle match creation (similar to _handle_food_request_conversationally)
+                if match_result.get('is_silent_upgrade'):
+                    best_match = match_result['matches'][0]
+                    existing_group_id = best_match.get('group_id')
+                    optimal_time = best_match.get('delivery_time', new_delivery_time)
+                    
+                    group_id = self.matcher.create_silent_upgrade_group(
+                        user_phone, best_match['user_phone'], new_restaurant, new_location, optimal_time, existing_group_id
+                    )
+                    self.session_manager.transition_to_order_process(user_phone, group_id, new_restaurant, 2)
+                else:
+                    best_match = match_result['matches'][0]
+                    optimal_time = best_match.get('time_analysis', {}).get('optimal_time', new_delivery_time)
+                    
+                    group_id = self.matcher.create_group_match(
+                        user_phone, best_match['user_phone'], new_restaurant, new_location, optimal_time
+                    )
+                    
+                    self.session_manager.transition_to_order_process(user_phone, group_id, new_restaurant, 2)
+                    self.session_manager.transition_to_order_process(best_match['user_phone'], group_id, new_restaurant, 2)
+                    
+                    # Notify matched user
+                    match_message = f"Great news! Another student wants {new_restaurant} at {new_location} too!\n\n**Group Confirmed (2 people)**\nYour share: $4.50 each (vs $8+ solo)\n\nTime to order!"
+                    self.send_sms(best_match['user_phone'], match_message)
+                
+                business_action = 'conflict_resolved_with_match'
+            else:
+                # No real match - create fake match
+                group_id = self.matcher.create_fake_match(user_phone, new_restaurant, new_location, new_delivery_time)
+                self.session_manager.transition_to_order_process(user_phone, group_id, new_restaurant, 1)
+                
+                response += f"\n\n{self._generate_solo_match_response(new_restaurant, new_location, new_delivery_time)}"
+                business_action = 'conflict_resolved_solo'
+            
+            return {
+                'business_action': business_action,
+                'response_message': response
+            }
+        
+        else:
+            # Keep existing order
+            print(f"🔄 User chose to keep existing order, ignoring new request for {new_restaurant}")
+            
+            # Clear the pending conflict and return to previous state
+            if context.active_order_session:
+                context.session_type = "order_process"
+            elif context.current_food_request:
+                context.session_type = "food_request" 
+            else:
+                context.session_type = "idle"
+                
+            context.pending_new_request = None
+            self.session_manager.update_user_context(context)
+            
+            existing_desc = "your existing order"
+            if context.active_order_session:
+                restaurant = context.active_order_session.get('restaurant', '')
+                location = context.active_order_session.get('delivery_location', '')
+                if restaurant and location:
+                    existing_desc = f"your {restaurant} order at {location}"
+            
+            response = f"Got it! I'll stick with {existing_desc}. Your new {new_restaurant} request has been canceled.\n\nLet me know if you need help with your current order!"
+            
+            return {
+                'business_action': 'conflict_resolved_keep_existing',
+                'response_message': response
+            }

@@ -963,18 +963,23 @@ def check_group_completion_and_trigger_delivery(user_phone: str):
    delivery_time = session.get('delivery_time', 'now')
    
    # Check multiple conditions for protection - covers solo orders AND 2-person groups waiting for 3rd member
+   # FIXED: Allow immediate fake match deliveries (delivery_time == 'now') to trigger
    should_wait_for_matches = (
-       # Original protection flags
+       # Original protection flags - but only for scheduled deliveries
        (session.get('solo_order') and 
         session.get('is_scheduled') and 
-        session.get('awaiting_match')) or
+        session.get('awaiting_match') and
+        delivery_time not in ['now', 'ASAP', 'soon', 'immediately']) or
        
-       # Backup protection: single-person scheduled order
-       (group_size == 1 and delivery_time != 'now' and not session.get('delivery_triggered')) or
+       # Backup protection: single-person scheduled order (not immediate)
+       (group_size == 1 and 
+        delivery_time not in ['now', 'ASAP', 'soon', 'immediately'] and 
+        not session.get('delivery_triggered')) or
        
-       # NEW: 2-person scheduled groups waiting for potential 3rd member
+       # NEW: 2-person scheduled groups waiting for potential 3rd member (not immediate)
        (group_size == 2 and session.get('is_scheduled') and 
-        session.get('awaiting_match') and delivery_time != 'now' and 
+        session.get('awaiting_match') and 
+        delivery_time not in ['now', 'ASAP', 'soon', 'immediately'] and 
         not session.get('delivery_triggered'))
    )
    

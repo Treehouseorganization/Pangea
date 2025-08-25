@@ -16,11 +16,12 @@ class UserContext:
     """Rich user context with memory and session tracking"""
     user_phone: str
     current_session_id: str
-    session_type: str  # "idle", "food_request", "order_process", "group_pending"
+    session_type: str  # "idle", "food_request", "order_process", "group_pending", "order_conflict_pending"
     conversation_memory: List[Dict]  # Recent conversation history
     current_food_request: Optional[Dict] = None
     active_order_session: Optional[Dict] = None
     pending_group_invites: List[Dict] = None
+    pending_new_request: Optional[Dict] = None  # For order conflict resolution
     user_preferences: Dict = None
     last_activity: datetime = None
     
@@ -99,8 +100,10 @@ class SmartSessionManager:
                     'session_type': context.session_type
                 })
                 
-                # Keep only last 10 messages for memory
-                context.conversation_memory = context.conversation_memory[-10:]
+                # Keep conversation memory for entire order lifecycle
+                # Only truncate after delivery is triggered or delivery time has passed
+                if not self._should_preserve_memory(context):
+                    context.conversation_memory = context.conversation_memory[-10:]
             
             # Store in database
             session_data = {
@@ -109,7 +112,7 @@ class SmartSessionManager:
                 'session_type': context.session_type,
                 'current_food_request': context.current_food_request,
                 'last_activity': context.last_activity,
-                'conversation_memory': context.conversation_memory[-5:]  # Store last 5 for context
+                'conversation_memory': context.conversation_memory if self._should_preserve_memory(context) else context.conversation_memory[-5:]
             }
             
             self.db.collection('user_sessions').document(context.user_phone).set(session_data)
@@ -278,6 +281,46 @@ Return ONLY valid JSON."""
             conversation_memory=conversation_memory[-5:],  # Keep recent memory
             user_preferences=user_prefs
         )
+    
+    def _should_preserve_memory(self, context: UserContext) -> bool:
+        """Check if conversation memory should be preserved (during active order lifecycle)"""
+        try:
+            # Preserve memory if user has active order session
+            if context.active_order_session:
+                # Check if delivery was already triggered
+                if context.active_order_session.get('delivery_triggered'):
+                    return False
+                
+                # Check if delivery time has passed
+                delivery_time = context.active_order_session.get('delivery_time', 'now')
+                if delivery_time not in ['now', 'ASAP', 'soon', 'immediately']:
+                    from pangea_uber_direct import parse_delivery_time
+                    import pytz
+                    
+                    scheduled_datetime = parse_delivery_time(delivery_time)
+                    if scheduled_datetime:
+                        chicago_tz = pytz.timezone('America/Chicago')
+                        if scheduled_datetime.tzinfo is None:
+                            scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+                        else:
+                            scheduled_datetime = scheduled_datetime.astimezone(chicago_tz)
+                        
+                        current_time = datetime.now(chicago_tz)
+                        # If delivery time has passed by more than 30 minutes, don't preserve
+                        if current_time > scheduled_datetime + timedelta(minutes=30):
+                            return False
+                
+                return True  # Preserve memory during active order
+            
+            # Preserve memory if user has pending food request
+            if context.current_food_request:
+                return True
+                
+            return False  # No active order or request, can truncate
+            
+        except Exception as e:
+            print(f"Warning: Error checking memory preservation: {e}")
+            return False
     
     def _is_session_stale(self, session_data: Dict) -> bool:
         """Check if session is older than 2 hours"""
