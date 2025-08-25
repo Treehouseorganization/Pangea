@@ -114,7 +114,7 @@ INTENTS TO DETECT:
 EXTRACT ALL RELEVANT DATA:
 - Restaurant names mentioned
 - Locations mentioned
-- Times mentioned (now, 1pm, lunch, etc)
+- Times mentioned (now, ASAP, soon, 1pm, lunch, dinner, in 30 minutes, etc) - SET TO NULL if no time explicitly mentioned
 - Order numbers (ABC123, #456, etc)
 - Customer names ("my name is John", "call me Maria")
 - Food descriptions (what they ordered)
@@ -128,7 +128,7 @@ RETURN JSON:
     "extracted_data": {{
         "restaurant": "exact restaurant name or null",
         "location": "exact location name or null", 
-        "delivery_time": "parsed time or null",
+        "delivery_time": "parsed time like 'now', '1pm', 'lunch' or null if NO TIME mentioned",
         "order_number": "extracted order number or null",
         "customer_name": "extracted name or null",
         "order_description": "what they ordered or null",
@@ -220,7 +220,7 @@ Be thorough in extraction - this drives all business logic."""
         
         restaurant = extracted.get('restaurant')
         location = extracted.get('location') 
-        delivery_time = extracted.get('delivery_time', 'now')
+        delivery_time = extracted.get('delivery_time')  # Don't default to 'now' yet
         user_phone = context.user_phone
         
         # Check what's missing
@@ -229,6 +229,8 @@ Be thorough in extraction - this drives all business logic."""
             missing.append('restaurant')
         if not location:
             missing.append('location')
+        if not delivery_time:
+            missing.append('delivery_time')
         
         if missing:
             # Generate conversational request for missing info
@@ -250,6 +252,10 @@ Be thorough in extraction - this drives all business logic."""
                 'response_message': response
             }
         
+        # Complete request - default delivery_time to 'now' if still None
+        if delivery_time is None:
+            delivery_time = 'now'
+            
         # Complete request - check for conflicts first
         print(f"🍕 Processing food request: {restaurant} at {location} ({delivery_time})")
         
@@ -360,7 +366,14 @@ Time to order!"""
         else:
             # Complete! Ready for payment
             order_session['order_stage'] = 'ready_to_pay'
-            payment_amount = self.get_payment_amount(order_session.get('group_size', 2))
+            
+            try:
+                from pangea_order_processor import get_payment_amount
+                payment_amount = get_payment_amount(order_session.get('group_size', 2))
+            except ImportError:
+                # Fallback payment amounts
+                group_size = order_session.get('group_size', 2)
+                payment_amount = "$4.50" if group_size >= 2 else "$3.50"
             
             identifier = order_session.get('order_number', order_session.get('customer_name', 'your order'))
             response = f"""Perfect! I've got your order details for {restaurant}!
@@ -638,7 +651,22 @@ Locations: Library, Student Centers, University Hall, Student Services Building"
     def _generate_missing_info_response(self, missing: List[str], restaurant: str = None, location: str = None) -> str:
         """Generate helpful response for missing information"""
         
-        if set(missing) == {'restaurant', 'location'}:
+        if set(missing) == {'restaurant', 'location', 'delivery_time'}:
+            return """I'd love to help you order! I need to know:
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
+
+⏰ **When do you want it delivered?**
+• Reply **"NOW"** if you want it right away
+• Or specify a **specific time** like "1pm", "lunch", "dinner", etc.
+
+Example: "I want Chipotle delivered to the library now" """
+        
+        elif set(missing) == {'restaurant', 'location'}:
             return """I'd love to help you order! I need to know:
 
 🍕 **Which restaurant?**
@@ -648,6 +676,30 @@ Locations: Library, Student Centers, University Hall, Student Services Building"
 • Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
 
 Example: "I want Chipotle delivered to the library" """
+        
+        elif set(missing) == {'restaurant', 'delivery_time'}:
+            return f"""Got it - you want food delivered to {location}!
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+⏰ **When do you want it delivered?**
+• Reply **"NOW"** if you want it right away
+• Or specify a **specific time** like "1pm", "lunch", "dinner"
+
+Example: "McDonald's now" or "Starbucks at 2pm" """
+        
+        elif set(missing) == {'location', 'delivery_time'}:
+            return f"""Perfect - {restaurant} it is!
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall  
+
+⏰ **When do you want it delivered?**
+• Reply **"NOW"** if you want it right away
+• Or specify a **specific time** like "1pm", "lunch", "dinner"
+
+Example: "Library now" or "Student Center at 3pm" """
         
         elif 'restaurant' in missing:
             return f"""Got it - you want food delivered to {location}!
@@ -669,13 +721,24 @@ Just tell me which one sounds good!"""
 
 Which location works for you?"""
         
+        elif 'delivery_time' in missing:
+            return f"""Awesome! {restaurant} at {location} - just need one more detail:
+
+⏰ **When do you want it delivered?**
+
+Please choose:
+• Reply **"NOW"** if you want it delivered right away
+• Reply with a **specific time** like "1pm", "lunch", "dinner", or "in 2 hours"
+
+Do you want it delivered **right now** or at a **specific time**?"""
+        
         return "Let me find you a group..."
     
     def _generate_real_match_response(self, match_result: Dict, restaurant: str, location: str, delivery_time: str) -> str:
         """Generate response for real matches"""
         
         time_context = ""
-        if delivery_time not in ['now', 'asap', 'soon']:
+        if delivery_time and delivery_time not in ['now', 'asap', 'soon']:
             time_context = f" for {delivery_time}"
             
         return f"""Great news! I found someone who also wants {restaurant} at {location}{time_context}!
@@ -694,7 +757,7 @@ Let's get your food!"""
         """Generate response for solo orders (fake matches)"""
         
         time_context = ""
-        if delivery_time not in ['now', 'asap', 'soon']:
+        if delivery_time and delivery_time not in ['now', 'asap', 'soon']:
             time_context = f" for {delivery_time}"
             
         return f"""Great news! I found someone who also wants {restaurant} at {location}{time_context}!
