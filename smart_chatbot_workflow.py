@@ -42,6 +42,7 @@ class SmartChatbotWorkflow:
         # Add nodes
         workflow.add_node("understand_intent", self._understand_intent_node)
         workflow.add_node("handle_new_food_request", self._handle_new_food_request_node)
+        workflow.add_node("handle_order_modification", self._handle_order_modification_node)  # New node
         workflow.add_node("handle_cancellation", self._handle_cancellation_node)
         workflow.add_node("handle_missing_info", self._handle_missing_info_node)
         workflow.add_node("find_matches", self._find_matches_node)
@@ -59,6 +60,7 @@ class SmartChatbotWorkflow:
             self._route_by_intent,
             {
                 "new_food_request": "handle_new_food_request",
+                "order_modification": "handle_order_modification",  # New route
                 "cancellation": "handle_cancellation",
                 "missing_info": "handle_missing_info", 
                 "group_response": "handle_group_response",
@@ -79,6 +81,7 @@ class SmartChatbotWorkflow:
         
         workflow.add_edge("handle_missing_info", "find_matches")
         workflow.add_edge("find_matches", "send_response")
+        workflow.add_edge("handle_order_modification", "send_response")  # New edge
         workflow.add_edge("handle_cancellation", "send_response")
         workflow.add_edge("handle_group_response", "send_response")
         workflow.add_edge("handle_order_process", "send_response")
@@ -110,7 +113,7 @@ class SmartChatbotWorkflow:
         return state
     
     def _analyze_intent_with_claude(self, message: str, context) -> Dict:
-        """Use Claude to analyze user intent with full context"""
+        """Enhanced intent analysis with order modification detection"""
         
         intent_prompt = f"""Analyze the user's intent based on their message and current context.
 
@@ -124,24 +127,30 @@ CURRENT CONTEXT:
 
 POSSIBLE INTENTS:
 1. **new_food_request**: Starting fresh food order (even if in other session)
-2. **cancellation**: Canceling/no longer wanting current food request/order
-3. **missing_info**: Providing missing restaurant/location info for current request
-4. **group_response**: Responding YES/NO to group invitation
-5. **order_process**: In order flow (providing order details, payment)
-6. **general_conversation**: Questions, help, or general chat
+2. **order_modification**: Wanting to change existing order details (restaurant, location, time)
+3. **cancellation**: Canceling/no longer wanting current food request/order
+4. **missing_info**: Providing missing restaurant/location info for current request
+5. **group_response**: Responding YES/NO to group invitation
+6. **order_process**: In order flow (providing order details, payment)
+7. **general_conversation**: Questions, help, or general chat
 
-CONTEXT CLUES:
+ENHANCED CONTEXT CLUES:
 - If they mention restaurant + location + time → likely new_food_request
+- If they want to change existing order ("actually", "instead", "change to") → order_modification
 - If they express not wanting current request ("don't want", "never mind", "cancel") → cancellation
 - If they say "yes"/"no" and have pending invites → group_response  
 - If they provide order number/name and in order process → order_process
 - If they ask questions about service → general_conversation
 - If they're filling in previously missing info → missing_info
 
+MODIFICATION DETECTION:
+- Words like "actually", "instead", "change", "modify", "switch", "different"
+- Combined with restaurant/location/time mentions suggests modification
+
 Return JSON:
 {{
-    "intent": "one of the 6 intents above",
-    "confidence": "high/medium/low",
+    "intent": "one of the 7 intents above",
+    "confidence": "high/medium/low", 
     "reasoning": "explanation of decision",
     "extracted_data": {{"any relevant extracted info"}} or {{}},
     "context_used": ["list of context factors that influenced decision"]
@@ -149,6 +158,7 @@ Return JSON:
 
 Examples:
 - "I want Chipotle at library" → intent: "new_food_request"
+- "Actually, change that to McDonald's" → intent: "order_modification"
 - "Actually I don't want that anymore" → intent: "cancellation"
 - "Yes" (with pending invite) → intent: "group_response"
 - "Order #ABC123" (in order process) → intent: "order_process"
@@ -307,44 +317,204 @@ Return ONLY valid JSON."""
         return state
     
     def _handle_cancellation_node(self, state: SmartChatbotState) -> SmartChatbotState:
-        """Handle order cancellation - clear current request and respond appropriately"""
+        """Enhanced cancellation handling with order modification support"""
         
         user_message = state['messages'][-1].content
         user_phone = state['user_phone']
         
-        print(f"🚫 Processing cancellation from {user_phone}: '{user_message}'")
+        print(f"🚫 Processing cancellation/modification from {user_phone}: '{user_message}'")
         
         # Get current context to see what they're canceling
         context = self.session_manager.get_user_context(user_phone)
         
+        # Check if this is a modification vs complete cancellation
+        modification_keywords = ['change', 'modify', 'update', 'switch', 'different', 'instead']
+        is_modification = any(keyword in user_message.lower() for keyword in modification_keywords)
+        
         if context.session_type in ['food_request', 'order_process'] or context.active_order_session:
-            # They have something active to cancel
+            # They have something active to cancel/modify
             if context.active_order_session:
-                response_message = "Got it! I've canceled your current order. No worries at all! 😊\n\nReady for something else? Just let me know what you're craving and I'll help you get it delivered! 🍴"
-                print(f"📋 Canceled active order for {user_phone}")
+                if is_modification:
+                    response_message = """I can help you modify your order! 
+                    
+What would you like to change? You can:
+• Change restaurant: "Actually, I want Chipotle instead"  
+• Change location: "Switch delivery to Student Center"
+• Cancel completely: "Never mind, cancel my order"
+
+What would you like to do? 🛠️"""
+                    state['action_taken'] = "order_modification_offered"
+                else:
+                    # Complete cancellation
+                    self.session_manager.clear_user_session(user_phone)
+                    response_message = "Got it! I've canceled your current order. No worries at all! 😊\n\nReady for something else? Just let me know what you're craving and I'll help you get it delivered! 🍴"
+                    state['action_taken'] = "cancelled_active_order"
+                    
+                print(f"📋 {'Offered modification for' if is_modification else 'Canceled'} active order for {user_phone}")
+                
             elif context.current_food_request:
                 restaurant = context.current_food_request.get('restaurant', 'food')
-                response_message = f"No problem! I've canceled your {restaurant} request. 😊\n\nWhenever you're ready for delivery, just tell me what you want and where you want it delivered! 🍴"
-                print(f"🍽️ Canceled food request for {user_phone}: {restaurant}")
+                
+                if is_modification:
+                    response_message = f"""Want to change your {restaurant} request? 
+
+Just tell me what you'd prefer:
+• Different restaurant: "Actually, I want McDonald's"
+• Different location: "Change location to library" 
+• Different time: "Make it 2pm instead"
+
+Or say "cancel" to start fresh! 🔄"""
+                    state['action_taken'] = "food_request_modification_offered"
+                else:
+                    # Complete cancellation
+                    self.session_manager.clear_user_session(user_phone)
+                    response_message = f"No problem! I've canceled your {restaurant} request. 😊\n\nWhenever you're ready for delivery, just tell me what you want and where you want it delivered! 🍴"
+                    state['action_taken'] = "cancelled_food_request"
+                    
+                print(f"🍽️ {'Offered modification for' if is_modification else 'Canceled'} food request for {user_phone}: {restaurant}")
             else:
+                # Clear session regardless
+                self.session_manager.clear_user_session(user_phone)
                 response_message = "Sure thing! I've cleared everything out. 😊\n\nWhenever you're hungry, just let me know what you want delivered! 🍴"
+                state['action_taken'] = "general_cancellation"
                 print(f"🧹 General cancellation for {user_phone}")
             
-            # Clear all sessions and context
-            self.session_manager.clear_user_session(user_phone)
-            context = self.session_manager.get_user_context(user_phone)  # Get fresh context
+            # Get fresh context after potential clearing
+            context = self.session_manager.get_user_context(user_phone)
             
         else:
             # Nothing specific to cancel
             response_message = "No worries! You don't have any active orders right now. 😊\n\nWhenever you're ready to order some food, just tell me what you want and where you want it delivered! 🍴"
+            state['action_taken'] = "nothing_to_cancel"
             print(f"❓ Nothing to cancel for {user_phone}")
         
         # Update conversation memory
         self.session_manager.update_user_context(context, user_message, "cancellation")
         
         state['response_message'] = response_message
-        state['action_taken'] = "cancelled_request"
         
+        return state
+    
+    def _handle_order_modification_node(self, state: SmartChatbotState) -> SmartChatbotState:
+        """Handle order modification requests with smart restart functionality"""
+        
+        user_message = state['messages'][-1].content
+        user_phone = state['user_phone']
+        
+        print(f"🔄 Processing order modification from {user_phone}: '{user_message}'")
+        
+        # Extract what they want to change
+        try:
+            extracted = self._extract_food_request_details(user_message)
+        except Exception as e:
+            print(f"❌ Modification extraction failed: {e}")
+            extracted = self._basic_food_request_extraction(user_message)
+        
+        new_restaurant = extracted.get('restaurant')
+        new_location = extracted.get('location') 
+        new_delivery_time = extracted.get('delivery_time')
+        
+        # Get current context
+        context = self.session_manager.get_user_context(user_phone)
+        
+        if context.active_order_session or context.current_food_request:
+            # They have something to modify
+            current_request = context.current_food_request or {}
+            current_restaurant = current_request.get('restaurant', 'your current order')
+            current_location = current_request.get('location', 'current location')
+            
+            # Build modification description
+            changes = []
+            if new_restaurant and new_restaurant != current_request.get('restaurant'):
+                changes.append(f"restaurant to {new_restaurant}")
+            if new_location and new_location != current_request.get('location'):
+                changes.append(f"location to {new_location}")
+            if new_delivery_time and new_delivery_time != current_request.get('delivery_time'):
+                changes.append(f"time to {new_delivery_time}")
+            
+            if changes:
+                # Clear old session and start fresh with new details
+                self.session_manager.clear_user_session(user_phone)
+                
+                # Use new details or fall back to current
+                final_restaurant = new_restaurant or current_request.get('restaurant')
+                final_location = new_location or current_request.get('location') 
+                final_time = new_delivery_time or current_request.get('delivery_time', 'now')
+                
+                if final_restaurant and final_location:
+                    # Start new request with modified details
+                    self.session_manager.start_fresh_food_request(
+                        user_phone, final_restaurant, final_location, final_time
+                    )
+                    
+                    change_summary = " and ".join(changes)
+                    response_message = f"""Perfect! I've updated your order - changing {change_summary}! 🔄
+
+Finding someone who also wants {final_restaurant} at {final_location}..."""
+                    
+                    state['extracted_data'] = {
+                        "restaurant": final_restaurant,
+                        "location": final_location,
+                        "delivery_time": final_time,
+                        "missing_info": []
+                    }
+                    state['action_taken'] = "modified_and_restarted"
+                    
+                    # Mark for finding matches
+                    state['needs_followup'] = True
+                    
+                else:
+                    # Missing info after modification
+                    missing_info = extracted.get('missing_info', [])
+                    response_message = self._generate_missing_info_response(
+                        missing_info, final_restaurant, final_location
+                    )
+                    state['action_taken'] = "modification_needs_info"
+                    
+            else:
+                # No clear changes detected
+                response_message = f"""I want to help you modify your {current_restaurant} order! 
+
+What would you like to change?
+• Restaurant: "Change to McDonald's"
+• Location: "Switch to Student Center"  
+• Time: "Make it 2pm instead"
+
+What would you like to update? 🛠️"""
+                state['action_taken'] = "modification_clarification_needed"
+                
+        else:
+            # Nothing to modify
+            if new_restaurant and new_location:
+                # Treat as new request
+                self.session_manager.start_fresh_food_request(
+                    user_phone, new_restaurant, new_location, new_delivery_time or 'now'
+                )
+                
+                response_message = f"""I don't see an active order to modify, so I'll start a fresh {new_restaurant} request for you! 🆕
+
+Finding someone who also wants {new_restaurant} at {new_location}..."""
+                
+                state['extracted_data'] = {
+                    "restaurant": new_restaurant,
+                    "location": new_location, 
+                    "delivery_time": new_delivery_time or 'now',
+                    "missing_info": []
+                }
+                state['action_taken'] = "started_fresh_from_modification"
+                state['needs_followup'] = True
+                
+            else:
+                response_message = """You don't have an active order to modify right now. 
+
+Want to start a new food order? Just tell me:
+• What restaurant you want
+• Where you want it delivered
+
+Example: "I want Chipotle at the library" 🍕"""
+                state['action_taken'] = "no_order_to_modify"
+        
+        state['response_message'] = response_message
         return state
     
     def _handle_missing_info_node(self, state: SmartChatbotState) -> SmartChatbotState:

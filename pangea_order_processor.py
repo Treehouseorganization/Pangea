@@ -90,12 +90,39 @@ class OrderState(TypedDict):
     order_number: Optional[str]
     customer_name: Optional[str]
     order_description: Optional[str]
+    missing_info: List[str]  # New: track what's missing
+    conversation_context: Dict  # New: conversation memory
+    clarification_needed: bool  # New: flag for questions
 
 def get_payment_link(size: int) -> str:
     """Return a Stripe URL for the given group size (1-3)."""
     if size not in PAYMENT_LINKS:
         raise ValueError("Group size exceeds 3.")
     return random.choice(PAYMENT_LINKS[size])
+
+def detect_missing_information(state: OrderState) -> Dict:
+    """Analyze if customer provided incomplete information"""
+    missing = []
+    
+    # Check for missing order identifier
+    if not state.get("order_number") and not state.get("customer_name"):
+        missing.append("order_identifier")
+    
+    # Check for missing order description
+    order_desc = state.get("order_description", "").strip().lower()
+    if not order_desc or order_desc in ['', 'food', 'meal', 'order', 'items']:
+        missing.append("order_details")
+    
+    # Check conversation context for incomplete responses
+    if state.get("messages"):
+        last_message = state["messages"][-1].content.lower().strip()
+        
+        # Detect vague or incomplete responses
+        vague_responses = ['ok', 'yes', 'sure', 'maybe', 'idk', 'not sure']
+        if last_message in vague_responses:
+            missing.append("clarification")
+    
+    return {"missing_info": missing, "clarification_needed": len(missing) > 0}
 
 def get_payment_amount(size: int) -> str:
     """Human-readable share text."""
@@ -176,7 +203,7 @@ def format_menu_items(restaurant: str) -> str:
 
 # Order Processing Nodes
 def classify_order_intent_node(state: OrderState) -> OrderState:
-    """Classify user's message during order process"""
+    """Classify user's message during order process with enhanced missing info detection"""
     
     last_message = state['messages'][-1].content.lower().strip()
     user_phone = state['user_phone']
@@ -190,12 +217,33 @@ def classify_order_intent_node(state: OrderState) -> OrderState:
     
     current_stage = session.get('order_stage', 'need_order_number')
     
+    # Check for cancellation or restart requests
+    cancellation_keywords = ['cancel', 'restart', 'start over', 'clear', 'nevermind', 'forget it']
+    if any(keyword in last_message for keyword in cancellation_keywords):
+        state['order_stage'] = "handle_cancellation"
+        return state
+    
     # Check for payment trigger (only if they have order number)
     if 'pay' in last_message and len(last_message) <= 10:
         if current_stage == 'ready_to_pay':
             state['order_stage'] = "payment_request"
         else:
             state['order_stage'] = "need_order_first"
+        return state
+    
+    # Detect missing information and update state
+    missing_info_result = detect_missing_information(state)
+    state.update(missing_info_result)
+    
+    # Store conversation context
+    if not state.get('conversation_context'):
+        state['conversation_context'] = {}
+    state['conversation_context']['last_message'] = last_message
+    state['conversation_context']['stage'] = current_stage
+    
+    # Enhanced routing with missing info consideration
+    if state.get('clarification_needed') and current_stage in ['need_order_number', 'need_order_description']:
+        state['order_stage'] = "ask_clarification"
         return state
     
     # Handle based on current stage
@@ -676,6 +724,59 @@ After payment, I'll coordinate with your group to place the order! 🍕"""
     state['messages'].append(AIMessage(content=message))
     return state
 
+def generate_clarification_node(state: OrderState) -> OrderState:
+    """Ask contextual questions based on missing info"""
+    user_phone = state['user_phone']
+    missing = state.get("missing_info", [])
+    last_message = state["messages"][-1].content if state.get("messages") else ""
+    session = get_user_order_session(user_phone)
+    restaurant = session.get('restaurant', 'the restaurant')
+    
+    # Use Claude to generate contextual questions
+    prompt = f"""You are helping a customer provide missing order information for {restaurant}.
+    
+    Customer's last message: "{last_message}"
+    Missing information: {missing}
+    
+    Generate a helpful, natural question to get the missing information. Be specific and give examples.
+    
+    Guidelines:
+    - If missing order_identifier: Ask for order number or name
+    - If missing order_details: Ask what specific food items they ordered
+    - If missing clarification: Ask them to be more specific
+    - Keep it conversational and helpful
+    - Include examples relevant to the restaurant
+    
+    Return only the question text, no extra formatting."""
+    
+    try:
+        response = anthropic_llm.invoke([HumanMessage(content=prompt)])
+        clarification_message = response.content.strip()
+        
+        # Add helpful context
+        if "order_identifier" in missing:
+            clarification_message += f"\n\nI need either your order confirmation number (like 'ABC123') or your name for pickup."
+        
+        if "order_details" in missing:
+            clarification_message += f"\n\nPlease tell me the specific food items you ordered from {restaurant}."
+            
+    except Exception as e:
+        print(f"Error generating clarification: {e}")
+        # Fallback message
+        if "order_identifier" in missing and "order_details" in missing:
+            clarification_message = f"I need both your order info and what you ordered from {restaurant}. Please provide your order number (or name) and the food items you got."
+        elif "order_identifier" in missing:
+            clarification_message = f"I need your order number or name for pickup from {restaurant}."
+        elif "order_details" in missing:
+            clarification_message = f"What specific food items did you order from {restaurant}?"
+        else:
+            clarification_message = "Could you please provide more details about your order?"
+    
+    send_friendly_message(user_phone, clarification_message, message_type="clarification")
+    state['messages'].append(AIMessage(content=clarification_message))
+    
+    return state
+
 def handle_clarification_node(state: OrderState) -> OrderState:
     """Handle cases where user input needs clarification"""
     
@@ -700,6 +801,26 @@ Current menu for {restaurant}:
     state['messages'].append(AIMessage(content=message))
     return state
 
+def handle_cancellation_node(state: OrderState) -> OrderState:
+    """Handle order cancellation or restart requests"""
+    
+    user_phone = state['user_phone']
+    session = get_user_order_session(user_phone)
+    restaurant = session.get('restaurant', 'your order') if session else 'your order'
+    
+    # Clear the order session
+    clear_old_order_session(user_phone)
+    
+    message = f"""No problem! I've cancelled {restaurant}. 
+    
+If you want to start a new food order, just tell me what restaurant and location you'd like!
+
+Example: "I want Chipotle at Student Center" 🍴"""
+    
+    send_friendly_message(user_phone, message, message_type="cancellation")
+    state['messages'].append(AIMessage(content=message))
+    return state
+
 def handle_no_session_node(state: OrderState) -> OrderState:
     """Handle when user doesn't have an active order session"""
     
@@ -720,13 +841,13 @@ def route_order_flow(state: OrderState) -> str:
     """Route to appropriate order processing node"""
     return state['order_stage']
 
-# Create Order Processing Graph
+# Create Enhanced Order Processing Graph
 def create_order_graph():
-    """Create the order processing workflow graph"""
+    """Create the enhanced order processing workflow graph with dynamic routing"""
     
     workflow = StateGraph(OrderState)
     
-    # Add nodes
+    # Add all nodes including new ones
     workflow.add_node("classify_order_intent", classify_order_intent_node)
     workflow.add_node("collect_order_number", collect_order_number_node)
     workflow.add_node("collect_order_description", collect_order_description_node)
@@ -734,8 +855,10 @@ def create_order_graph():
     workflow.add_node("handle_redirect_to_payment", handle_redirect_to_payment_node)
     workflow.add_node("handle_need_order_first", handle_need_order_first_node)
     workflow.add_node("handle_no_session", handle_no_session_node)
+    workflow.add_node("ask_clarification", generate_clarification_node)  # New dynamic questioning
+    workflow.add_node("handle_cancellation", handle_cancellation_node)  # New cancellation handling
     
-    # Add conditional routing
+    # Enhanced conditional routing with new paths
     workflow.add_conditional_edges(
         "classify_order_intent",
         route_order_flow,
@@ -745,17 +868,38 @@ def create_order_graph():
             "payment_request": "handle_payment_request",
             "redirect_to_payment": "handle_redirect_to_payment",
             "need_order_first": "handle_need_order_first",
-            "no_session": "handle_no_session"
+            "no_session": "handle_no_session",
+            "ask_clarification": "ask_clarification",  # New clarification path
+            "handle_cancellation": "handle_cancellation"  # New cancellation path
         }
     )
     
-    # All nodes end the workflow
-    workflow.add_edge("collect_order_number", END)
-    workflow.add_edge("collect_order_description", END)
+    # Add conditional routing for order collection with missing info detection
+    def route_after_collection(state: OrderState) -> str:
+        """Route after collecting info - check if we need clarification"""
+        missing_info_result = detect_missing_information(state)
+        if missing_info_result.get('clarification_needed'):
+            return "ask_clarification"
+        return "END"
+    
+    # Dynamic routing from collection nodes
+    workflow.add_conditional_edges(
+        "collect_order_number",
+        lambda state: "ask_clarification" if state.get("missing_info") else "END"
+    )
+    
+    workflow.add_conditional_edges(
+        "collect_order_description", 
+        lambda state: "ask_clarification" if state.get("missing_info") else "END"
+    )
+    
+    # All other nodes end the workflow
     workflow.add_edge("handle_payment_request", END)
-    workflow.add_edge("handle_redirect_to_payment", END)
+    workflow.add_edge("handle_redirect_to_payment", END) 
     workflow.add_edge("handle_need_order_first", END)
     workflow.add_edge("handle_no_session", END)
+    workflow.add_edge("ask_clarification", END)
+    workflow.add_edge("handle_cancellation", END)
     
     workflow.set_entry_point("classify_order_intent")
     
@@ -1220,7 +1364,11 @@ def process_order_message(phone_number: str, message_body: str):
         payment_link=session.get('payment_link', ''),
         order_session_id=session.get('order_session_id', ''),
         order_number=session.get('order_number'),
-        customer_name=session.get('customer_name')
+        customer_name=session.get('customer_name'),
+        order_description=session.get('order_description'),
+        missing_info=[],  # Initialize empty
+        conversation_context={},  # Initialize empty
+        clarification_needed=False  # Initialize as False
     )
     
     app = create_order_graph()
