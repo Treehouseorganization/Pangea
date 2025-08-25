@@ -21,8 +21,9 @@ from flask import Flask, request
 # Our enhanced modules
 from smart_session_manager import SmartSessionManager
 from intelligent_matching import IntelligentMatcher
-from smart_chatbot_workflow import SmartChatbotWorkflow
+# from smart_chatbot_workflow import SmartChatbotWorkflow  # DEPRECATED
 from delivery_trigger_system import DeliveryTriggerSystem
+from conversation_controller import ConversationController
 
 load_dotenv()
 
@@ -113,20 +114,31 @@ print("🔧 Initializing delivery system...")
 delivery_system = DeliveryTriggerSystem(db, session_manager, send_friendly_message)
 print("✅ Delivery system initialized")
 
-print("🔧 Initializing chatbot workflow...")
-try:
-    chatbot_workflow = SmartChatbotWorkflow(session_manager, matcher, anthropic_llm, send_friendly_message)
-    print("✅ Chatbot workflow initialized successfully")
-except Exception as init_error:
-    print(f"❌ CHATBOT WORKFLOW INIT FAILED: {init_error}")
-    import traceback
-    traceback.print_exc()
-    raise init_error
+# DEPRECATED: Comment out old chatbot workflow
+# print("🔧 Initializing chatbot workflow...")
+# try:
+#     chatbot_workflow = SmartChatbotWorkflow(session_manager, matcher, anthropic_llm, send_friendly_message)
+#     print("✅ Chatbot workflow initialized successfully")
+# except Exception as init_error:
+#     print(f"❌ CHATBOT WORKFLOW INIT FAILED: {init_error}")
+#     import traceback
+#     traceback.print_exc()
+#     raise init_error
+
+# Initialize unified conversation controller
+print("🔧 Initializing unified conversation controller...")
+conversation_controller = ConversationController(
+    session_manager=session_manager,
+    matcher=matcher,
+    anthropic_llm=anthropic_llm,
+    send_sms_func=send_friendly_message,
+    db=db
+)
+print("✅ Conversation controller initialized")
 
 def handle_incoming_message(user_phone: str, message: str) -> Dict:
     """
-    Main message handler - routes through smart chatbot workflow
-    Feels like intelligent conversation while maintaining agent structure
+    Simplified message handler - routes everything through unified conversation controller
     """
     
     print(f"📱 Message from {user_phone}: {message}")
@@ -136,42 +148,25 @@ def handle_incoming_message(user_phone: str, message: str) -> Dict:
     print(f"🕐 Timestamp: {chicago_now.strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
-        print(f"🔍 Starting message processing...")
+        # Route everything through unified conversation controller
+        result = conversation_controller.handle_message(user_phone, message)
         
-        # Check if this is a payment message first (special handling)
-        if message.lower().strip() == 'pay':
-            print(f"💳 Detected PAY message - routing to payment handler")
-            return handle_payment_message(user_phone)
-        
-        print(f"🤖 Routing to chatbot workflow...")
-        
-        # Route through smart chatbot workflow
-        try:
-            result = chatbot_workflow.process_message(user_phone, message)
-            print(f"✅ Chatbot workflow completed successfully")
-        except Exception as workflow_error:
-            print(f"❌ Chatbot workflow failed: {workflow_error}")
-            import traceback
-            traceback.print_exc()
-            raise workflow_error
-        
-        print(f"🤖 Workflow result: {result['status']}")
+        print(f"✅ Conversation controller completed: {result['status']}")
         print(f"🎯 Action: {result.get('action', 'unknown')}")
         print(f"💭 Intent: {result.get('intent', 'unknown')}")
         
         return result
         
     except Exception as e:
-        print(f"❌ FULL MESSAGE HANDLING FAILED: {e}")
+        print(f"❌ MESSAGE HANDLING FAILED: {e}")
         print(f"❌ Error type: {type(e).__name__}")
         print(f"❌ Error args: {e.args}")
         import traceback
         print("❌ FULL TRACEBACK:")
         traceback.print_exc()
-        print("❌ END TRACEBACK")
         
         # Send friendly error message
-        error_response = "Sorry, I had a technical hiccup! Can you try that again? 😊"
+        error_response = "Sorry, I had a technical hiccup! Can you try that again?"
         send_friendly_message(user_phone, error_response)
         
         return {
@@ -537,22 +532,17 @@ def health_check():
     }, 200
 
 @app.route('/webhook/sms', methods=['POST'])
-@app.route('/webhook', methods=['POST'])  # Backward compatibility  
+@app.route('/webhook', methods=['POST'])
 def sms_webhook():
-    """Handle incoming SMS messages with enhanced error handling"""
+    """Simplified webhook handler using unified conversation controller"""
     
     try:
-        # Force immediate log flush
-        import sys
         print("🚀 WEBHOOK STARTED - Incoming SMS request", flush=True)
-        sys.stdout.flush()
         
         start_time = datetime.now()
         
-        print("🔍 Extracting form data...")
         from_number = request.form.get('From')
         message_body = request.form.get('Body')
-        print(f"🔍 Extracted - From: {from_number}, Body: {message_body}")
         
         if not from_number or not message_body:
             print(f"❌ Missing required fields - From: {from_number}, Body: {message_body}")
@@ -560,22 +550,8 @@ def sms_webhook():
         
         print(f"📱 Webhook received: {from_number} -> {message_body}")
         
-        print("🔍 Checking for group invitation response...")
-        # Check if this is a group response first (for backward compatibility)
-        if handle_group_invitation_response(from_number, message_body):
-            print(f"✅ Handled as group invitation response")
-            return '', 200
-        
-        print("🔍 Routing to enhanced chatbot system...")
-        # Route through enhanced chatbot system
-        try:
-            result = handle_incoming_message(from_number, message_body)
-            print(f"✅ handle_incoming_message returned: {result}")
-        except Exception as handler_error:
-            print(f"❌ HANDLER ERROR: {handler_error}")
-            import traceback
-            traceback.print_exc()
-            raise handler_error
+        # Route through unified conversation controller
+        result = handle_incoming_message(from_number, message_body)
         
         processing_time = (datetime.now() - start_time).total_seconds()
         
@@ -587,18 +563,14 @@ def sms_webhook():
         return '', 200
         
     except Exception as e:
-        print(f"❌ WEBHOOK CATASTROPHIC ERROR: {e}")
-        print(f"❌ Error type: {type(e).__name__}")
+        print(f"❌ WEBHOOK ERROR: {e}")
         import traceback
-        print("❌ FULL WEBHOOK TRACEBACK:")
         traceback.print_exc()
-        print("❌ END WEBHOOK TRACEBACK")
-        sys.stdout.flush()
         
         # Try to send error message to user
         try:
             if 'from_number' in locals() and from_number:
-                error_response = "Sorry, I'm having technical difficulties. Please try again in a few minutes! 🤖"
+                error_response = "Sorry, I'm having technical difficulties. Please try again in a few minutes!"
                 send_friendly_message(from_number, error_response)
         except Exception as sms_error:
             print(f"❌ Could not send error SMS: {sms_error}")

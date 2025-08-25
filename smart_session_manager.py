@@ -376,6 +376,63 @@ Return ONLY valid JSON."""
         except Exception as e:
             print(f"❌ Error clearing old sessions: {e}")
     
+    def clear_user_session(self, user_phone: str) -> bool:
+        """Clear all user sessions and context"""
+        try:
+            print(f"🧹 Clearing all sessions for {user_phone}")
+            
+            # Clear user session
+            self.db.collection('user_sessions').document(user_phone).delete()
+            
+            # Clear order sessions
+            order_sessions = self.db.collection('order_sessions')\
+                .where('user_phone', '==', user_phone)\
+                .get()
+            
+            for order_session in order_sessions:
+                order_session.reference.delete()
+                print(f"🗑️ Cleared order session for {user_phone}")
+            
+            # Cancel pending negotiations
+            negotiations = self.db.collection('negotiations')\
+                .where('to_user', '==', user_phone)\
+                .where('status', '==', 'pending')\
+                .get()
+            
+            for negotiation in negotiations:
+                negotiation.reference.update({'status': 'cancelled_by_user'})
+                print(f"🗑️ Cancelled negotiation for {user_phone}")
+            
+            # Remove from active groups
+            active_groups = self.db.collection('active_groups')\
+                .where('members', 'array_contains', user_phone)\
+                .where('status', 'in', ['pending_responses', 'forming', 'active'])\
+                .get()
+            
+            for group in active_groups:
+                group_data = group.to_dict()
+                members = group_data.get('members', [])
+                
+                if len(members) <= 1:
+                    # Last member - delete group
+                    group.reference.delete()
+                    print(f"🗑️ Deleted empty group for {user_phone}")
+                else:
+                    # Remove user from group
+                    updated_members = [m for m in members if m != user_phone]
+                    group.reference.update({
+                        'members': updated_members,
+                        'group_size': len(updated_members)
+                    })
+                    print(f"🗑️ Removed {user_phone} from group")
+            
+            print(f"✅ Successfully cleared all sessions for {user_phone}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error clearing user session: {e}")
+            return False
+    
     def _simple_new_request_detection(self, message: str, context: UserContext) -> Dict:
         """Fallback detection logic"""
         
