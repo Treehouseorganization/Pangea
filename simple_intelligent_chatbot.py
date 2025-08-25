@@ -9,14 +9,14 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from smart_session_manager import SmartSessionManager
 from intelligent_matching import IntelligentMatcher
-from delivery_system import DeliverySystem
+from delivery_trigger_system import DeliveryTriggerSystem
 
 
 class SimpleIntelligentChatbot:
     """Single intelligent chatbot that handles ALL SMS conversations"""
     
     def __init__(self, llm, db, session_manager: SmartSessionManager, 
-                 intelligent_matcher: IntelligentMatcher, delivery_system: DeliverySystem, 
+                 intelligent_matcher: IntelligentMatcher, delivery_system: DeliveryTriggerSystem, 
                  send_sms_func):
         self.llm = llm
         self.db = db
