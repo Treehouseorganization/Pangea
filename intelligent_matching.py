@@ -22,7 +22,7 @@ class IntelligentMatcher:
         
         try:
             # STEP 1: Check for existing solo orders to upgrade (silent matching)
-            solo_matches = self._find_upgradeable_solo_orders(restaurant, location, user_phone)
+            solo_matches = self._find_upgradeable_solo_orders(restaurant, location, user_phone, delivery_time)
             
             if solo_matches:
                 best_solo = solo_matches[0]
@@ -188,7 +188,7 @@ Return ONLY valid JSON."""
             # Fallback: simple time matching
             return self._simple_time_compatibility(time1, time2)
     
-    def _find_upgradeable_solo_orders(self, restaurant: str, location: str, excluding_user: str) -> List[Dict]:
+    def _find_upgradeable_solo_orders(self, restaurant: str, location: str, excluding_user: str, delivery_time: str) -> List[Dict]:
         """Find existing solo orders (fake matches) that can be upgraded to real 2-person groups"""
         
         try:

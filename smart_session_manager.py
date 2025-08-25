@@ -205,7 +205,7 @@ Return ONLY valid JSON."""
             # Fallback: simple keyword detection
             return self._simple_new_request_detection(message, context)
     
-    def start_fresh_food_request(self, user_phone: str, restaurant: str = None, location: str = None, delivery_time: str = "now") -> UserContext:
+    def start_fresh_food_request(self, user_phone: str, restaurant: str = None, location: str = None, delivery_time: str = "now", order_items: str = None) -> UserContext:
         """Start completely fresh food request session"""
         
         # Clear any old sessions
@@ -221,6 +221,7 @@ Return ONLY valid JSON."""
                 "restaurant": restaurant,
                 "location": location,
                 "delivery_time": delivery_time,
+                "order_items": order_items,
                 "timestamp": datetime.now(),
                 "session_id": str(uuid.uuid4())
             }

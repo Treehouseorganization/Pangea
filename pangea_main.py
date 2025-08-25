@@ -21,7 +21,7 @@ from flask import Flask, request
 # Our enhanced modules
 from smart_session_manager import SmartSessionManager
 from intelligent_matching import IntelligentMatcher
-from smart_chatbot_workflow import SmartChatbotWorkflow
+from simple_intelligent_chatbot import SimpleIntelligentChatbot
 from delivery_trigger_system import DeliveryTriggerSystem
 
 load_dotenv()
@@ -113,20 +113,20 @@ print("🔧 Initializing delivery system...")
 delivery_system = DeliveryTriggerSystem(db, session_manager, send_friendly_message)
 print("✅ Delivery system initialized")
 
-print("🔧 Initializing chatbot workflow...")
+print("🔧 Initializing simple intelligent chatbot...")
 try:
-    chatbot_workflow = SmartChatbotWorkflow(session_manager, matcher, anthropic_llm, send_friendly_message)
-    print("✅ Chatbot workflow initialized successfully")
+    chatbot = SimpleIntelligentChatbot(anthropic_llm, db, session_manager, matcher, delivery_system, send_friendly_message)
+    print("✅ Simple intelligent chatbot initialized successfully")
 except Exception as init_error:
-    print(f"❌ CHATBOT WORKFLOW INIT FAILED: {init_error}")
+    print(f"❌ CHATBOT INIT FAILED: {init_error}")
     import traceback
     traceback.print_exc()
     raise init_error
 
 def handle_incoming_message(user_phone: str, message: str) -> Dict:
     """
-    Main message handler - routes through smart chatbot workflow
-    Feels like intelligent conversation while maintaining agent structure
+    Main message handler - uses simple intelligent chatbot
+    Single AI that handles everything dynamically
     """
     
     print(f"📱 Message from {user_phone}: {message}")
@@ -138,22 +138,17 @@ def handle_incoming_message(user_phone: str, message: str) -> Dict:
     try:
         print(f"🔍 Starting message processing...")
         
-        # Check if this is a payment message first (special handling)
-        if message.lower().strip() == 'pay':
-            print(f"💳 Detected PAY message - routing to payment handler")
-            return handle_payment_message(user_phone)
+        print(f"🤖 Routing to simple intelligent chatbot...")
         
-        print(f"🤖 Routing to chatbot workflow...")
-        
-        # Route through smart chatbot workflow
+        # Route through simple intelligent chatbot
         try:
-            result = chatbot_workflow.process_message(user_phone, message)
-            print(f"✅ Chatbot workflow completed successfully")
-        except Exception as workflow_error:
-            print(f"❌ Chatbot workflow failed: {workflow_error}")
+            result = chatbot.handle_message(user_phone, message)
+            print(f"✅ Simple chatbot completed successfully")
+        except Exception as chatbot_error:
+            print(f"❌ Simple chatbot failed: {chatbot_error}")
             import traceback
             traceback.print_exc()
-            raise workflow_error
+            raise chatbot_error
         
         print(f"🤖 Workflow result: {result['status']}")
         print(f"🎯 Action: {result.get('action', 'unknown')}")
@@ -527,9 +522,9 @@ def run_periodic_cleanup():
 
 if __name__ == "__main__":
     print("🍜 Enhanced Pangea Food Coordination Starting...")
-    print("🤖 Smart chatbot with LangGraph workflow ready!")
+    print("🤖 Simple intelligent chatbot ready!")
     print("📱 SMS webhook ready!")
-    print("🔧 Claude tools and intelligent matching enabled!")
+    print("🔧 Claude AI with dynamic intelligence enabled!")
     
     # Run initial cleanup
     cleanup_old_data()

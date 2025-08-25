@@ -276,6 +276,7 @@ Return ONLY valid JSON."""
         restaurant = extracted.get('restaurant')
         location = extracted.get('location')
         delivery_time = extracted.get('delivery_time', 'now')
+        order_items = extracted.get('order_items')
         missing_info = extracted.get('missing_info', [])
         
         if missing_info:
@@ -290,13 +291,14 @@ Return ONLY valid JSON."""
                 "restaurant": restaurant,
                 "location": location,
                 "delivery_time": delivery_time,
+                "order_items": order_items,
                 "missing_info": missing_info
             }
             self.session_manager.update_user_context(context, user_message)
             
         else:
             # Complete request - start fresh food request
-            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
+            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time, order_items)
             state['extracted_data'] = {
                 "restaurant": restaurant,
                 "location": location, 
@@ -373,6 +375,7 @@ Return ONLY valid JSON."""
         restaurant = extracted.get('restaurant') or current_request.get('restaurant')
         location = extracted.get('location') or current_request.get('location')
         delivery_time = extracted.get('delivery_time') or current_request.get('delivery_time', 'now')
+        order_items = extracted.get('order_items') or current_request.get('order_items')
         missing_info = extracted.get('missing_info', [])
         
         if missing_info:
@@ -385,12 +388,13 @@ Return ONLY valid JSON."""
                 "restaurant": restaurant,
                 "location": location,
                 "delivery_time": delivery_time,
+                "order_items": order_items,
                 "missing_info": missing_info
             })
             self.session_manager.update_user_context(context, user_message)
         else:
             # Complete now - start matching
-            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time)
+            self.session_manager.start_fresh_food_request(user_phone, restaurant, location, delivery_time, order_items)
             state['extracted_data'] = {
                 "restaurant": restaurant,
                 "location": location,
@@ -812,10 +816,16 @@ Available locations: Richard J Daley Library, Student Center East, Student Cente
 Extract and return JSON:
 {{
     "restaurant": "exact restaurant name or null",
-    "location": "exact location name or null",
+    "location": "exact location name or null", 
     "delivery_time": "parsed time or 'now'",
-    "missing_info": ["restaurant", "location"] // what's still missing
+    "order_items": "specific food items mentioned or null",
+    "missing_info": ["restaurant", "location", "order_items"] // what's still missing
 }}
+
+Look for specific food items like:
+- Menu items: "Big Mac", "Chicken sandwich", "Burrito bowl", etc.
+- Meal descriptions: "Big Mac meal", "2 chicken sandwiches", etc.
+- General categories: "burger and fries", "chicken meal", etc.
 
 Return ONLY valid JSON."""
         
@@ -857,7 +867,7 @@ Return ONLY valid JSON."""
             
         except Exception as e:
             print(f"❌ Food extraction failed: {e}")
-            return {"restaurant": None, "location": None, "delivery_time": "now", "missing_info": ["restaurant", "location"]}
+            return {"restaurant": None, "location": None, "delivery_time": "now", "order_items": None, "missing_info": ["restaurant", "location"]}
     
     def _basic_food_request_extraction(self, message: str) -> Dict:
         """Basic fallback extraction without Claude API"""
@@ -905,6 +915,13 @@ Return ONLY valid JSON."""
                     delivery_time = time
                     break
         
+        # Basic order items detection (fallback)
+        order_items = None
+        food_words = ['burger', 'meal', 'sandwich', 'fries', 'drink', 'combo', 'big mac', 'whopper', 'bowl', 'burrito']
+        if any(word in message_lower for word in food_words):
+            # Extract basic food items from message
+            order_items = ' '.join([word for word in message.split() if any(food in word.lower() for food in food_words)])
+        
         # Determine missing info
         missing_info = []
         if not restaurant:
@@ -912,19 +929,34 @@ Return ONLY valid JSON."""
         if not location:
             missing_info.append("location")
         
-        print(f"🔄 Basic extraction: restaurant={restaurant}, location={location}, time={delivery_time}, missing={missing_info}")
+        print(f"🔄 Basic extraction: restaurant={restaurant}, location={location}, time={delivery_time}, items={order_items}, missing={missing_info}")
         
         return {
             "restaurant": restaurant,
             "location": location, 
             "delivery_time": delivery_time,
+            "order_items": order_items,
             "missing_info": missing_info
         }
     
     def _generate_missing_info_response(self, missing_info: List[str], restaurant: str = None, location: str = None) -> str:
         """Generate helpful response for missing information"""
         
-        if set(missing_info) == {'restaurant', 'location'}:
+        if set(missing_info) == {'restaurant', 'location', 'order_items'}:
+            return """I'd love to help you order! I need to know:
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
+
+🍽️ **What would you like to order?**
+• Be specific about items (like "Big Mac meal" or "Chicken bowl")
+
+Example: "I want a Big Mac meal from McDonald's delivered to the library" """
+        
+        elif set(missing_info) == {'restaurant', 'location'}:
             return """I'd love to help you order! I need to know:
 
 🍕 **Which restaurant?**
@@ -934,6 +966,26 @@ Return ONLY valid JSON."""
 • Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
 
 Example: "I want Chipotle delivered to the library" """
+        
+        elif 'restaurant' in missing_info and 'order_items' in missing_info:
+            return f"""Got it - you want food delivered to {location}! 
+
+🍕 **Which restaurant?**
+• Chipotle, McDonald's, Chick-fil-A, Portillo's, or Starbucks
+
+🍽️ **What would you like to order?**
+• Be specific about items you want
+
+Example: "Big Mac meal from McDonald's" """
+        
+        elif 'location' in missing_info and 'order_items' in missing_info:
+            return f"""Perfect - {restaurant} it is! 
+
+📍 **Where should it be delivered?**
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
+
+🍽️ **What would you like to order from {restaurant}?**
+• Be specific about items (like "Big Mac meal" or "Chicken sandwich")"""
         
         elif 'restaurant' in missing_info:
             return f"""Got it - you want food delivered to {location}! 
@@ -947,13 +999,18 @@ Just tell me which one sounds good! 😊"""
             return f"""Perfect - {restaurant} it is! 
 
 📍 **Where should it be delivered?**
-• Richard J Daley Library
-• Student Center East  
-• Student Center West
-• Student Services Building
-• University Hall
+• Richard J Daley Library, Student Center East, Student Center West, Student Services Building, or University Hall
 
 Which location works for you?"""
+        
+        elif 'order_items' in missing_info:
+            return f"""Great! {restaurant} to {location}!
+
+🍽️ **What would you like to order from {restaurant}?**
+• Be specific about items (like "Big Mac meal" or "Chicken bowl")
+• Include any customizations you want
+
+What sounds good to you?"""
         
         else:
             return "I think I have everything I need! Let me find you a group..."
