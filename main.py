@@ -643,45 +643,35 @@ Your driver will contact you when they arrive!"""
         thread.daemon = True
         thread.start()
 
-# Flask web server
-app = Flask(__name__)
-pangea_app = PangeaApp()
-
-@app.route('/webhook/sms', methods=['POST'])
-async def sms_webhook():
-    """Handle incoming SMS messages"""
-    try:
-        from_number = request.form.get('From')
-        message_body = request.form.get('Body')
-        
-        if not from_number or not message_body:
-            return '', 400
-        
-        result = await pangea_app.handle_message(from_number, message_body)
-        return '', 200
-        
-    except Exception as e:
-        print(f"❌ Webhook error: {e}")
-        return '', 500
-
-@app.route('/status/<phone_number>', methods=['GET'])
-async def user_status(phone_number):
-    """Get user status for debugging"""
-    try:
-        user_state = await pangea_app.memory_manager.get_user_state(phone_number)
-        return {
-            'user_phone': phone_number,
-            'stage': user_state.stage.value,
-            'restaurant': user_state.restaurant,
-            'location': user_state.location,
-            'group_id': user_state.group_id,
-            'missing_info': user_state.missing_info,
-            'last_activity': user_state.last_activity.isoformat() if user_state.last_activity else None
-        }, 200
-    except Exception as e:
-        return {'error': str(e)}, 500
+# Note: Flask routes moved to app.py to avoid conflicts
+# This file now only contains the PangeaApp class for import
 
 if __name__ == "__main__":
     print("🍜 Starting Pangea Food Coordination System...")
+    print("⚠️  Please use 'python app.py' instead - this standalone mode is deprecated")
+    
+    # Deprecated standalone Flask server
+    from flask import Flask
+    app = Flask(__name__)
+    pangea_app = PangeaApp()
+    
+    @app.route('/webhook/sms', methods=['POST'])
+    async def sms_webhook():
+        """Handle incoming SMS messages"""
+        try:
+            from flask import request
+            from_number = request.form.get('From')
+            message_body = request.form.get('Body')
+            
+            if not from_number or not message_body:
+                return '', 400
+            
+            result = await pangea_app.handle_message(from_number, message_body)
+            return '', 200
+            
+        except Exception as e:
+            print(f"❌ Webhook error: {e}")
+            return '', 500
+    
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=True)
