@@ -1,0 +1,141 @@
+# =============================================================================
+# PANGEA FOOD DELIVERY - AI FRIEND SMS SYSTEM
+# =============================================================================
+#
+# PROJECT CONCEPT:
+# Pangea is an AI-powered food delivery coordination system that helps college
+# students find lunch buddies and save money on delivery fees through group orders.
+# 
+# The system uses Claude 4 (Anthropic's latest AI model) to act as an "AI Friend"
+# that matches users with similar food preferences, negotiates group formations,
+# and coordinates the entire ordering process via SMS.
+#
+# KEY FEATURES:
+# - AI-powered user matching based on restaurant preferences and timing
+# - Multi-agent negotiation between AI Friends representing different users
+# - SMS-based interface using Twilio
+# - Firebase backend for user data and order management
+# - LangGraph workflow orchestration for complex conversation flows
+# - Group payment coordination with Stripe integration
+#
+# PROJECT FILES:
+# - pangea_main.py: Core AI Friend system with matching and negotiation
+# - pangea_order_processor.py: Handles order flow after group formation
+# - pangea-firebase-key.json: Firebase service account credentials
+# - .env: This configuration file (rename this template to .env)
+#
+# =============================================================================
+
+# =============================================================================
+# ANTHROPIC AI CONFIGURATION
+# =============================================================================
+# Claude 4 API key for the AI Friend's intelligence
+# This powers all conversation, matching, and negotiation logic
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# =============================================================================
+# TWILIO SMS CONFIGURATION  
+# =============================================================================
+# Twilio credentials for SMS communication with users
+# The AI Friend communicates entirely via SMS through Twilio
+TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
+TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
+TWILIO_PHONE_NUMBER=+1234567890  # Your Twilio phone number for sending SMS
+
+# =============================================================================
+# FIREBASE CONFIGURATION
+# =============================================================================
+# Firebase Firestore database for storing user data, orders, and conversations
+# Path to the Firebase service account JSON file
+FIREBASE_SERVICE_ACCOUNT_PATH=./pangea-firebase-key.json
+
+# =============================================================================
+# STRIPE PAYMENT CONFIGURATION (Optional - for payment links)
+# =============================================================================
+# Stripe payment links for group delivery fees
+# These are pre-created payment links for different group sizes
+STRIPE_PAYMENT_LINK_2_PEOPLE=https://buy.stripe.com/cNi00i96U8Uu0qO5nSdwc01
+STRIPE_PAYMENT_LINK_3_PEOPLE=https://buy.stripe.com/8x2eVc6YM2w6ddA03ydwc02  
+STRIPE_PAYMENT_LINK_4_PEOPLE=https://buy.stripe.com/eVqbJ0gzm3Aa6Pcg2wdwc03
+
+# =============================================================================
+# APPLICATION CONFIGURATION
+# =============================================================================
+# Flask web server configuration for Twilio webhooks
+FLASK_ENV=development  # Set to 'production' for live deployment
+FLASK_DEBUG=True       # Set to False in production
+PORT=8000              # Port for the Flask web server
+
+# =============================================================================
+# AI MODEL CONFIGURATION
+# =============================================================================
+# Claude model settings for optimal performance
+ANTHROPIC_MODEL=claude-opus-4-20250514  # Latest Claude 4 model
+ANTHROPIC_TEMPERATURE=0.1               # Low temperature for consistent responses
+ANTHROPIC_MAX_TOKENS=4096               # Maximum response length
+
+# =============================================================================
+# SYSTEM BEHAVIOR CONFIGURATION
+# =============================================================================
+# Timeout settings for order sessions and negotiations
+ORDER_SESSION_TIMEOUT_HOURS=2           # How long to keep order sessions active
+NEGOTIATION_TIMEOUT_MINUTES=30          # How long to wait for negotiation responses
+MAX_SEARCH_ATTEMPTS=3                   # Maximum attempts to find group matches
+
+# =============================================================================
+# RESTAURANT CONFIGURATION
+# =============================================================================
+# Available restaurants and their locations
+# These are hardcoded in the system but could be made configurable
+RESTAURANT_1=Thai Garden - Student Union
+RESTAURANT_2=Mario's Pizza - Campus Center
+RESTAURANT_3=Sushi Express - Library Plaza
+RESTAURANT_4=Burger Barn - Recreation Center
+RESTAURANT_5=Green Bowls - Health Sciences Building
+
+# =============================================================================
+# DEPLOYMENT CONFIGURATION
+# =============================================================================
+# For production deployment
+HOST=0.0.0.0           # Host for Flask server
+LOG_LEVEL=INFO         # Logging level (DEBUG, INFO, WARNING, ERROR)
+
+# =============================================================================
+# SECURITY CONFIGURATION
+# =============================================================================
+# Security settings for production
+SECRET_KEY=your_secret_key_here         # Flask secret key for sessions
+ALLOWED_HOSTS=localhost,127.0.0.1       # Allowed hosts for webhooks
+
+# =============================================================================
+# MONITORING CONFIGURATION
+# =============================================================================
+# Optional monitoring and analytics
+ENABLE_ANALYTICS=False                  # Enable usage analytics
+ENABLE_LOGGING=True                     # Enable detailed logging
+LOG_FILE_PATH=./logs/pangea.log         # Log file path
+
+# =============================================================================
+# DEVELOPMENT CONFIGURATION
+# =============================================================================
+# Development-specific settings
+ENABLE_MOCK_SMS=False                   # Use mock SMS for testing
+ENABLE_MOCK_PAYMENTS=False              # Use mock payments for testing
+DEBUG_MODE=True                         # Enable debug features
+
+# =============================================================================
+# SETUP INSTRUCTIONS:
+# =============================================================================
+# 1. Copy this file to .env in your project root
+# 2. Replace all "your_*_here" values with actual credentials
+# 3. Ensure pangea-firebase-key.json is in the project root
+# 4. Install dependencies: pip install -r requirements.txt
+# 5. Run the system: python pangea_main.py
+#
+# REQUIRED SERVICES:
+# - Anthropic API account (for Claude 4)
+# - Twilio account (for SMS)
+# - Firebase project (for database)
+# - Stripe account (for payments, optional)
+#
+# ============================================================================= 
