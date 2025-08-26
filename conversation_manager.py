@@ -9,7 +9,7 @@ import re
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from langchain_core.messages import HumanMessage
-from main import UserState, OrderStage
+from models import UserState, OrderStage
 
 class ConversationManager:
     """Manages conversation flow with memory and context awareness"""

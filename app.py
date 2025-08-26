@@ -153,7 +153,7 @@ def system_stats():
         app_instance = initialize_pangea()
         
         # Get stats from memory manager
-        from main import OrderStage
+        from models import OrderStage
         
         stats = {}
         for stage in OrderStage:

@@ -5,7 +5,7 @@ Manages order flow transitions and validation
 
 from enum import Enum
 from typing import Dict, Optional, List
-from main import OrderStage, UserState
+from models import OrderStage, UserState
 
 class OrderStateMachine:
     """Manages order state transitions"""
