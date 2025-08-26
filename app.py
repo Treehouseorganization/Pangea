@@ -5,9 +5,14 @@ Main entry point for the rewritten Pangea system
 
 import asyncio
 import os
+import sys
 from flask import Flask, request, jsonify
 from main import PangeaApp
 from datetime import datetime
+
+# Force immediate output for debugging
+sys.stdout.flush()
+sys.stderr.flush()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -25,6 +30,7 @@ def initialize_pangea():
 @app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    print("🚨 DEBUG: HEALTH CHECK CALLED!", flush=True)  # Test if print works at all
     return {
         'status': 'healthy',
         'service': 'Pangea Food Coordination System',
@@ -32,10 +38,28 @@ def health_check():
         'version': '3.0-clean-architecture'
     }, 200
 
+@app.route('/debug-test', methods=['GET', 'POST'])
+def debug_test():
+    """Debug endpoint to test if our routes work"""
+    print(f"🚨 DEBUG-TEST: Method={request.method}, URL={request.url}", flush=True)
+    import sys
+    print(f"🚨 DEBUG-TEST: STDERR OUTPUT", file=sys.stderr, flush=True)
+    return {'debug': 'test', 'method': request.method}, 200
+
 @app.route('/webhook/sms', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
 def sms_webhook():
     """Handle incoming SMS messages"""
+    # CRITICAL DEBUG: Add this first to see if handler is called AT ALL
+    print("🚨 DEBUG: WEBHOOK HANDLER CALLED!", flush=True)
+    print(f"🚨 DEBUG: Method = {request.method}", flush=True)
+    print(f"🚨 DEBUG: URL = {request.url}", flush=True)
+    print(f"🚨 DEBUG: Form data = {dict(request.form)}", flush=True)
+    
+    # Also try stderr in case stdout is being filtered
+    import sys
+    print("🚨 STDERR: WEBHOOK HANDLER CALLED!", file=sys.stderr, flush=True)
+    
     try:
         # Ensure Pangea app is initialized
         app_instance = initialize_pangea()
@@ -75,6 +99,7 @@ def sms_webhook():
         return '', 200
         
     except Exception as e:
+        print("🚨 DEBUG: EXCEPTION CAUGHT IN WEBHOOK!")
         print(f"❌ WEBHOOK ERROR:")
         print(f"   🚨 Exception: {str(e)}")
         print(f"   📋 Exception Type: {type(e).__name__}")
@@ -84,6 +109,7 @@ def sms_webhook():
         # Try to send error message to user if possible
         try:
             if 'from_number' in locals() and from_number:
+                print(f"🚨 DEBUG: Trying to send error SMS to {from_number}")
                 app_instance = initialize_pangea()
                 error_response = "Sorry, I'm having technical difficulties. Please try again in a few minutes!"
                 app_instance.send_sms(from_number, error_response)
