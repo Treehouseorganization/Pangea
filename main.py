@@ -84,24 +84,43 @@ class PangeaApp:
     def send_sms(self, phone_number: str, message: str) -> bool:
         """Send SMS with error handling"""
         try:
-            self.twilio_client.messages.create(
+            print(f"   📱 SENDING SMS:")
+            print(f"      📞 To: {phone_number}")
+            print(f"      💬 Length: {len(message)} chars")
+            
+            result = self.twilio_client.messages.create(
                 body=message,
                 from_=os.getenv('TWILIO_PHONE_NUMBER'),
                 to=phone_number
             )
-            print(f"📤 SMS sent to {phone_number}")
+            
+            print(f"      ✅ SMS SENT:")
+            print(f"         SID: {result.sid}")
+            print(f"         Status: {result.status}")
             return True
+            
         except Exception as e:
-            print(f"❌ SMS failed to {phone_number}: {e}")
+            print(f"      ❌ SMS FAILED:")
+            print(f"         Error: {str(e)}")
+            print(f"         Type: {type(e).__name__}")
             return False
     
     async def handle_message(self, user_phone: str, message: str) -> Dict:
         """Main message handling with proper state management"""
-        print(f"📱 Processing message from {user_phone}: {message}")
+        print(f"📱 MAIN MESSAGE HANDLER:")
+        print(f"   📞 User: {user_phone}")
+        print(f"   💬 Message: '{message}'")
+        print(f"   🕒 Start Time: {datetime.now().isoformat()}")
         
         try:
             # Get or create user state
+            print(f"🧠 Retrieving user state for {user_phone}...")
             user_state = await self.memory_manager.get_user_state(user_phone)
+            print(f"   📊 Current Stage: {user_state.stage.value}")
+            print(f"   🏪 Restaurant: {user_state.restaurant or 'None'}")
+            print(f"   📍 Location: {user_state.location or 'None'}")
+            print(f"   👥 Group ID: {user_state.group_id or 'None'}")
+            print(f"   🎭 Is Fake Match: {user_state.is_fake_match}")
             
             # Update conversation history
             user_state.conversation_history.append({
@@ -112,14 +131,19 @@ class PangeaApp:
             user_state.last_activity = datetime.now()
             
             # Process message through conversation manager
+            print(f"💭 CONVERSATION PROCESSING...")
             conversation_result = await self.conversation_manager.process_message(
                 message, user_state
             )
+            print(f"   ✅ Analysis Complete: {conversation_result.get('analysis', {}).get('primary_intent', 'unknown')}")
+            print(f"   🎯 Actions to Execute: {[a.get('type') for a in conversation_result.get('actions', [])]}")
+            print(f"   🔄 State Updates: {list(conversation_result.get('state_updates', {}).keys())}")
             
             # Execute any triggered actions
-            action_results = await self._execute_actions(
-                conversation_result.get('actions', []), user_state
-            )
+            actions = conversation_result.get('actions', [])
+            print(f"⚡ EXECUTING {len(actions)} ACTIONS...")
+            action_results = await self._execute_actions(actions, user_state)
+            print(f"   📋 Action Results: {[r.get('status') for r in action_results]}")
             
             # Update user state based on results
             if conversation_result.get('state_updates'):
@@ -128,6 +152,9 @@ class PangeaApp:
             # Send response if provided
             response_message = conversation_result.get('response')
             if response_message:
+                print(f"📤 SENDING RESPONSE:")
+                print(f"   💌 Message: '{response_message[:100]}{'...' if len(response_message) > 100 else ''}'")
+                
                 # Add to conversation history
                 user_state.conversation_history.append({
                     'message': response_message,
@@ -136,38 +163,57 @@ class PangeaApp:
                 })
                 
                 # Send SMS
-                self.send_sms(user_phone, response_message)
+                sms_success = self.send_sms(user_phone, response_message)
+                print(f"   📱 SMS Status: {'✅ Sent' if sms_success else '❌ Failed'}")
             
             # Save updated state
             await self.memory_manager.save_user_state(user_state)
             
-            return {
+            result = {
                 'status': 'success',
                 'stage': user_state.stage.value,
-                'actions_executed': action_results,
-                'response_sent': bool(response_message)
+                'actions_taken': [r.get('type', 'unknown') for r in action_results],
+                'response_sent': response_message,
+                'payment_amount': user_state.payment_amount,
+                'restaurant': user_state.restaurant,
+                'location': user_state.location
             }
             
+            print(f"✅ MESSAGE HANDLING COMPLETE:")
+            print(f"   🎯 Final Stage: {user_state.stage.value}")
+            print(f"   ⚡ Actions Executed: {len(action_results)}")
+            print(f"   📤 Response Sent: {'Yes' if response_message else 'No'}")
+            
+            return result
+            
         except Exception as e:
-            print(f"❌ Message handling error: {e}")
+            print(f"❌ MESSAGE HANDLING ERROR:")
+            print(f"   🚨 Exception: {str(e)}")
+            print(f"   📋 Exception Type: {type(e).__name__}")
+            import traceback
+            print(f"   📚 Traceback: {traceback.format_exc()}")
             
             # Send error response
             error_msg = "Sorry, I had a technical issue. Can you try again?"
-            self.send_sms(user_phone, error_msg)
+            error_sent = self.send_sms(user_phone, error_msg)
             
             return {
                 'status': 'error',
                 'error': str(e),
-                'response_sent': True
+                'debug_info': traceback.format_exc(),
+                'response_sent': error_sent
             }
     
     async def _execute_actions(self, actions: List[Dict], user_state: UserState) -> List[Dict]:
         """Execute triggered actions based on conversation analysis"""
         results = []
         
-        for action in actions:
+        for i, action in enumerate(actions, 1):
             action_type = action.get('type')
             action_data = action.get('data', {})
+            
+            print(f"   ⚡ ACTION {i}/{len(actions)}: {action_type}")
+            print(f"      📋 Data: {action_data}")
             
             try:
                 if action_type == 'find_matches':
@@ -181,10 +227,14 @@ class PangeaApp:
                 else:
                     result = {'status': 'unknown_action', 'type': action_type}
                 
+                print(f"      ✅ Result: {result.get('status')}")
                 results.append(result)
                 
             except Exception as e:
-                print(f"❌ Action execution error ({action_type}): {e}")
+                print(f"      ❌ ACTION FAILED:")
+                print(f"         🚨 Error: {str(e)}")
+                import traceback
+                print(f"         📚 Traceback: {traceback.format_exc()}")
                 results.append({
                     'status': 'error',
                     'type': action_type,
@@ -195,16 +245,28 @@ class PangeaApp:
     
     async def _handle_find_matches(self, user_state: UserState, action_data: Dict) -> Dict:
         """Handle finding matches using existing matching engine"""
+        print(f"         🔍 FINDING MATCHES:")
+        print(f"            🏪 Restaurant: {user_state.restaurant}")
+        print(f"            📍 Location: {user_state.location}")
+        print(f"            🕒 Time: {user_state.delivery_time}")
+        
         if not all([user_state.restaurant, user_state.location]):
+            print(f"            ⚠️ Missing info: {user_state.missing_info}")
             return {'status': 'missing_info', 'missing': user_state.missing_info}
         
         # Use existing matching engine logic
+        print(f"            🔍 Calling matching engine...")
         match_result = self.matching_engine.find_compatible_matches(
             user_state.user_phone,
             user_state.restaurant, 
             user_state.location,
             user_state.delivery_time
         )
+        
+        print(f"            🎯 Match Result:")
+        print(f"               Has Real Match: {match_result.get('has_real_match', False)}")
+        print(f"               Matches Found: {len(match_result.get('matches', []))}")
+        print(f"               Is Silent Upgrade: {match_result.get('is_silent_upgrade', False)}")
         
         if match_result['has_real_match']:
             # Real match found
@@ -225,6 +287,10 @@ class PangeaApp:
                 user_state.is_fake_match = False
                 user_state.stage = OrderStage.MATCHED
                 user_state.payment_amount = "$4.50"
+                
+                print(f"            ✅ SILENT UPGRADE MATCH:")
+                print(f"               Group ID: {group_id}")
+                print(f"               Partner: {best_match['user_phone']}")
                 
                 return {
                     'status': 'silent_upgrade_match',
@@ -247,6 +313,11 @@ class PangeaApp:
                 user_state.stage = OrderStage.MATCHED
                 user_state.payment_amount = "$4.50"
                 
+                print(f"            ✅ REAL MATCH FOUND:")
+                print(f"               Group ID: {group_id}")
+                print(f"               Partner: {best_match['user_phone']}")
+                print(f"               Sending notification to partner...")
+                
                 # Notify matched user
                 match_message = f"""Great news! Another student wants {user_state.restaurant} at {user_state.location} too!
 
@@ -260,7 +331,8 @@ Your share: $4.50 each (vs $8+ solo)
 
 Time to order!"""
                 
-                self.send_sms(best_match['user_phone'], match_message)
+                partner_sms_sent = self.send_sms(best_match['user_phone'], match_message)
+                print(f"               Partner SMS: {'✅ Sent' if partner_sms_sent else '❌ Failed'}")
                 
                 return {
                     'status': 'real_match_found',
@@ -282,6 +354,10 @@ Time to order!"""
             user_state.stage = OrderStage.MATCHED
             user_state.payment_amount = "$3.50"
             
+            print(f"            🎭 FAKE MATCH CREATED:")
+            print(f"               Group ID: {group_id}")
+            print(f"               Solo order disguised as group")
+            
             return {
                 'status': 'fake_match_created',
                 'group_id': group_id
@@ -289,7 +365,13 @@ Time to order!"""
     
     async def _handle_request_payment(self, user_state: UserState, action_data: Dict) -> Dict:
         """Handle payment request"""
+        print(f"         💳 PAYMENT REQUEST:")
+        print(f"            📊 Order Complete: {self._has_complete_order_info(user_state)}")
+        print(f"            💰 Payment Amount: {user_state.payment_amount}")
+        print(f"            👥 Group Size: {user_state.group_size}")
+        
         if not self._has_complete_order_info(user_state):
+            print(f"            ⚠️ Incomplete order, missing: {user_state.missing_info}")
             return {
                 'status': 'incomplete_order',
                 'missing': user_state.missing_info
@@ -306,6 +388,8 @@ Time to order!"""
         user_state.payment_requested_at = datetime.now()
         user_state.stage = OrderStage.PAYMENT_PENDING
         
+        print(f"            🔗 Generated payment link: {payment_link}")
+        
         # Send payment message
         payment_message = f"""💳 Payment for {user_state.restaurant}
 
@@ -316,10 +400,14 @@ Click here to pay:
 
 After payment, I'll coordinate your delivery!"""
         
-        self.send_sms(user_state.user_phone, payment_message)
+        payment_sms_sent = self.send_sms(user_state.user_phone, payment_message)
+        print(f"            📱 Payment SMS: {'✅ Sent' if payment_sms_sent else '❌ Failed'}")
         
         # Check if delivery should be triggered
-        if await self._should_trigger_delivery_now(user_state):
+        should_trigger = await self._should_trigger_delivery_now(user_state)
+        print(f"            🚚 Should trigger delivery now: {should_trigger}")
+        if should_trigger:
+            print(f"            ⚡ Triggering delivery immediately...")
             await self._handle_trigger_delivery(user_state, {})
         
         return {
@@ -329,30 +417,36 @@ After payment, I'll coordinate your delivery!"""
     
     async def _handle_trigger_delivery(self, user_state: UserState, action_data: Dict) -> Dict:
         """Handle delivery triggering with proper timing logic"""
+        print(f"         🚚 DELIVERY TRIGGER:")
+        print(f"            🕒 Delivery Time: {user_state.delivery_time}")
+        print(f"            🎭 Is Fake Match: {user_state.is_fake_match}")
+        print(f"            👥 Group ID: {user_state.group_id}")
         
         # Check delivery timing rules
         is_immediate = user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
+        print(f"            ⏱️ Is Immediate: {is_immediate}")
         
         if user_state.is_fake_match:
-            # Solo order logic
+            print(f"            👤 Solo order logic")
             if is_immediate:
-                # Immediate solo delivery - trigger now
+                print(f"            ⚡ Immediate solo delivery - triggering now")
                 return await self._trigger_delivery_now(user_state)
             else:
-                # Scheduled solo delivery - wait until delivery time
+                print(f"            🗓️ Scheduled solo delivery - scheduling for later")
                 return await self._schedule_delivery(user_state)
         else:
-            # Group order logic  
+            print(f"            👥 Group order logic")
             group_ready = await self._is_group_ready_for_delivery(user_state.group_id)
+            print(f"            📋 Group Ready: {group_ready}")
             
             if group_ready and is_immediate:
-                # Immediate group delivery - trigger now
+                print(f"            ⚡ Immediate group delivery - triggering now")
                 return await self._trigger_delivery_now(user_state)
             elif group_ready and not is_immediate:
-                # Scheduled group delivery - trigger at delivery time
+                print(f"            🗓️ Scheduled group delivery - scheduling for later")
                 return await self._schedule_delivery(user_state)
             else:
-                # Wait for other group members
+                print(f"            ⏳ Waiting for other group members")
                 return {'status': 'waiting_for_group'}
     
     async def _handle_cancel_order(self, user_state: UserState, action_data: Dict) -> Dict:

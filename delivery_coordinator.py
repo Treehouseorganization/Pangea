@@ -18,33 +18,55 @@ class DeliveryCoordinator:
     async def create_delivery(self, delivery_data: Dict) -> Dict:
         """Create delivery using existing Uber Direct integration"""
         try:
+            print(f"🚚 DELIVERY COORDINATOR - CREATE DELIVERY:")
+            print(f"   🍕 Restaurant: {delivery_data.get('restaurant')}")
+            print(f"   📍 Location: {delivery_data.get('location')}")
+            print(f"   👥 Group Size: {delivery_data.get('group_size')}")
+            print(f"   📱 Members: {delivery_data.get('members', [])}")
+            print(f"   🎯 Group ID: {delivery_data.get('group_id')}")
+            
             # Import existing Uber Direct integration
             from pangea_uber_direct import create_group_delivery
             
-            print(f"🚚 Creating delivery for {delivery_data.get('restaurant')} group...")
+            print(f"   🔗 Calling Uber Direct API...")
             
             # Use existing delivery creation logic
             result = create_group_delivery(delivery_data)
             
+            print(f"   📋 UBER DIRECT RESPONSE:")
+            print(f"      Success: {result.get('success', False)}")
+            print(f"      Delivery ID: {result.get('delivery_id', 'N/A')}")
+            print(f"      Tracking URL: {result.get('tracking_url', 'N/A')}")
+            print(f"      Error: {result.get('error', 'None')}")
+            
             if result.get('success'):
                 # Store delivery information
+                print(f"   💾 Storing delivery record...")
                 await self._store_delivery_record(delivery_data, result)
                 
-                print(f"✅ Delivery created: {result.get('delivery_id')}")
+                print(f"   ✅ DELIVERY SUCCESSFULLY CREATED:")
+                print(f"      ID: {result.get('delivery_id')}")
+                print(f"      Tracking: {result.get('tracking_url')}")
+                
                 return {
                     'success': True,
                     'delivery_id': result.get('delivery_id'),
                     'tracking_url': result.get('tracking_url')
                 }
             else:
-                print(f"❌ Delivery creation failed: {result}")
+                print(f"   ❌ DELIVERY CREATION FAILED:")
+                print(f"      Error: {result.get('error', 'Unknown error')}")
                 return {
                     'success': False,
                     'error': result.get('error', 'Unknown error')
                 }
                 
         except Exception as e:
-            print(f"❌ Delivery coordinator error: {e}")
+            print(f"   ❌ DELIVERY COORDINATOR ERROR:")
+            print(f"      Exception: {str(e)}")
+            print(f"      Type: {type(e).__name__}")
+            import traceback
+            print(f"      Traceback: {traceback.format_exc()}")
             return {
                 'success': False,
                 'error': str(e)
@@ -108,7 +130,16 @@ class DeliveryCoordinator:
                 'status': 'created'
             }
             
+            print(f"      💾 STORING DELIVERY RECORD:")
+            print(f"         Collection: deliveries")
+            print(f"         Document ID: {result.get('delivery_id')}")
+            print(f"         Data: {delivery_record}")
+            
             self.db.collection('deliveries').document(result.get('delivery_id')).set(delivery_record)
             
+            print(f"      ✅ Delivery record stored successfully")
+            
         except Exception as e:
-            print(f"❌ Error storing delivery record: {e}")
+            print(f"      ❌ ERROR STORING DELIVERY RECORD:")
+            print(f"         Error: {str(e)}")
+            print(f"         Type: {type(e).__name__}")

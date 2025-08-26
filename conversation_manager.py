@@ -123,8 +123,13 @@ Be thorough and context-aware. Consider their current stage and conversation his
                     response_text = json_match.group()
             
             result = json.loads(response_text)
-            print(f"🧠 Message analysis: {result.get('primary_intent')} ({result.get('confidence')})")
-            print(f"   Reasoning: {result.get('reasoning')}")
+            
+            print(f"🧠 MESSAGE ANALYSIS COMPLETE:")
+            print(f"   🎯 Intent: {result.get('primary_intent')} ({result.get('confidence', 'unknown')} confidence)")
+            print(f"   📊 Extracted Info: {result.get('extracted_info', {})}")
+            print(f"   ❓ Missing Info: {result.get('missing_info', [])}")
+            print(f"   ⚡ Should Trigger: {result.get('should_trigger_actions', [])}")
+            print(f"   💭 Reasoning: {result.get('reasoning', 'none')}")
             
             return result
             

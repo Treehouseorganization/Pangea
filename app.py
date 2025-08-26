@@ -47,20 +47,39 @@ def sms_webhook():
             print("❌ Missing required fields in webhook")
             return '', 400
         
-        print(f"�� Webhook received: {from_number} -> {message_body}")
+        print(f"📱 SMS WEBHOOK RECEIVED:")
+        print(f"   📞 From: {from_number}")
+        print(f"   💬 Message: '{message_body}'")
+        print(f"   🕒 Timestamp: {datetime.now().isoformat()}")
+        print(f"   📊 Message Length: {len(message_body)} chars")
         
         # Handle message asynchronously
+        print(f"🔄 Processing message for {from_number}...")
         result = asyncio.run(app_instance.handle_message(from_number, message_body))
+        print(f"✅ Message processing completed with result: {result}")
         
         if result['status'] == 'success':
-            print(f"✅ Message processed successfully: {result.get('stage', 'unknown')}")
+            print(f"✅ MESSAGE PROCESSING SUCCESS:")
+            print(f"   🎯 User Stage: {result.get('stage', 'unknown')}")
+            print(f"   📋 Actions Triggered: {result.get('actions_taken', [])}")
+            print(f"   💰 Payment Amount: {result.get('payment_amount', 'N/A')}")
+            print(f"   🍕 Restaurant: {result.get('restaurant', 'N/A')}")
+            print(f"   📍 Location: {result.get('location', 'N/A')}")
+            if result.get('response_sent'):
+                print(f"   📤 Response Sent: '{result['response_sent'][:100]}{'...' if len(result.get('response_sent', '')) > 100 else ''}'")
         else:
-            print(f"❌ Message processing failed: {result.get('error', 'unknown')}")
+            print(f"❌ MESSAGE PROCESSING FAILED:")
+            print(f"   ⚠️ Error: {result.get('error', 'unknown')}")
+            print(f"   🔍 Debug Info: {result.get('debug_info', 'none')}")
         
         return '', 200
         
     except Exception as e:
-        print(f"❌ Webhook error: {e}")
+        print(f"❌ WEBHOOK ERROR:")
+        print(f"   🚨 Exception: {str(e)}")
+        print(f"   📋 Exception Type: {type(e).__name__}")
+        import traceback
+        print(f"   📚 Traceback: {traceback.format_exc()}")
         
         # Try to send error message to user if possible
         try:
@@ -69,7 +88,9 @@ def sms_webhook():
                 error_response = "Sorry, I'm having technical difficulties. Please try again in a few minutes!"
                 app_instance.send_sms(from_number, error_response)
         except Exception as sms_error:
-            print(f"❌ Could not send error SMS: {sms_error}")
+            print(f"❌ ERROR SMS FAILED:")
+            print(f"   📱 SMS Error: {str(sms_error)}")
+            print(f"   📞 Target Number: {from_number}")
         
         return '', 500
 
