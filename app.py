@@ -22,11 +22,6 @@ def initialize_pangea():
         pangea_app = PangeaApp()
     return pangea_app
 
-@app.before_first_request
-def startup():
-    """Initialize on first request"""
-    initialize_pangea()
-
 @app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint"""
