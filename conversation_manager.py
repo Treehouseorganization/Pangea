@@ -431,7 +431,7 @@ Please provide these first, then you can pay."""
         
         message = analysis.get('original_message', '').lower()
         
-        if 'restaurant' in message or 'food' in message:
+        if 'restaurant' in message or 'food' in message or 'available' in message:
             return f"""Available restaurants:
 
 {chr(10).join(f'• **{restaurant}**' for restaurant in self.restaurants)}
@@ -474,6 +474,15 @@ Example: "I want Chipotle delivered to the library"
     
     async def _generate_dynamic_response(self, analysis: Dict, user_state: UserState) -> str:
         """Generate dynamic conversational response using LLM"""
+        
+        # Check for restaurant availability questions that might have been misclassified
+        message = analysis.get('original_message', '').lower()
+        if ('restaurant' in message and 'available' in message) or ('what restaurant' in message):
+            return f"""Available restaurants:
+
+{chr(10).join(f'• **{restaurant}**' for restaurant in self.restaurants)}
+
+Just tell me what you're craving! Example: "I want Chipotle at the library" """
         
         context_info = self._build_context_for_analysis(user_state)
         

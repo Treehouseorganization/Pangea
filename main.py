@@ -436,22 +436,53 @@ After payment, I'll coordinate your delivery!"""
                 return await self._schedule_delivery(user_state)
         else:
             print(f"            👥 Group order logic")
-            group_ready = await self._is_group_ready_for_delivery(user_state.group_id)
-            print(f"            📋 Group Ready: {group_ready}")
             
-            if group_ready and is_immediate:
-                print(f"            ⚡ Immediate group delivery - triggering now")
-                return await self._trigger_delivery_now(user_state)
-            elif group_ready and not is_immediate:
-                print(f"            🗓️ Scheduled group delivery - scheduling for later")
-                return await self._schedule_delivery(user_state)
+            # Get paid users count for sophisticated delivery logic
+            group_members = await self.memory_manager.get_group_members(user_state.group_id)
+            paid_users = [member for member in group_members if member.payment_requested_at is not None]
+            total_users = len(group_members)
+            
+            print(f"            📊 Group status: {len(paid_users)}/{total_users} paid")
+            
+            if len(paid_users) == total_users:
+                # Both users paid - proceed with delivery
+                if is_immediate:
+                    print(f"            ⚡ Both users paid - triggering immediate group delivery")
+                    return await self._trigger_delivery_now(user_state)
+                else:
+                    print(f"            🗓️ Both users paid - scheduling group delivery")
+                    return await self._schedule_delivery(user_state)
             else:
-                print(f"            ⏳ Waiting for other group members")
-                return {'status': 'waiting_for_group'}
+                # Only one user paid so far
+                if is_immediate:
+                    print(f"            ⏳ Immediate order - waiting for other user to pay")
+                    return {'status': 'waiting_for_group', 'message': 'Waiting for your group partner to pay'}
+                else:
+                    print(f"            ⏰ Scheduled order - setting up conditional delivery")
+                    return await self._schedule_conditional_delivery(user_state, paid_users)
     
     async def _handle_cancel_order(self, user_state: UserState, action_data: Dict) -> Dict:
-        """Handle order cancellation"""
-        # Clear order state
+        """Handle order cancellation with group member notification"""
+        
+        # If this was a group order, notify the other member they can continue solo
+        if user_state.group_id and not user_state.is_fake_match:
+            try:
+                group_members = await self.memory_manager.get_group_members(user_state.group_id)
+                other_members = [member for member in group_members if member.user_phone != user_state.user_phone]
+                
+                for other_member in other_members:
+                    # Silently convert their order to a fake match (solo order)
+                    other_member.is_fake_match = True
+                    other_member.group_size = 1
+                    other_member.group_id = f"solo_{other_member.user_phone}_{int(time.time())}"
+                    await self.memory_manager.save_user_state(other_member)
+                    
+                    print(f"✅ Silently converted {other_member.user_phone} to solo order: {other_member.group_id}")
+                    
+            except Exception as e:
+                print(f"⚠️ Error handling group cancellation: {e}")
+        
+        # Clear order state for canceling user
         user_state.stage = OrderStage.IDLE
         user_state.restaurant = None
         user_state.location = None
@@ -600,9 +631,22 @@ After payment, I'll coordinate your delivery!"""
             # Start background thread to trigger delivery
             def delayed_trigger():
                 time.sleep(delay_seconds)
-                # Re-get user state and trigger delivery
+                print(f"⏰ Timer expired! Triggering scheduled delivery for {user_state.user_phone}")
+                
+                # Create new event loop for this thread
                 import asyncio
-                asyncio.run(self._trigger_delivery_now(user_state))
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    # Re-get fresh user state and trigger delivery
+                    fresh_user_state = loop.run_until_complete(self.memory_manager.get_user_state(user_state.user_phone))
+                    result = loop.run_until_complete(self._trigger_delivery_now(fresh_user_state))
+                    print(f"✅ Scheduled delivery triggered successfully: {result}")
+                except Exception as e:
+                    print(f"❌ Scheduled delivery failed: {e}")
+                finally:
+                    loop.close()
             
             thread = threading.Thread(target=delayed_trigger)
             thread.daemon = True
@@ -616,6 +660,99 @@ After payment, I'll coordinate your delivery!"""
             
         except Exception as e:
             print(f"❌ Delivery scheduling error: {e}")
+            return {'status': 'error', 'error': str(e)}
+    
+    async def _schedule_conditional_delivery(self, user_state: UserState, paid_users: List) -> Dict:
+        """Schedule delivery but trigger solo if other user doesn't pay in time"""
+        
+        from pangea_uber_direct import parse_delivery_time
+        import pytz
+        import threading
+        import time
+        
+        try:
+            # Parse delivery time
+            scheduled_datetime = parse_delivery_time(user_state.delivery_time)
+            chicago_tz = pytz.timezone('America/Chicago')
+            
+            if scheduled_datetime.tzinfo is None:
+                scheduled_datetime = chicago_tz.localize(scheduled_datetime)
+            
+            current_time = datetime.now(chicago_tz)
+            delay_seconds = (scheduled_datetime - current_time).total_seconds()
+            
+            if delay_seconds <= 0:
+                # Time has passed - trigger solo for paid users only
+                print(f"⚡ Scheduled time passed - triggering solo delivery for paid users")
+                return await self._trigger_delivery_now(user_state)
+            
+            print(f"⏰ Setting up conditional delivery check in {delay_seconds} seconds")
+            
+            # Update state
+            user_state.stage = OrderStage.DELIVERY_SCHEDULED
+            
+            def conditional_trigger():
+                time.sleep(delay_seconds)
+                print(f"⏰ Checking conditional delivery for group {user_state.group_id}")
+                
+                # Create new event loop for this thread
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    # Re-check who has paid
+                    fresh_group_members = loop.run_until_complete(
+                        self.memory_manager.get_group_members(user_state.group_id)
+                    )
+                    current_paid_users = [
+                        member for member in fresh_group_members 
+                        if member.payment_requested_at is not None
+                    ]
+                    total_users = len(fresh_group_members)
+                    
+                    if len(current_paid_users) == total_users and len(current_paid_users) > 0:
+                        # Both paid - trigger group delivery
+                        print(f"✅ Both users paid - triggering group delivery")
+                        # Use first paid user as representative
+                        loop.run_until_complete(self._trigger_delivery_now(current_paid_users[0]))
+                    elif len(current_paid_users) > 0:
+                        # Only some paid - trigger solo delivery for paid users
+                        print(f"⚠️ Only {len(current_paid_users)} users paid - triggering solo delivery")
+                        
+                        # Send missed delivery messages to unpaid users
+                        all_users = [member.user_phone for member in fresh_group_members]
+                        paid_phones = [member.user_phone for member in current_paid_users]
+                        unpaid_users = [user for user in all_users if user not in paid_phones]
+                        
+                        for unpaid_user in unpaid_users:
+                            missed_message = "⏰ You missed your scheduled delivery because you didn't complete your payment in time. Your group partner's order was delivered without you. Reply 'ORDER' to start a new order! 🍴"
+                            print(f"📱 Sending missed delivery message to {unpaid_user}")
+                            self.send_sms(unpaid_user, missed_message)
+                        
+                        # Trigger delivery for paid users only
+                        loop.run_until_complete(self._trigger_delivery_now(current_paid_users[0]))
+                    else:
+                        # Nobody paid - no delivery
+                        print(f"❌ No users paid - no delivery triggered")
+                
+                except Exception as e:
+                    print(f"❌ Conditional delivery failed: {e}")
+                finally:
+                    loop.close()
+            
+            thread = threading.Thread(target=conditional_trigger)
+            thread.daemon = True
+            thread.start()
+            
+            return {
+                'status': 'conditional_scheduled',
+                'scheduled_time': scheduled_datetime.strftime('%I:%M %p'),
+                'message': f'Delivery will trigger at {scheduled_datetime.strftime("%I:%M %p")} for whoever has paid'
+            }
+            
+        except Exception as e:
+            print(f"❌ Conditional delivery scheduling error: {e}")
             return {'status': 'error', 'error': str(e)}
     
     def _schedule_delivery_notifications(self, delivery_data: Dict, delivery_result: Dict):
