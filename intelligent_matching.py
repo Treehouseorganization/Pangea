@@ -272,57 +272,68 @@ Return ONLY valid JSON."""
             return []
     
     def _query_potential_matches(self, restaurant: str, location: str, excluding_user: str) -> List[Dict]:
-        """Query database for potential matches"""
+        """Query database for potential matches using new user_states collection"""
         
         try:
-            # Get recent food requests (last 30 minutes)
+            # Get recent food requests (last 30 minutes) 
             import pytz
             chicago_tz = pytz.timezone('America/Chicago')
             cutoff_time = datetime.now(chicago_tz) - timedelta(minutes=30)
             
-            # Query user_sessions for food requests
-            sessions = self.db.collection('user_sessions')\
-                .where('session_type', '==', 'food_request')\
-                .where('current_food_request.restaurant', '==', restaurant)\
-                .where('current_food_request.location', '==', location)\
+            print(f"🔍 Querying user_states for matches: {restaurant} at {location}")
+            
+            # Query user_states for users waiting for matches
+            user_states = self.db.collection('user_states')\
+                .where('restaurant', '==', restaurant)\
+                .where('location', '==', location)\
+                .where('stage', '==', 'waiting_for_match')\
                 .get()
             
             matches = []
             
-            for session_doc in sessions:
-                session_data = session_doc.to_dict()
-                user_phone = session_data.get('user_phone')
+            for user_doc in user_states:
+                user_data = user_doc.to_dict()
+                user_phone = user_data.get('user_phone')
                 
                 # Skip self
                 if user_phone == excluding_user:
                     continue
                 
-                # Check if request is recent
-                food_request = session_data.get('current_food_request', {})
-                request_time = food_request.get('timestamp')
+                # Check if request is recent 
+                last_activity = user_data.get('last_activity')
                 
-                if request_time:
+                if last_activity:
+                    # Parse timestamp string if needed
+                    if isinstance(last_activity, str):
+                        try:
+                            last_activity = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                        except:
+                            continue
+                    
                     # Handle timezone comparison safely
-                    if hasattr(request_time, 'tzinfo') and request_time.tzinfo is not None:
-                        # request_time is timezone-aware, compare directly
-                        if request_time < cutoff_time:
+                    if hasattr(last_activity, 'tzinfo') and last_activity.tzinfo is not None:
+                        # last_activity is timezone-aware
+                        if last_activity < cutoff_time:
                             continue  # Too old
                     else:
-                        # request_time is timezone-naive, assume it's in Chicago time
-                        request_time_chicago = chicago_tz.localize(request_time)
-                        if request_time_chicago < cutoff_time:
+                        # last_activity is timezone-naive, assume Chicago time
+                        last_activity_chicago = chicago_tz.localize(last_activity)
+                        if last_activity_chicago < cutoff_time:
                             continue  # Too old
+                
+                print(f"   Found potential match: {user_phone} - {user_data.get('delivery_time', 'now')}")
                 
                 # Add to potential matches
                 matches.append({
                     'user_phone': user_phone,
                     'restaurant': restaurant,
                     'location': location,
-                    'delivery_time': food_request.get('delivery_time', 'now'),
-                    'request_time': request_time,
-                    'session_id': food_request.get('session_id')
+                    'delivery_time': user_data.get('delivery_time', 'now'),
+                    'request_time': last_activity,
+                    'user_state': user_data
                 })
             
+            print(f"🔍 Found {len(matches)} potential matches in user_states")
             return matches
             
         except Exception as e:

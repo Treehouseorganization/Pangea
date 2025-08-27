@@ -139,15 +139,17 @@ class PangeaApp:
             print(f"   🎯 Actions to Execute: {[a.get('type') for a in conversation_result.get('actions', [])]}")
             print(f"   🔄 State Updates: {list(conversation_result.get('state_updates', {}).keys())}")
             
+            # Update user state BEFORE executing actions
+            if conversation_result.get('state_updates'):
+                print(f"🔄 APPLYING STATE UPDATES: {conversation_result['state_updates']}")
+                self._update_user_state(user_state, conversation_result['state_updates'])
+                print(f"   After updates - Restaurant: {user_state.restaurant}, Location: {user_state.location}")
+            
             # Execute any triggered actions
             actions = conversation_result.get('actions', [])
             print(f"⚡ EXECUTING {len(actions)} ACTIONS...")
             action_results = await self._execute_actions(actions, user_state)
             print(f"   📋 Action Results: {[r.get('status') for r in action_results]}")
-            
-            # Update user state based on results
-            if conversation_result.get('state_updates'):
-                self._update_user_state(user_state, conversation_result['state_updates'])
             
             # Send response if provided
             response_message = conversation_result.get('response')
@@ -245,6 +247,17 @@ class PangeaApp:
     
     async def _handle_find_matches(self, user_state: UserState, action_data: Dict) -> Dict:
         """Handle finding matches using existing matching engine"""
+        # Apply extracted data from action to user state if missing
+        if action_data.get('restaurant') and not user_state.restaurant:
+            user_state.restaurant = action_data['restaurant']
+            print(f"         🔧 Applied restaurant from action data: {user_state.restaurant}")
+        if action_data.get('location') and not user_state.location:
+            user_state.location = action_data['location']
+            print(f"         🔧 Applied location from action data: {user_state.location}")
+        if action_data.get('delivery_time') and user_state.delivery_time == 'now':
+            user_state.delivery_time = action_data['delivery_time']
+            print(f"         🔧 Applied delivery_time from action data: {user_state.delivery_time}")
+        
         print(f"         🔍 FINDING MATCHES:")
         print(f"            🏪 Restaurant: {user_state.restaurant}")
         print(f"            📍 Location: {user_state.location}")
