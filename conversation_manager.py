@@ -82,7 +82,7 @@ POSSIBLE INTENTS:
 - provide_order_details: Giving order number/name/description
 - request_payment: Asking to pay (usually "pay" or "payment")
 - cancel_order: Wanting to cancel current order
-- ask_question: Questions about service/restaurants/process
+- ask_question: Questions about service/restaurants/process/options ("what restaurants", "which food", "what's available")
 - general_chat: Casual conversation
 
 Return JSON:
@@ -123,6 +123,9 @@ Be thorough and context-aware. Consider their current stage and conversation his
                     response_text = json_match.group()
             
             result = json.loads(response_text)
+            
+            # Add original message to result for response generation
+            result['original_message'] = message
             
             print(f"🧠 MESSAGE ANALYSIS COMPLETE:")
             print(f"   🎯 Intent: {result.get('primary_intent')} ({result.get('confidence', 'unknown')} confidence)")
@@ -476,8 +479,22 @@ Example: "I want Chipotle delivered to the library"
         """Generate dynamic conversational response using LLM"""
         
         # Check for restaurant availability questions that might have been misclassified
-        message = analysis.get('original_message', '').lower()
-        if ('restaurant' in message and 'available' in message) or ('what restaurant' in message):
+        original_message = analysis.get('original_message', '')
+        if not original_message:
+            # Extract from reasoning or other fields if needed
+            for key in ['reasoning', 'user_message']:
+                if key in analysis:
+                    original_message = str(analysis[key])
+                    break
+        
+        message_lower = original_message.lower()
+        restaurant_question_patterns = [
+            'what restaurant', 'which restaurant', 'restaurant available', 
+            'available restaurant', 'restaurant option', 'what food',
+            'which food', 'food available', 'what can i get', 'what options'
+        ]
+        
+        if any(pattern in message_lower for pattern in restaurant_question_patterns):
             return f"""Available restaurants:
 
 {chr(10).join(f'• **{restaurant}**' for restaurant in self.restaurants)}
@@ -530,7 +547,8 @@ Respond naturally as their food coordinator:"""
                 'extracted_info': {},
                 'missing_info': [],
                 'should_trigger_actions': ['cancel_order'],
-                'reasoning': 'Fallback cancellation detection'
+                'reasoning': 'Fallback cancellation detection',
+                'original_message': message
             }
         
         # Detect payment
@@ -541,7 +559,8 @@ Respond naturally as their food coordinator:"""
                 'extracted_info': {},
                 'missing_info': [],
                 'should_trigger_actions': ['request_payment'],
-                'reasoning': 'Fallback payment detection'
+                'reasoning': 'Fallback payment detection',
+                'original_message': message
             }
         
         # Detect food requests
@@ -554,7 +573,26 @@ Respond naturally as their food coordinator:"""
                 'extracted_info': {'restaurant': restaurant.title()},
                 'missing_info': ['location'],
                 'should_trigger_actions': [],
-                'reasoning': 'Fallback restaurant detection'
+                'reasoning': 'Fallback restaurant detection',
+                'original_message': message
+            }
+        
+        # Detect restaurant availability questions
+        restaurant_question_patterns = [
+            'what restaurant', 'which restaurant', 'restaurant available', 
+            'available restaurant', 'restaurant option', 'what food',
+            'which food', 'food available', 'what can i get', 'what options'
+        ]
+        
+        if any(pattern in message_lower for pattern in restaurant_question_patterns):
+            return {
+                'primary_intent': 'ask_question',
+                'confidence': 'high',
+                'extracted_info': {},
+                'missing_info': [],
+                'should_trigger_actions': [],
+                'reasoning': 'Fallback restaurant availability question detection',
+                'original_message': message
             }
         
         # Default to general conversation
@@ -564,7 +602,8 @@ Respond naturally as their food coordinator:"""
             'extracted_info': {},
             'missing_info': [],
             'should_trigger_actions': [],
-            'reasoning': 'Fallback default'
+            'reasoning': 'Fallback default',
+            'original_message': message
         }
     
     def _is_order_info_complete_from_analysis(self, analysis: Dict, user_state: UserState) -> bool:

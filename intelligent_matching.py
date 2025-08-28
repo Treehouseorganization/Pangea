@@ -486,9 +486,79 @@ Return ONLY valid JSON."""
             
             self.db.collection('active_groups').document(group_id).set(group_data)
             
+            # Schedule delivery for the specified time if not immediate
+            self._schedule_fake_match_delivery(group_data)
+            
             print(f"✅ Created fake match (solo order): {group_id}")
             return group_id
             
         except Exception as e:
             print(f"❌ Error creating fake match: {e}")
             return None
+    
+    def _schedule_fake_match_delivery(self, group_data: Dict):
+        """Schedule delivery for fake match at specified time"""
+        try:
+            delivery_time_str = group_data.get('delivery_time', 'now')
+            
+            # Skip scheduling for immediate delivery
+            immediate_words = ['now', 'asap', 'soon', 'immediately']
+            if any(word in delivery_time_str.lower() for word in immediate_words):
+                print(f"⏰ Fake match delivery time is immediate - no scheduling needed")
+                return
+            
+            # Import time parsing function
+            from pangea_uber_direct import parse_delivery_time
+            from delivery_coordinator import DeliveryCoordinator
+            
+            # Parse the delivery time
+            scheduled_time = parse_delivery_time(delivery_time_str)
+            print(f"⏰ Scheduling fake match delivery for: {scheduled_time.strftime('%I:%M %p on %B %d, %Y')}")
+            
+            # Create delivery data for the coordinator
+            delivery_data = {
+                'restaurant': group_data['restaurant'],
+                'location': group_data['location'],
+                'group_id': group_data['group_id'],
+                'members': group_data['members'],
+                'group_size': 1,
+                'is_fake_match': True,
+                'delivery_time': delivery_time_str,
+                'order_details': []  # Will be populated when user provides order info
+            }
+            
+            # Initialize delivery coordinator and schedule delivery
+            coordinator = DeliveryCoordinator(self.db)
+            
+            # Use asyncio to run the async method
+            import asyncio
+            import threading
+            
+            def schedule_delivery():
+                try:
+                    # Create new event loop for this thread
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # Schedule the delivery
+                    result = loop.run_until_complete(
+                        coordinator.schedule_delivery_for_time(delivery_data, scheduled_time)
+                    )
+                    
+                    if result.get('success'):
+                        print(f"✅ Fake match delivery scheduled successfully for {result.get('scheduled_time')}")
+                    else:
+                        print(f"❌ Failed to schedule fake match delivery: {result.get('error')}")
+                    
+                    loop.close()
+                    
+                except Exception as e:
+                    print(f"❌ Error in delivery scheduling thread: {e}")
+            
+            # Run scheduling in background thread
+            thread = threading.Thread(target=schedule_delivery)
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            print(f"❌ Error scheduling fake match delivery: {e}")
