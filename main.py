@@ -463,8 +463,9 @@ After payment, I'll coordinate your delivery!"""
                     print(f"            ⚡ Both users paid - triggering immediate group delivery")
                     return await self._trigger_delivery_now(user_state)
                 else:
-                    print(f"            🗓️ Both users paid - scheduling group delivery")
-                    return await self._schedule_delivery(user_state)
+                    # Both users paid - ALWAYS trigger delivery immediately (send tracking link 50s later)
+                    print(f"            ⚡ Both users paid - triggering immediate group delivery (tracking in 50s)")
+                    return await self._trigger_delivery_now(user_state)
             else:
                 # Only one user paid so far
                 if is_immediate:

@@ -220,6 +220,63 @@ def parse_delivery_time(time_str) -> datetime:
     print(f"⚠️ Could not parse time '{time_str}', defaulting to 30 minutes from now")
     return chicago_now + timedelta(minutes=30)
 
+def _get_intelligent_range_time(time_str: str, groups: tuple) -> Optional[datetime]:
+    """Use Claude AI to intelligently select time from a range"""
+    
+    try:
+        from langchain_anthropic import ChatAnthropic
+        
+        llm = ChatAnthropic(
+            model="claude-3-5-sonnet-20241022",
+            temperature=0.1,
+            max_tokens=200
+        )
+        
+        prompt = f"""A user requested food delivery '{time_str}'. This is a time range, not a specific time.
+
+For delivery scheduling, what would be the optimal time within this range? Consider:
+1. User likely wants delivery in the middle of their window, not at the earliest possible time
+2. Middle of range shows flexibility and consideration for coordination
+3. For "between 1:40pm and 2:00pm" - optimal time would be around 1:50pm
+
+Return ONLY the optimal time in format like "1:50 PM" or "2:15 PM"."""
+        
+        response = llm.invoke([{"role": "user", "content": prompt}])
+        suggested_time = response.content.strip()
+        
+        # Parse Claude's suggested time
+        import re
+        time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)', suggested_time)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            period = time_match.group(3).lower()
+            
+            # Convert to 24-hour format
+            if period == 'pm' and hour != 12:
+                hour += 12
+            elif period == 'am' and hour == 12:
+                hour = 0
+            
+            # Create target time
+            import pytz
+            chicago_tz = pytz.timezone('America/Chicago')
+            chicago_now = datetime.now(chicago_tz)
+            
+            target_time = chicago_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # If the time has passed today, schedule for tomorrow
+            if target_time <= chicago_now:
+                target_time += timedelta(days=1)
+                
+            print(f"🧠 Claude AI selected '{suggested_time}' from range '{time_str}'")
+            return target_time
+            
+    except Exception as e:
+        print(f"⚠️ Claude AI time selection failed: {e}")
+        
+    return None
+
 class UberDirectClient:
     """Uber Direct API client for Pangea food delivery"""
     

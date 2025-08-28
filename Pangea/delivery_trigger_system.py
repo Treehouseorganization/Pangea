@@ -42,10 +42,12 @@ class DeliveryTriggerSystem:
             restaurant = order_session.get('restaurant')
             group_size = order_session.get('group_size', 1)
             
-            # Mark user as paid
+            # Mark user as paid - sync BOTH payment tracking fields
             import pytz
             chicago_tz = pytz.timezone('America/Chicago')
-            order_session['payment_timestamp'] = datetime.now(chicago_tz)
+            now = datetime.now(chicago_tz)
+            order_session['payment_timestamp'] = now  # Pangea system field
+            order_session['payment_requested_at'] = now  # Main system field  
             order_session['order_stage'] = 'paid'
             
             # Update both session manager and order processor
@@ -53,8 +55,12 @@ class DeliveryTriggerSystem:
             self.session_manager.update_user_context(context)
             
             # Also update order_sessions collection for compatibility
-            from pangea_order_processor import update_order_session
-            update_order_session(user_phone, order_session)
+            try:
+                from pangea_order_processor import update_order_session
+                update_order_session(user_phone, order_session)
+            except ImportError:
+                # Fallback: update Firestore directly
+                self.db.collection('order_sessions').document(user_phone).set(order_session, merge=True)
             
             print(f"✅ Marked {user_phone} as paid for group {group_id}")
             
@@ -85,6 +91,53 @@ class DeliveryTriggerSystem:
                 'message': str(e)
             }
     
+    def _get_intelligent_group_time(self, delivery_times: List[tuple]) -> str:
+        """Use Claude AI to determine optimal delivery time for group"""
+        
+        try:
+            from langchain_anthropic import ChatAnthropic
+            
+            # Initialize Claude (you may need to adjust this based on your setup)
+            llm = ChatAnthropic(
+                model="claude-3-5-sonnet-20241022",
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            # Prepare time preferences for analysis
+            time_preferences = []
+            for user_phone, time_pref in delivery_times:
+                time_preferences.append(f"User {user_phone[-4:]}: wants delivery '{time_pref}'")
+            
+            prompt = f"""You are helping coordinate a group food delivery. Analyze these delivery time preferences and suggest the optimal time that works best for everyone:
+
+{chr(10).join(time_preferences)}
+
+Rules:
+1. If times are compatible (within 30 minutes), choose a time that works for both
+2. For time ranges like "between 1:40pm and 2:00pm", consider the MIDDLE of the range, not just the start
+3. Priority: exact matches > overlapping windows > closest times
+4. Be smart about time flexibility ("around 2pm" = 1:45-2:15pm window)
+
+Return ONLY the optimal time in a simple format like "2:00 PM" or "1:50 PM"."""
+            
+            response = llm.invoke([{"role": "user", "content": prompt}])
+            optimal_time = response.content.strip()
+            
+            # Clean up response to get just the time
+            import re
+            time_match = re.search(r'\d{1,2}:\d{2}\s*(AM|PM|am|pm)', optimal_time)
+            if time_match:
+                return time_match.group(0)
+            
+            # Fallback to first user's time if Claude response is unclear
+            return delivery_times[0][1] if delivery_times else 'now'
+            
+        except Exception as e:
+            print(f"❌ Error getting intelligent group time: {e}")
+            # Fallback: use first user's time
+            return delivery_times[0][1] if delivery_times else 'now'
+    
     def _handle_solo_order_payment(self, user_phone: str, group_id: str, delivery_time: str, order_session: Dict) -> Dict:
         """Handle payment for solo order (fake match)"""
         
@@ -112,18 +165,9 @@ class DeliveryTriggerSystem:
         print(f"📊 Group status: {len(paid_users)}/{total_users} paid")
         
         if len(paid_users) == total_users:
-            # Both users paid - calculate optimal group delivery time
-            optimal_delivery_time = self._calculate_group_delivery_time(group_id, paid_users)
-            print(f"🎯 Both users paid - calculated optimal delivery time: {optimal_delivery_time}")
-            
-            if optimal_delivery_time == 'now' or optimal_delivery_time in ['asap', 'soon', 'immediately']:
-                # Immediate delivery - trigger right away
-                print(f"🚚 Both users paid - triggering immediate group delivery")
-                return self._trigger_delivery_now(group_id, paid_users, order_session)
-            else:
-                # Scheduled delivery - set up timer
-                print(f"⏰ Both users paid - scheduling group delivery for {optimal_delivery_time}")
-                return self._schedule_delivery(group_id, paid_users, optimal_delivery_time, order_session)
+            # Both users paid - ALWAYS trigger delivery immediately (tracking notification 50s later)
+            print(f"🚚 Both users paid - triggering immediate group delivery")
+            return self._trigger_delivery_now(group_id, paid_users, order_session)
         
         else:
             # Only one user paid so far
@@ -145,7 +189,7 @@ class DeliveryTriggerSystem:
         try:
             paid_users = []
             
-            # Check order_sessions collection
+            # Check both payment_timestamp (Pangea system) and payment_requested_at (Main system)
             order_sessions = self.db.collection('order_sessions')\
                 .where('group_id', '==', group_id)\
                 .get()
@@ -154,8 +198,10 @@ class DeliveryTriggerSystem:
                 session_data = session_doc.to_dict()
                 user_phone = session_data.get('user_phone')
                 payment_timestamp = session_data.get('payment_timestamp')
+                payment_requested_at = session_data.get('payment_requested_at')
                 
-                if payment_timestamp:
+                # Consider user paid if EITHER field is set (fixes sync issue)
+                if payment_timestamp or payment_requested_at:
                     paid_users.append(user_phone)
                     print(f"   ✅ {user_phone} has paid")
                 else:
@@ -205,7 +251,7 @@ class DeliveryTriggerSystem:
             return 0
     
     def _calculate_group_delivery_time(self, group_id: str, paid_users: List[str]) -> str:
-        """Calculate optimal delivery time for group based on all users' preferences"""
+        """Calculate optimal delivery time for group using Claude AI"""
         
         try:
             delivery_times = []
@@ -227,11 +273,16 @@ class DeliveryTriggerSystem:
                 print(f"⚡ At least one user wants immediate delivery - choosing 'now'")
                 return 'now'
             
-            # For scheduled deliveries, find the optimal time
-            # For this version, use the first user's delivery time as the group time
+            # Use Claude AI to find optimal time for group
+            if len(delivery_times) >= 2:
+                optimal_time = self._get_intelligent_group_time(delivery_times)
+                print(f"🧠 Claude AI selected optimal group time: {optimal_time}")
+                return optimal_time
+            
+            # Single user fallback
             if delivery_times:
                 chosen_time = delivery_times[0][1]
-                print(f"🎯 Using {delivery_times[0][0]}'s delivery time as group time: {chosen_time}")
+                print(f"🎯 Single user time: {chosen_time}")
                 return chosen_time
             
             # Fallback
