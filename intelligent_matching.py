@@ -234,32 +234,23 @@ Return ONLY valid JSON."""
                     continue
                 
                 # Check if solo user is still in solo order process
-                try:
-                    from pangea_order_processor import get_user_order_session
-                    solo_session = get_user_order_session(solo_user_phone)
-                    
-                    if solo_session and solo_session.get('group_size') == 1:
-                        # Check time compatibility
-                        solo_delivery_time = group_data.get('delivery_time', 'now')
-                        
-                        # Quick compatibility check (can be more sophisticated)
-                        print(f"   🔍 Checking solo user {solo_user_phone}: {solo_delivery_time}")
-                        
-                        upgradeable_solos.append({
-                            'user_phone': solo_user_phone,
-                            'restaurant': restaurant,
-                            'location': location,
-                            'delivery_time': solo_delivery_time,
-                            'group_id': group_data.get('group_id'),
-                            'created_at': group_data.get('created_at'),
-                            'is_solo_upgrade': True
-                        })
-                        
-                        print(f"   ✅ Found upgradeable solo order: {solo_user_phone}")
-                        
-                except Exception as e:
-                    print(f"   ⚠️ Error checking solo session for {solo_user_phone}: {e}")
-                    continue
+                # Note: pangea_order_processor module removed, skipping solo session check
+                solo_delivery_time = group_data.get('delivery_time', 'now')
+                
+                # Quick compatibility check (can be more sophisticated)
+                print(f"   🔍 Checking solo user {solo_user_phone}: {solo_delivery_time}")
+                
+                upgradeable_solos.append({
+                    'user_phone': solo_user_phone,
+                    'restaurant': restaurant,
+                    'location': location,
+                    'delivery_time': solo_delivery_time,
+                    'group_id': group_data.get('group_id'),
+                    'created_at': group_data.get('created_at'),
+                    'is_solo_upgrade': True
+                })
+                
+                print(f"   ✅ Found upgradeable solo order: {solo_user_phone}")
             
             # Sort by creation time (most recent first)
             upgradeable_solos.sort(key=lambda x: x.get('created_at', datetime.min.replace(tzinfo=chicago_tz)), reverse=True)
@@ -297,6 +288,11 @@ Return ONLY valid JSON."""
                 
                 # Skip self
                 if user_phone == excluding_user:
+                    continue
+                
+                # ✅ NEW: Skip users who are unmatchable (abandoned)
+                if not self._is_user_matchable(user_data):
+                    print(f"   ⏭️ Skipping {user_phone}: inactive for >30 minutes")
                     continue
                 
                 # Check if request is recent 
@@ -339,6 +335,22 @@ Return ONLY valid JSON."""
         except Exception as e:
             print(f"❌ Error querying potential matches: {e}")
             return []
+    
+    def _is_user_matchable(self, user_data: Dict) -> bool:
+        """Check if user should be available for matching (prevents abandoned user matching)"""
+        try:
+            last_activity_str = user_data.get('last_activity')
+            if not last_activity_str:
+                return False
+            
+            last_activity = datetime.fromisoformat(last_activity_str)
+            
+            # Don't match users who haven't been active in 30 minutes
+            # (prevents matching with abandoned users)
+            return datetime.now() - last_activity <= timedelta(minutes=30)
+            
+        except Exception:
+            return False
     
     def _simple_time_compatibility(self, time1: str, time2: str) -> Dict:
         """Fallback simple time compatibility"""
@@ -440,22 +452,8 @@ Return ONLY valid JSON."""
             self.db.collection('active_groups').document(existing_group_id).update(group_data)
             
             # Update solo user's session silently (no notification)
-            try:
-                from pangea_order_processor import get_user_order_session, update_order_session
-                solo_session = get_user_order_session(solo_user_phone)
-                
-                if solo_session:
-                    # Upgrade from solo (group_size=1) to real group (group_size=2)
-                    solo_session['group_size'] = 2
-                    solo_session['silent_upgrade'] = True
-                    solo_session['upgraded_at'] = datetime.now()
-                    solo_session['real_partner'] = new_user_phone
-                    
-                    update_order_session(solo_user_phone, solo_session)
-                    print(f"✅ Silently upgraded solo user {solo_user_phone} session to 2-person group")
-                
-            except Exception as e:
-                print(f"❌ Error updating solo user session: {e}")
+            # Note: pangea_order_processor module removed, skipping session update
+            print(f"✅ Silent upgrade completed for user {solo_user_phone} (session update skipped)")
             
             print(f"✅ Silent upgrade completed: {existing_group_id}")
             return existing_group_id

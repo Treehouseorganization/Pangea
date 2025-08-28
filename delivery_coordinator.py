@@ -15,6 +15,74 @@ class DeliveryCoordinator:
     def __init__(self, db):
         self.db = db
     
+    async def _enhance_with_user_order_details(self, delivery_data: Dict) -> Dict:
+        """Fetch user order details from user_states and add to delivery data"""
+        try:
+            enhanced_data = delivery_data.copy()
+            members = delivery_data.get('members', [])
+            order_details = []
+            
+            print(f"   🔍 Fetching order details for {len(members)} members...")
+            
+            for member_phone in members:
+                try:
+                    # Get user state from database
+                    user_doc = self.db.collection('user_states').document(member_phone).get()
+                    
+                    if user_doc.exists:
+                        user_data = user_doc.to_dict()
+                        
+                        # Extract order information
+                        order_detail = {
+                            'user_phone': member_phone,
+                            'order_number': user_data.get('order_number', ''),
+                            'customer_name': user_data.get('customer_name', ''),
+                            'order_description': user_data.get('order_description', '')
+                        }
+                        
+                        # Only add if we have some order info
+                        if any([order_detail['order_number'], order_detail['customer_name'], order_detail['order_description']]):
+                            order_details.append(order_detail)
+                            print(f"   ✅ Found order for {member_phone}: {order_detail['customer_name']} - {order_detail['order_description']}")
+                        else:
+                            # Add placeholder if no details
+                            order_details.append({
+                                'user_phone': member_phone,
+                                'order_number': '',
+                                'customer_name': 'Student Order',
+                                'order_description': 'Order details not provided'
+                            })
+                            print(f"   ⚠️ No order details for {member_phone}, using placeholder")
+                    else:
+                        # User not found, add placeholder
+                        order_details.append({
+                            'user_phone': member_phone,
+                            'order_number': '',
+                            'customer_name': 'Student Order',
+                            'order_description': 'Order details not provided'
+                        })
+                        print(f"   ⚠️ User {member_phone} not found, using placeholder")
+                        
+                except Exception as e:
+                    print(f"   ❌ Error fetching details for {member_phone}: {e}")
+                    # Add placeholder for failed lookup
+                    order_details.append({
+                        'user_phone': member_phone,
+                        'order_number': '',
+                        'customer_name': 'Student Order',
+                        'order_description': 'Order details not available'
+                    })
+            
+            enhanced_data['order_details'] = order_details
+            print(f"   📊 Enhanced delivery data with {len(order_details)} order details")
+            
+            return enhanced_data
+            
+        except Exception as e:
+            print(f"   ❌ Error enhancing delivery data: {e}")
+            # Return original data if enhancement fails
+            return delivery_data
+    
     async def create_delivery(self, delivery_data: Dict) -> Dict:
         """Create delivery using existing Uber Direct integration"""
         try:
@@ -25,13 +93,17 @@ class DeliveryCoordinator:
             print(f"   📱 Members: {delivery_data.get('members', [])}")
             print(f"   🎯 Group ID: {delivery_data.get('group_id')}")
             
+            # ✅ FIX: Fetch real user order details from user_states
+            enhanced_delivery_data = await self._enhance_with_user_order_details(delivery_data)
+            print(f"   📋 Enhanced with order details: {enhanced_delivery_data.get('order_details', [])}")
+            
             # Import existing Uber Direct integration
             from pangea_uber_direct import create_group_delivery
             
             print(f"   🔗 Calling Uber Direct API...")
             
-            # Use existing delivery creation logic
-            result = create_group_delivery(delivery_data)
+            # Use existing delivery creation logic with enhanced data
+            result = create_group_delivery(enhanced_delivery_data)
             
             print(f"   📋 UBER DIRECT RESPONSE:")
             print(f"      Success: {result.get('success', False)}")

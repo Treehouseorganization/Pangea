@@ -162,17 +162,119 @@ class MemoryManager:
         )
     
     def _is_state_stale(self, state_data: Dict) -> bool:
-        """Check if state is stale (older than 3 hours)"""
+        """Expire only truly abandoned or completed states with smart scheduling support"""
         try:
             last_activity_str = state_data.get('last_activity')
             if not last_activity_str:
                 return True
+                
+            last_activity = datetime.fromisoformat(last_activity_str)
+            stage = state_data.get('stage', 'idle')
+            delivery_time = state_data.get('delivery_time', 'now')
+            
+            # Parse delivery time if scheduled
+            scheduled_time = self._parse_delivery_time(delivery_time)
+            
+            # Stage-specific expiration rules
+            if stage in ['idle']:
+                # Cleanup abandoned idle sessions quickly
+                return datetime.now() - last_activity > timedelta(hours=1)
+                
+            elif stage in ['requesting_food', 'collecting_order_info']:
+                # Users actively filling out order - short timeout
+                return datetime.now() - last_activity > timedelta(minutes=45)
+                
+            elif stage in ['waiting_for_match', 'matched', 'ready_to_pay', 'payment_pending', 'delivery_scheduled']:
+                # Active orders - expire only if delivery time passed
+                if scheduled_time and scheduled_time > datetime.now():
+                    return False  # Keep alive until delivery time
+                return datetime.now() - last_activity > timedelta(hours=2)
+                
+            elif stage in ['delivered']:
+                # Cleanup completed orders after 24 hours
+                return datetime.now() - last_activity > timedelta(hours=24)
+                
+        except Exception as e:
+            print(f"Error checking state staleness: {e}")
+            return True  # Default to stale on error
+    
+    def _parse_delivery_time(self, delivery_time: str) -> Optional[datetime]:
+        """Parse delivery time string into datetime object"""
+        try:
+            if not delivery_time or delivery_time.lower() in ['now', 'asap']:
+                return None
+                
+            import re
+            from datetime import datetime
+            import pytz
+            
+            # Handle common time formats
+            chicago_tz = pytz.timezone('America/Chicago')
+            today = datetime.now(chicago_tz).date()
+            
+            # Match patterns like "11:00 AM", "10:30am-11:00am", "3pm", etc.
+            time_patterns = [
+                r'(\d{1,2}):(\d{2})\s*(am|pm)',  # 11:00 AM
+                r'(\d{1,2})\s*(am|pm)',          # 11am
+                r'(\d{1,2}):(\d{2})',            # 11:00 (24h)
+            ]
+            
+            # Extract first time from delivery_time string
+            for pattern in time_patterns:
+                match = re.search(pattern, delivery_time.lower())
+                if match:
+                    if len(match.groups()) == 3:  # Hour:minute AM/PM
+                        hour = int(match.group(1))
+                        minute = int(match.group(2))
+                        ampm = match.group(3)
+                        
+                        if ampm == 'pm' and hour != 12:
+                            hour += 12
+                        elif ampm == 'am' and hour == 12:
+                            hour = 0
+                            
+                    elif len(match.groups()) == 2 and match.group(2) in ['am', 'pm']:  # Hour AM/PM
+                        hour = int(match.group(1))
+                        minute = 0
+                        ampm = match.group(2)
+                        
+                        if ampm == 'pm' and hour != 12:
+                            hour += 12
+                        elif ampm == 'am' and hour == 12:
+                            hour = 0
+                    else:  # 24h format
+                        hour = int(match.group(1))
+                        minute = int(match.group(2)) if len(match.groups()) > 1 else 0
+                    
+                    # Create datetime for today
+                    scheduled_dt = chicago_tz.localize(datetime.combine(today, datetime.min.time().replace(hour=hour, minute=minute)))
+                    
+                    # If time has passed today, assume tomorrow
+                    if scheduled_dt <= datetime.now(chicago_tz):
+                        scheduled_dt += timedelta(days=1)
+                    
+                    return scheduled_dt.astimezone().replace(tzinfo=None)  # Convert to local naive datetime
+                    
+        except Exception as e:
+            print(f"Error parsing delivery time '{delivery_time}': {e}")
+            
+        return None
+    
+    def _is_user_matchable(self, user_data: Dict) -> bool:
+        """Check if user should be available for matching (prevents abandoned user matching)"""
+        try:
+            last_activity_str = user_data.get('last_activity')
+            if not last_activity_str:
+                return False
             
             last_activity = datetime.fromisoformat(last_activity_str)
-            return datetime.now() - last_activity > timedelta(hours=3)
+            
+            # Don't match users who haven't been active in 30 minutes
+            # (prevents matching with abandoned users)
+            return datetime.now() - last_activity <= timedelta(minutes=30)
             
         except Exception:
-            return True
+            return False
     
     async def _update_group_membership(self, user_state: UserState):
         """Update group membership information"""
