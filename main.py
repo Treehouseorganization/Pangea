@@ -418,6 +418,31 @@ After payment, I'll coordinate your delivery!"""
         payment_sms_sent = self.send_sms(user_state.user_phone, payment_message)
         print(f"            📱 Payment SMS: {'✅ Sent' if payment_sms_sent else '❌ Failed'}")
         
+        # Save the updated user state before checking delivery trigger
+        await self.memory_manager.save_user_state(user_state)
+        
+        # CRITICAL FIX: Also sync payment data to order_sessions collection for delivery trigger system
+        try:
+            order_session_data = {
+                'user_phone': user_state.user_phone,
+                'group_id': user_state.group_id,
+                'restaurant': user_state.restaurant,
+                'location': user_state.location,
+                'delivery_time': user_state.delivery_time,
+                'customer_name': user_state.customer_name,
+                'order_number': user_state.order_number,
+                'order_description': user_state.order_description,
+                'payment_timestamp': payment_time,
+                'payment_requested_at': payment_time,
+                'order_stage': 'payment_pending',
+                'group_size': user_state.group_size,
+                'is_fake_match': user_state.is_fake_match
+            }
+            self.db.collection('order_sessions').document(user_state.user_phone).set(order_session_data, merge=True)
+            print(f"            📊 Synced payment data to order_sessions collection")
+        except Exception as e:
+            print(f"            ⚠️ Failed to sync to order_sessions: {e}")
+        
         # Check if delivery should be triggered
         should_trigger = await self._should_trigger_delivery_now(user_state)
         print(f"            🚚 Should trigger delivery now: {should_trigger}")
