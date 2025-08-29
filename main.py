@@ -550,12 +550,42 @@ After payment, I'll coordinate your delivery!"""
     
     async def _should_trigger_delivery_now(self, user_state: UserState) -> bool:
         """Determine if delivery should be triggered immediately"""
-        if user_state.is_fake_match:
-            # Solo order - only trigger if immediate
-            return user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
-        else:
-            # Group order - check if all members have paid
-            return await self._is_group_ready_for_delivery(user_state.group_id)
+        # CRITICAL FIX: Always check current group status from database, not user state
+        # This handles cases where user was upgraded from fake to real match
+        group_id = user_state.group_id
+        if not group_id:
+            return False
+            
+        try:
+            # Get current group info from database to check if it's still a fake match
+            group_doc = self.db.collection('active_groups').document(group_id).get()
+            if not group_doc.exists:
+                # Fall back to user state logic
+                if user_state.is_fake_match:
+                    return user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
+                else:
+                    return await self._is_group_ready_for_delivery(group_id)
+            
+            group_data = group_doc.to_dict()
+            current_is_fake_match = group_data.get('is_fake_match', False)
+            current_group_size = group_data.get('group_size', 1)
+            
+            print(f"            📊 Current group status: is_fake_match={current_is_fake_match}, size={current_group_size}")
+            
+            if current_is_fake_match:
+                # Still a solo order - only trigger if immediate
+                return user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
+            else:
+                # Real group order - check if all members have paid
+                return await self._is_group_ready_for_delivery(group_id)
+                
+        except Exception as e:
+            print(f"            ❌ Error checking group status: {e}")
+            # Fall back to original logic
+            if user_state.is_fake_match:
+                return user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
+            else:
+                return await self._is_group_ready_for_delivery(group_id)
     
     async def _is_group_ready_for_delivery(self, group_id: str) -> bool:
         """Check if all group members have paid"""
@@ -771,28 +801,47 @@ After payment, I'll coordinate your delivery!"""
     
     def _schedule_delivery_notifications(self, delivery_data: Dict, delivery_result: Dict):
         """Schedule delayed delivery notifications"""
+        print(f"📱 Scheduling delivery notifications in 50 seconds...")
+        print(f"   📦 Delivery ID: {delivery_result.get('delivery_id', 'N/A')}")
+        print(f"   👥 Recipients: {delivery_data.get('members', [])}")
+        
         def send_delayed_notifications():
-            time.sleep(50)  # 50-second delay
-            
-            restaurant = delivery_data.get('restaurant')
-            location = delivery_data.get('location')
-            tracking_url = delivery_result.get('tracking_url', '')
-            delivery_id = delivery_result.get('delivery_id', '')
-            
-            message = f"""🚚 Your {restaurant} delivery is on the way!
+            try:
+                print(f"⏱️ Starting 50-second notification delay...")
+                time.sleep(50)  # 50-second delay
+                
+                print(f"📬 Sending delivery notifications now!")
+                
+                restaurant = delivery_data.get('restaurant')
+                location = delivery_data.get('location')
+                tracking_url = delivery_result.get('tracking_url', '')
+                delivery_id = delivery_result.get('delivery_id', '')
+                
+                message = f"""🚚 Your {restaurant} delivery is on the way!
 
 📍 Delivery to: {location}
 📱 Track your order: {tracking_url}
 📦 Delivery ID: {delivery_id[:8]}...
 
-Your driver will contact you when they arrive!"""
-            
-            for member_phone in delivery_data.get('members', []):
-                self.send_sms(member_phone, message)
+Your driver will contact you when they arrive! 🎉"""
+                
+                for member_phone in delivery_data.get('members', []):
+                    try:
+                        success = self.send_sms(member_phone, message)
+                        if success:
+                            print(f"✅ Sent delivery notification to {member_phone}")
+                        else:
+                            print(f"❌ Failed to send delivery notification to {member_phone}")
+                    except Exception as e:
+                        print(f"❌ Error sending notification to {member_phone}: {e}")
+                        
+            except Exception as e:
+                print(f"❌ Error in delayed notifications: {e}")
         
         thread = threading.Thread(target=send_delayed_notifications)
         thread.daemon = True
         thread.start()
+        print(f"⏰ Scheduled delivery notifications for 50 seconds")
 
 # Note: Flask routes moved to app.py to avoid conflicts
 # This file now only contains the PangeaApp class for import

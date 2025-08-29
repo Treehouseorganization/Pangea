@@ -502,13 +502,19 @@ Return ONLY valid JSON."""
                 }
                 self.db.collection('order_sessions').document(new_user_phone).set(new_user_session, merge=True)
                 
-                # Update existing solo user's order session
+                # Update existing solo user's order session (use set with merge to create if doesn't exist)
                 solo_user_session_updates = {
+                    'user_phone': solo_user_phone,
+                    'group_id': existing_group_id,
+                    'restaurant': restaurant,
+                    'location': location,
                     'group_size': 2,
                     'is_fake_match': False,  # CRITICAL: No longer fake
+                    'order_stage': 'matched',
+                    'created_at': now,
                     'last_updated': now
                 }
-                self.db.collection('order_sessions').document(solo_user_phone).update(solo_user_session_updates)
+                self.db.collection('order_sessions').document(solo_user_phone).set(solo_user_session_updates, merge=True)
                 
                 print(f"✅ Created/updated order_sessions for both users")
             except Exception as e:

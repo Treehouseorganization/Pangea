@@ -606,9 +606,12 @@ Your driver will contact you when they arrive! 🎉"""
             # Send to all group members
             for user_phone in delivery_data.get('members', []):
                 try:
-                    from pangea_main import send_friendly_message
-                    send_friendly_message(user_phone, message, message_type="delivery_notification")
-                    print(f"✅ Sent delivery notification to {user_phone}")
+                    # Use the send_sms method from the initialized send_message_func
+                    if self.send_friendly_message:
+                        self.send_friendly_message(user_phone, message)
+                        print(f"✅ Sent delivery notification to {user_phone}")
+                    else:
+                        print(f"⚠️ No send_message function available for {user_phone}")
                 except Exception as e:
                     print(f"❌ Failed to send notification to {user_phone}: {e}")
         
