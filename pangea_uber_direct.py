@@ -725,21 +725,21 @@ class UberDirectClient:
     def _notify_group_about_delivery(self, group_data: Dict, delivery_data: Dict):
         """Notify all group members about delivery status"""
         
-        # FIX: Suppress immediate notification - only delayed notification will be sent
-        print(f"🕐 Suppressing immediate delivery notification - only delayed notification will be sent")
-        return
-        
-        # Check if this is a scheduled delivery that hasn't started yet
+        # Check if this is a fake match delivery
+        is_fake_match = group_data.get('is_fake_match', False) or group_data.get('status') == 'fake_match'
         delivery_time_str = group_data.get('delivery_time', 'now')
-        if delivery_time_str != 'now':
-            scheduled_time = parse_delivery_time(delivery_time_str)
-            chicago_tz = pytz.timezone('America/Chicago')
-            current_time = datetime.now(chicago_tz)
-            
-            # If delivery is scheduled for the future, don't send immediate notifications
-            if scheduled_time > current_time + timedelta(minutes=10):
-                print(f"🕐 Suppressing immediate delivery notification for scheduled delivery at {scheduled_time.strftime('%I:%M %p')}")
-                return
+        
+        if is_fake_match and delivery_time_str != 'now':
+            # For fake match scheduled deliveries, suppress immediate notification
+            # Notifications will be sent when the scheduled delivery actually happens
+            print(f"🕐 Suppressing immediate notification for fake match scheduled delivery - will notify at delivery time")
+            return
+        elif not is_fake_match and delivery_time_str != 'now':
+            # For real matched scheduled deliveries, send confirmation notification immediately
+            print(f"📅 Sending confirmation notification for real matched scheduled delivery")
+        else:
+            # For immediate deliveries (both fake and real matches), send notification
+            print(f"🚚 Sending notification for immediate delivery")
         
         restaurant = group_data.get('restaurant', 'your restaurant')
         location = group_data.get('location', 'your location')
