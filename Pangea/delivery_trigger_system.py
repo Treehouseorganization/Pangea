@@ -161,8 +161,12 @@ Return ONLY the optimal time in a simple format like "2:00 PM" or "1:50 PM"."""
         # Get all users in this group who have paid
         paid_users = self._get_paid_users_in_group(group_id)
         total_users = self._get_total_users_in_group(group_id)
+        all_users = self._get_all_users_in_group(group_id)
         
         print(f"📊 Group status: {len(paid_users)}/{total_users} paid")
+        print(f"🔍 Debug - All users in group: {all_users}")
+        print(f"🔍 Debug - Paid users: {paid_users}")
+        print(f"🔍 Debug - Expected group size should be 2 for real matches")
         
         if len(paid_users) == total_users:
             # Both users paid - ALWAYS trigger delivery immediately (tracking notification 50s later)

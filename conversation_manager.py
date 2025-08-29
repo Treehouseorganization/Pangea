@@ -226,6 +226,9 @@ Recent conversation:
         if intent == 'new_food_request':
             if extracted_info.get('restaurant') and extracted_info.get('location'):
                 updates['stage'] = OrderStage.WAITING_FOR_MATCH
+                # Clear any stale payment timestamps from previous orders
+                updates['payment_timestamp'] = None
+                updates['payment_requested_at'] = None
             else:
                 updates['stage'] = OrderStage.REQUESTING_FOOD
         
