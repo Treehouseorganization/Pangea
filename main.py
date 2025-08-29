@@ -401,7 +401,7 @@ Time to order!"""
         payment_time = datetime.now()
         user_state.payment_requested_at = payment_time
         user_state.payment_timestamp = payment_time  # Also set payment_timestamp to mark as paid
-        user_state.stage = OrderStage.PAID
+        user_state.stage = OrderStage.PAYMENT_PENDING
         
         print(f"            🔗 Generated payment link: {payment_link}")
         
