@@ -169,23 +169,17 @@ Return ONLY the optimal time in a simple format like "2:00 PM" or "1:50 PM"."""
         print(f"🔍 Debug - Expected group size should be 2 for real matches")
         
         if len(paid_users) == total_users:
-            # Both users paid - ALWAYS trigger delivery immediately (tracking notification 50s later)
-            print(f"🚚 Both users paid - triggering immediate group delivery")
+            # Both users paid - ALWAYS trigger delivery immediately regardless of scheduled time
+            print(f"🚚 Both users paid - triggering immediate group delivery (ignoring scheduled time)")
             return self._trigger_delivery_now(group_id, paid_users, order_session)
         
         else:
             # Only one user paid so far
-            if delivery_time == 'now' or delivery_time in ['asap', 'soon', 'immediately']:
-                # Immediate delivery but waiting for other user
-                print(f"⏳ Immediate order - waiting for other user to pay")
-                return {
-                    'status': 'waiting',
-                    'message': 'Waiting for your group partner to pay'
-                }
-            else:
-                # Scheduled delivery - set up conditional timer
-                print(f"⏰ Scheduled order - setting up conditional timer")
-                return self._schedule_conditional_delivery(group_id, paid_users, delivery_time, order_session)
+            print(f"⏳ Only {len(paid_users)}/{total_users} paid - waiting for other user")
+            return {
+                'status': 'waiting',
+                'message': 'Waiting for your group partner to pay'
+            }
     
     def _get_paid_users_in_group(self, group_id: str) -> List[str]:
         """Get list of users who have paid in this group"""

@@ -443,7 +443,7 @@ Return ONLY valid JSON."""
                 'status': 'active',
                 'created_at': datetime.now(),
                 'group_size': 2,
-                'is_fake_match': False,  # No longer fake
+                'is_fake_match': False,  # No longer fake - CRITICAL FIX
                 'silent_upgrade': True,
                 'upgraded_at': datetime.now(),
                 'original_solo_user': solo_user_phone
@@ -451,9 +451,68 @@ Return ONLY valid JSON."""
             
             self.db.collection('active_groups').document(existing_group_id).update(group_data)
             
-            # Update solo user's session silently (no notification)
-            # Note: pangea_order_processor module removed, skipping session update
-            print(f"✅ Silent upgrade completed for user {solo_user_phone} (session update skipped)")
+            # FIX: Create user_states entry for new user with correct group info
+            try:
+                new_user_data = {
+                    'user_phone': new_user_phone,
+                    'group_id': existing_group_id,
+                    'restaurant': restaurant,
+                    'location': location,
+                    'delivery_time': optimal_time,
+                    'stage': 'matched',
+                    'group_size': 2,
+                    'is_fake_match': False,  # CRITICAL: Mark as real match
+                    'last_activity': datetime.now().isoformat()
+                }
+                self.db.collection('user_states').document(new_user_phone).set(new_user_data, merge=True)
+                print(f"✅ Created user_states entry for new user {new_user_phone}")
+            except Exception as e:
+                print(f"❌ Failed to create user_states for new user: {e}")
+            
+            # FIX: Update solo user's state to reflect real group (no longer fake)
+            try:
+                solo_user_updates = {
+                    'group_id': existing_group_id,
+                    'group_size': 2,
+                    'is_fake_match': False,  # CRITICAL: No longer fake match
+                    'last_activity': datetime.now().isoformat()
+                }
+                self.db.collection('user_states').document(solo_user_phone).update(solo_user_updates)
+                print(f"✅ Updated solo user {solo_user_phone} state to real group")
+            except Exception as e:
+                print(f"❌ Failed to update solo user state: {e}")
+            
+            # FIX: Create order_sessions entries for BOTH users to ensure delivery includes both
+            try:
+                import pytz
+                chicago_tz = pytz.timezone('America/Chicago')
+                now = datetime.now(chicago_tz)
+                
+                # Create order session for new user
+                new_user_session = {
+                    'user_phone': new_user_phone,
+                    'group_id': existing_group_id,
+                    'restaurant': restaurant,
+                    'location': location,
+                    'group_size': 2,
+                    'is_fake_match': False,  # CRITICAL
+                    'order_stage': 'matched',
+                    'created_at': now,
+                    'last_updated': now
+                }
+                self.db.collection('order_sessions').document(new_user_phone).set(new_user_session, merge=True)
+                
+                # Update existing solo user's order session
+                solo_user_session_updates = {
+                    'group_size': 2,
+                    'is_fake_match': False,  # CRITICAL: No longer fake
+                    'last_updated': now
+                }
+                self.db.collection('order_sessions').document(solo_user_phone).update(solo_user_session_updates)
+                
+                print(f"✅ Created/updated order_sessions for both users")
+            except Exception as e:
+                print(f"❌ Failed to create order_sessions: {e}")
             
             print(f"✅ Silent upgrade completed: {existing_group_id}")
             return existing_group_id

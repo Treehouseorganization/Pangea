@@ -83,6 +83,41 @@ class DeliveryCoordinator:
             # Return original data if enhancement fails
             return delivery_data
     
+    async def _sync_group_status(self, delivery_data: Dict) -> Dict:
+        """Sync group status from database to fix notification issues"""
+        try:
+            group_id = delivery_data.get('group_id')
+            if not group_id:
+                return delivery_data
+            
+            # Get current group status from active_groups collection
+            group_doc = self.db.collection('active_groups').document(group_id).get()
+            if group_doc.exists:
+                group_data = group_doc.to_dict()
+                
+                # Update delivery data with current group status
+                current_is_fake_match = group_data.get('is_fake_match', False)
+                current_group_size = group_data.get('group_size', 1)
+                
+                # CRITICAL FIX: Use current database values, not original delivery_data
+                delivery_data['is_fake_match'] = current_is_fake_match
+                delivery_data['group_size'] = current_group_size
+                
+                print(f"   🔄 Synced group status: is_fake_match={current_is_fake_match}, group_size={current_group_size}")
+                
+                # If group was upgraded from fake to real, ensure we have all members
+                if not current_is_fake_match and current_group_size == 2:
+                    current_members = group_data.get('members', [])
+                    if len(current_members) == 2:
+                        delivery_data['members'] = current_members
+                        print(f"   👥 Updated members list: {current_members}")
+            
+            return delivery_data
+            
+        except Exception as e:
+            print(f"   ❌ Error syncing group status: {e}")
+            return delivery_data
+    
     async def create_delivery(self, delivery_data: Dict) -> Dict:
         """Create delivery using existing Uber Direct integration"""
         try:
@@ -96,6 +131,9 @@ class DeliveryCoordinator:
             # ✅ FIX: Fetch real user order details from user_states
             enhanced_delivery_data = await self._enhance_with_user_order_details(delivery_data)
             print(f"   📋 Enhanced with order details: {enhanced_delivery_data.get('order_details', [])}")
+            
+            # ✅ FIX: Get current group status to fix notification issue
+            enhanced_delivery_data = await self._sync_group_status(enhanced_delivery_data)
             
             # Import existing Uber Direct integration
             from pangea_uber_direct import create_group_delivery
