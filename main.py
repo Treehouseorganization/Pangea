@@ -397,9 +397,11 @@ Time to order!"""
         }
         payment_link = payment_links.get(user_state.group_size, payment_links[1])
         
-        # Update state
-        user_state.payment_requested_at = datetime.now()
-        user_state.stage = OrderStage.PAYMENT_PENDING
+        # Update state - mark user as paid immediately when they request payment
+        payment_time = datetime.now()
+        user_state.payment_requested_at = payment_time
+        user_state.payment_timestamp = payment_time  # Also set payment_timestamp to mark as paid
+        user_state.stage = OrderStage.PAID
         
         print(f"            🔗 Generated payment link: {payment_link}")
         
@@ -420,8 +422,10 @@ After payment, I'll coordinate your delivery!"""
         should_trigger = await self._should_trigger_delivery_now(user_state)
         print(f"            🚚 Should trigger delivery now: {should_trigger}")
         if should_trigger:
-            print(f"            ⚡ Triggering delivery immediately...")
-            await self._handle_trigger_delivery(user_state, {})
+            print(f"            🚚 Triggering delivery immediately...")
+            result = await self._trigger_delivery_now(user_state)
+            print(f"            ⏰ Scheduling notifications for 50 seconds...")
+            self._schedule_delayed_notifications(user_state, result)
         
         return {
             'status': 'payment_requested',
@@ -597,7 +601,7 @@ After payment, I'll coordinate your delivery!"""
             group_members = await self.memory_manager.get_group_members(group_id)
             paid_members = [
                 member for member in group_members 
-                if member.payment_requested_at is not None
+                if member.payment_requested_at is not None or member.payment_timestamp is not None
             ]
             
             return len(paid_members) == len(group_members) and len(paid_members) > 0
@@ -640,14 +644,86 @@ After payment, I'll coordinate your delivery!"""
                     member.stage = OrderStage.DELIVERED
                     await self.memory_manager.save_user_state(member)
                 
-                # Schedule delivery notifications
-                self._schedule_delivery_notifications(delivery_data, result)
+                # Don't schedule notifications here - they will be scheduled separately with delay
             
             return result
             
         except Exception as e:
             print(f"❌ Delivery trigger error: {e}")
             return {'status': 'error', 'error': str(e)}
+    
+    def _schedule_delayed_notifications(self, user_state: UserState, delivery_result: Dict):
+        """Schedule delivery notifications with 50-second delay to simulate payment processing"""
+        import threading
+        
+        print(f"         📱 SCHEDULING DELAYED NOTIFICATIONS:")
+        print(f"            👥 Group ID: {user_state.group_id}")
+        print(f"            ⏰ Adding 50-second delay before sending notifications")
+        
+        def delayed_notifications():
+            """Send notifications after delay in background thread"""
+            import time
+            print(f"            🕒 Starting 50-second notification delay...")
+            time.sleep(50)
+            print(f"            📱 Delay complete - sending delivery notifications now!")
+            
+            try:
+                # Build delivery data for notifications
+                delivery_data = {
+                    'restaurant': user_state.restaurant,
+                    'location': user_state.location,
+                    'group_id': user_state.group_id,
+                    'members': [user_state.user_phone]  # Will be expanded to all group members
+                }
+                
+                # Get all group members if it's not a fake match
+                if not user_state.is_fake_match:
+                    # Create a new event loop for async operations
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        group_members = loop.run_until_complete(self.memory_manager.get_group_members(user_state.group_id))
+                        delivery_data['members'] = [member.user_phone for member in group_members]
+                    finally:
+                        loop.close()
+                
+                # Send notifications using existing method
+                self._send_delivery_notifications_now(delivery_data, delivery_result)
+                
+            except Exception as e:
+                print(f"            ❌ Error in delayed notifications: {e}")
+        
+        # Start background thread for delayed notifications
+        thread = threading.Thread(target=delayed_notifications)
+        thread.daemon = True
+        thread.start()
+    
+    def _send_delivery_notifications_now(self, delivery_data: Dict, delivery_result: Dict):
+        """Send delivery notifications immediately"""
+        restaurant = delivery_data.get('restaurant')
+        location = delivery_data.get('location')
+        tracking_url = delivery_result.get('tracking_url', '')
+        delivery_id = delivery_result.get('delivery_id', '')
+        
+        message = f"""🚚 Your {restaurant} delivery is on the way!
+
+📍 Delivery to: {location}
+📱 Track your order: {tracking_url}
+📦 Delivery ID: {delivery_id[:8]}...
+
+Your driver will contact you when they arrive! 🎉"""
+        
+        # Send to all group members
+        for user_phone in delivery_data.get('members', []):
+            try:
+                success = self.send_sms(user_phone, message)
+                if success:
+                    print(f"            ✅ Sent delivery notification to {user_phone}")
+                else:
+                    print(f"            ❌ Failed to send notification to {user_phone}")
+            except Exception as e:
+                print(f"            ❌ Failed to send notification to {user_phone}: {e}")
     
     async def _schedule_delivery(self, user_state: UserState) -> Dict:
         """Schedule delivery for specific time"""

@@ -45,6 +45,7 @@ class UserState:
     
     # Payment tracking
     payment_requested_at: Optional[datetime] = None
+    payment_timestamp: Optional[datetime] = None
     payment_amount: str = "$3.50"
     
     # Conversation memory
