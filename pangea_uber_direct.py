@@ -757,7 +757,21 @@ The driver will meet you at the delivery location. I'll send updates as your ord
                 if 'send_friendly_message' in globals():
                     send_friendly_message(member_phone, message, message_type="delivery_started")
                 else:
-                    print(f"📱 Would send to {member_phone}: {message}")
+                    # Send SMS directly using Twilio
+                    try:
+                        from twilio.rest import Client
+                        import os
+                        
+                        client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+                        sms = client.messages.create(
+                            body=message,
+                            from_=os.getenv('TWILIO_PHONE_NUMBER'),
+                            to=member_phone
+                        )
+                        print(f"✅ SMS sent to {member_phone}: {sms.sid}")
+                    except Exception as sms_e:
+                        print(f"❌ Failed to send SMS to {member_phone}: {sms_e}")
+                        print(f"📱 Would send to {member_phone}: {message}")
             except Exception as e:
                 print(f"❌ Failed to notify {member_phone}: {e}")
 
@@ -891,7 +905,21 @@ The driver will meet you at the delivery location. I'll send updates as your ord
                 if 'send_friendly_message' in globals():
                     send_friendly_message(member_phone, message, message_type="delivery_update")
                 else:
-                    print(f"📱 Would send to {member_phone}: {message}")
+                    # Send SMS directly using Twilio
+                    try:
+                        from twilio.rest import Client
+                        import os
+                        
+                        client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+                        sms = client.messages.create(
+                            body=message,
+                            from_=os.getenv('TWILIO_PHONE_NUMBER'),
+                            to=member_phone
+                        )
+                        print(f"✅ SMS sent to {member_phone}: {sms.sid}")
+                    except Exception as sms_e:
+                        print(f"❌ Failed to send SMS to {member_phone}: {sms_e}")
+                        print(f"📱 Would send to {member_phone}: {message}")
             except Exception as e:
                 print(f"❌ Failed to notify {member_phone}: {e}")
 

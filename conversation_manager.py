@@ -232,7 +232,7 @@ Recent conversation:
             else:
                 updates['stage'] = OrderStage.REQUESTING_FOOD
         
-        elif intent == 'provide_order_details':
+        elif intent == 'provide_order_details' or intent == 'modify_request':
             if user_state.stage in [OrderStage.MATCHED, OrderStage.COLLECTING_ORDER_INFO]:
                 # Check if order info is now complete
                 has_identifier = (extracted_info.get('order_number') or 
@@ -263,7 +263,7 @@ Recent conversation:
         if intent == 'new_food_request':
             return self._generate_food_request_response(analysis, user_state, missing_info)
         
-        elif intent == 'provide_order_details':
+        elif intent == 'provide_order_details' or intent == 'modify_request':
             return self._generate_order_details_response(analysis, user_state, missing_info)
         
         elif intent == 'request_payment':
