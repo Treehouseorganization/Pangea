@@ -735,10 +735,17 @@ class UberDirectClient:
             print(f"🕐 Suppressing immediate notification for fake match scheduled delivery - will notify at delivery time")
             return
         elif not is_fake_match and delivery_time_str != 'now':
-            # For real matched scheduled deliveries, send confirmation notification immediately
-            print(f"📅 Sending confirmation notification for real matched scheduled delivery")
+            # ✅ MCDONALD'S BUG FIX: For real matched scheduled deliveries, suppress immediate notifications
+            # Only send delayed notifications that are handled separately
+            print(f"🚫 SCHEDULED GROUP ORDER: Suppressing immediate notifications - only delayed notifications will be sent")
+            return
+        elif is_fake_match and delivery_time_str == 'now':
+            # ✅ CHIPOTLE BUG FIX: For immediate solo fake match orders, suppress immediate notifications
+            # Only send delayed notifications
+            print(f"🚫 IMMEDIATE SOLO ORDER: Suppressing immediate notifications - only delayed notifications will be sent")
+            return
         else:
-            # For immediate deliveries (both fake and real matches), send notification
+            # For immediate deliveries of real matches, send notification
             print(f"🚚 Sending notification for immediate delivery")
         
         restaurant = group_data.get('restaurant', 'your restaurant')

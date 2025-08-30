@@ -605,7 +605,14 @@ After payment, I'll coordinate your delivery!"""
                 # Still a solo order - only trigger if immediate
                 return user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
             else:
-                # Real group order - check if all members have paid
+                # ✅ MCDONALD'S BUG FIX: For real group orders, never trigger immediate delivery for scheduled orders
+                # Only trigger immediate delivery if it's a "right now" order
+                is_immediate_delivery = user_state.delivery_time in ['now', 'asap', 'soon', 'immediately']
+                if not is_immediate_delivery:
+                    print(f"            🚫 SCHEDULED GROUP ORDER: Preventing immediate delivery creation - will create at scheduled time only")
+                    return False
+                
+                # Real group order with immediate delivery - check if all members have paid
                 return await self._is_group_ready_for_delivery(group_id)
                 
         except Exception as e:
