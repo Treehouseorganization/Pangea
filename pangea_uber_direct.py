@@ -730,14 +730,38 @@ class UberDirectClient:
         delivery_time_str = group_data.get('delivery_time', 'now')
         
         if is_fake_match and delivery_time_str != 'now':
-            # For fake match scheduled deliveries, suppress immediate notification
-            # Notifications will be sent when the scheduled delivery actually happens
-            print(f"🕐 Suppressing immediate notification for fake match scheduled delivery - will notify at delivery time")
-            return
+            # Check if this is being called at the actual delivery time vs early
+            from datetime import datetime
+            import pytz
+            
+            try:
+                chicago_tz = pytz.timezone('America/Chicago')
+                current_time = datetime.now(chicago_tz)
+                scheduled_time = parse_delivery_time(delivery_time_str)
+                
+                if scheduled_time.tzinfo is None:
+                    scheduled_time = chicago_tz.localize(scheduled_time)
+                
+                # If current time is at or after scheduled time, allow notification
+                if current_time >= scheduled_time:
+                    print(f"🕐 Scheduled delivery time reached for fake match - sending notification")
+                    # Continue to send notification
+                else:
+                    # For fake match scheduled deliveries, suppress immediate notification
+                    print(f"🕐 Suppressing immediate notification for fake match scheduled delivery - will notify at delivery time")
+                    return
+            except Exception as e:
+                print(f"⚠️ Error parsing scheduled time, suppressing notification: {e}")
+                return
         elif not is_fake_match and delivery_time_str != 'now':
             # ✅ MCDONALD'S BUG FIX: For real matched scheduled deliveries, suppress immediate notifications
             # Only send delayed notifications that are handled separately
             print(f"🚫 SCHEDULED GROUP ORDER: Suppressing immediate notifications - only delayed notifications will be sent")
+            return
+        elif not is_fake_match and len(group_data.get('members', [])) == 2:
+            # ✅ FIX: For 2-person upgraded deliveries, suppress immediate notifications
+            # Only send delayed notifications (50-second delay)
+            print(f"🚫 2-PERSON UPGRADED DELIVERY: Suppressing immediate notifications - only delayed notifications will be sent")
             return
         elif is_fake_match and delivery_time_str == 'now':
             # ✅ CHIPOTLE BUG FIX: For immediate solo fake match orders, suppress immediate notifications
