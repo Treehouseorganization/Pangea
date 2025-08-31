@@ -6,9 +6,9 @@ RESTAURANTS = {
         "lng": -87.6410,
     },
     "McDonald's": {
-        "address": "2315 W Ogden Ave, Chicago, IL 60608",
-        "lat": 41.8630,
-        "lng": -87.6861,
+        "address": "809 Plainfield Rd, Darien, IL 60561, United States",
+        "lat": 41.7525126,
+        "lng": -87.9648599,
     },
     "Chick-fil-A": {
         "address": "1106 S Clinton St, Chicago, IL 60607",
@@ -57,6 +57,11 @@ DROPOFFS = {
         "address": "601 S Morgan St, Chicago, IL 60607",
         "lat": 41.8742,
         "lng": -87.6518,
+    },
+    "Extended Stay America": {
+        "address": "15 W 122 S Frontage Rd, Burr Ridge, IL 60527",
+        "lat": 41.724254,
+        "lng": -87.936991,
     },
 }
 
