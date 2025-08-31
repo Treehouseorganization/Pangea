@@ -591,7 +591,7 @@ class UberDirectClient:
         # ✅ UPDATED: Using your actual restaurant addresses
         restaurant_addresses = {
             "Chipotle": "1132 S Clinton St, Chicago, IL 60607",
-            "McDonald's": "2315 W Ogden Ave, Chicago, IL 60608", 
+            "McDonald's": "809 Plainfield Rd, Darien, IL 60561", 
             "Chick-fil-A": "1106 S Clinton St, Chicago, IL 60607",
             "Portillo's": "520 W Taylor St, Chicago, IL 60607",
             "Starbucks": "1430 W Taylor St, Chicago, IL 60607"
@@ -608,7 +608,8 @@ class UberDirectClient:
             "Student Center East": "750 S Halsted St, Chicago, IL 60607",
             "Student Center West": "828 S Wolcott Ave, Chicago, IL 60612", 
             "Student Services Building": "1200 W Harrison St, Chicago, IL 60607",
-            "University Hall": "601 S Morgan St, Chicago, IL 60607"
+            "University Hall": "601 S Morgan St, Chicago, IL 60607",
+            "Extended Stay America": "15 W 122 S Frontage Rd, Burr Ridge, IL 60527"
         }
         
         return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
@@ -619,7 +620,7 @@ class UberDirectClient:
         # ✅ UPDATED: Using your actual restaurant addresses in JSON format
         restaurant_addresses = {
             "Chipotle": '{"street_address": ["1132 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "McDonald's": '{"street_address": ["2315 W Ogden Ave"], "city": "Chicago", "state": "IL", "zip_code": "60608"}',
+            "McDonald's": '{"street_address": ["809 Plainfield Rd"], "city": "Darien", "state": "IL", "zip_code": "60561"}',
             "Chick-fil-A": '{"street_address": ["1106 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
             "Portillo's": '{"street_address": ["520 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
             "Starbucks": '{"street_address": ["1430 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
@@ -636,7 +637,8 @@ class UberDirectClient:
             "Student Center East": '{"street_address": ["750 S Halsted St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
             "Student Center West": '{"street_address": ["828 S Wolcott Ave"], "city": "Chicago", "state": "IL", "zip_code": "60612"}',
             "Student Services Building": '{"street_address": ["1200 W Harrison St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "University Hall": '{"street_address": ["601 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
+            "University Hall": '{"street_address": ["601 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
+            "Extended Stay America": '{"street_address": ["15 W 122 S Frontage Rd"], "city": "Burr Ridge", "state": "IL", "zip_code": "60527"}'
         }
         
         return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
