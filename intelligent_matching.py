@@ -620,7 +620,7 @@ Return ONLY valid JSON."""
             
             # Run scheduling in background thread
             thread = threading.Thread(target=schedule_delivery)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
         except Exception as e:

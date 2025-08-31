@@ -412,7 +412,7 @@ Return ONLY the optimal time in a simple format like "2:00 PM" or "1:50 PM"."""
                 self._trigger_delivery_now(group_id, paid_users, order_session)
             
             thread = threading.Thread(target=delayed_trigger)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
             return {
@@ -486,7 +486,7 @@ Return ONLY the optimal time in a simple format like "2:00 PM" or "1:50 PM"."""
                     print(f"❌ No users paid - no delivery triggered")
             
             thread = threading.Thread(target=conditional_trigger)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
             return {
@@ -617,7 +617,7 @@ Your driver will contact you when they arrive! 🎉"""
         
         # Start notification thread
         thread = threading.Thread(target=send_delayed_notifications)
-        thread.daemon = True
+        thread.daemon = False
         thread.start()
         print(f"⏰ Scheduled delivery notifications for 50 seconds")
     

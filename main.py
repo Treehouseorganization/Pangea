@@ -722,7 +722,7 @@ After payment, I'll coordinate your delivery!"""
         
         # Start background thread for delayed notifications
         thread = threading.Thread(target=delayed_notifications)
-        thread.daemon = True
+        thread.daemon = False
         thread.start()
     
     def _send_delivery_notifications_now(self, delivery_data: Dict, delivery_result: Dict):
@@ -795,7 +795,7 @@ Your driver will contact you when they arrive! 🎉"""
                     loop.close()
             
             thread = threading.Thread(target=delayed_trigger)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
             return {
@@ -888,7 +888,7 @@ Your driver will contact you when they arrive! 🎉"""
                     loop.close()
             
             thread = threading.Thread(target=conditional_trigger)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
             return {
@@ -941,7 +941,7 @@ Your driver will contact you when they arrive! 🎉"""
                 print(f"❌ Error in delayed notifications: {e}")
         
         thread = threading.Thread(target=send_delayed_notifications)
-        thread.daemon = True
+        thread.daemon = False
         thread.start()
         print(f"⏰ Scheduled delivery notifications for 50 seconds")
 

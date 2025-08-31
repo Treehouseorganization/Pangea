@@ -745,7 +745,21 @@ class UberDirectClient:
                 # If current time is at or after scheduled time, allow notification
                 # Handle case where scheduled_time might be for tomorrow 
                 if scheduled_time > current_time + timedelta(hours=12):
-                    scheduled_time = scheduled_time.replace(day=current_time.day)
+                    # Safely adjust scheduled_time to today's date
+                    try:
+                        scheduled_time = scheduled_time.replace(
+                            year=current_time.year,
+                            month=current_time.month,
+                            day=current_time.day
+                        )
+                    except ValueError:
+                        # If day doesn't exist in current month, use current time for comparison
+                        scheduled_time = current_time.replace(
+                            hour=scheduled_time.hour,
+                            minute=scheduled_time.minute,
+                            second=scheduled_time.second,
+                            microsecond=scheduled_time.microsecond
+                        )
                 
                 if current_time >= scheduled_time:
                     print(f"🕐 Scheduled delivery time reached for fake match - sending notification")

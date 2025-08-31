@@ -209,7 +209,7 @@ class DeliveryCoordinator:
                 asyncio.run(self.create_delivery(delivery_data))
             
             thread = threading.Thread(target=delayed_delivery)
-            thread.daemon = True
+            thread.daemon = False
             thread.start()
             
             return {
