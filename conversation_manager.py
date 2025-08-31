@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from langchain_core.messages import HumanMessage
 from models import UserState, OrderStage
+from pangea_locations import AVAILABLE_RESTAURANTS, AVAILABLE_DROPOFF_LOCATIONS
 
 class ConversationManager:
     """Manages conversation flow with memory and context awareness"""
@@ -25,7 +26,8 @@ class ConversationManager:
             'Student Center East', 
             'Student Center West',
             'Student Services Building',
-            'University Hall'
+            'University Hall',
+            'Extended Stay America'
         ]
     
     async def process_message(self, message: str, user_state: UserState) -> Dict:
