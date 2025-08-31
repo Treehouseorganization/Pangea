@@ -731,7 +731,7 @@ class UberDirectClient:
         
         if is_fake_match and delivery_time_str != 'now':
             # Check if this is being called at the actual delivery time vs early
-            from datetime import datetime
+            from datetime import datetime, timedelta
             import pytz
             
             try:
@@ -743,6 +743,10 @@ class UberDirectClient:
                     scheduled_time = chicago_tz.localize(scheduled_time)
                 
                 # If current time is at or after scheduled time, allow notification
+                # Handle case where scheduled_time might be for tomorrow 
+                if scheduled_time > current_time + timedelta(hours=12):
+                    scheduled_time = scheduled_time.replace(day=current_time.day)
+                
                 if current_time >= scheduled_time:
                     print(f"🕐 Scheduled delivery time reached for fake match - sending notification")
                     # Continue to send notification
