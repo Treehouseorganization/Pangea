@@ -101,6 +101,13 @@ LOCATION_ALIASES = {
     "uh": "University Hall",
     "u hall": "University Hall",
     "uni hall": "University Hall",
+    
+    # Extended Stay America variations
+    "extended stay": "Extended Stay America",
+    "extended stay america": "Extended Stay America",
+    "the extended stay": "Extended Stay America",
+    "extended stay hotel": "Extended Stay America",
+    "esa": "Extended Stay America",
 }
 
 def normalize_location(location_input):
