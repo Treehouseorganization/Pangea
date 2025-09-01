@@ -217,20 +217,23 @@ Recent conversation:
         extracted_info = analysis.get('extracted_info', {})
         intent = analysis.get('primary_intent')
         
-        # Update extracted information
-        for key, value in extracted_info.items():
-            if value and hasattr(user_state, key):
-                updates[key] = value
-        
-        # Stage transitions based on intent and current state
+        # Stage transitions based on intent and current state first
         if intent == 'new_food_request':
             if extracted_info.get('restaurant') and extracted_info.get('location'):
                 updates['stage'] = OrderStage.WAITING_FOR_MATCH
-                # Clear any stale payment timestamps from previous orders
+                # Clear any stale data from previous orders
                 updates['payment_timestamp'] = None
                 updates['payment_requested_at'] = None
+                updates['order_number'] = None
+                updates['customer_name'] = None
+                updates['order_description'] = None
             else:
                 updates['stage'] = OrderStage.REQUESTING_FOOD
+        
+        # Update extracted information (this should come AFTER clearing old data)
+        for key, value in extracted_info.items():
+            if value and hasattr(user_state, key):
+                updates[key] = value
         
         elif intent == 'provide_order_details' or intent == 'modify_request':
             if user_state.stage in [OrderStage.MATCHED, OrderStage.COLLECTING_ORDER_INFO]:
