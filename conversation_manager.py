@@ -235,7 +235,7 @@ Recent conversation:
             if value and hasattr(user_state, key):
                 updates[key] = value
         
-        elif intent == 'provide_order_details' or intent == 'modify_request':
+        if intent == 'provide_order_details' or intent == 'modify_request':
             if user_state.stage in [OrderStage.MATCHED, OrderStage.COLLECTING_ORDER_INFO]:
                 # Check if order info is now complete
                 has_identifier = (extracted_info.get('order_number') or 
