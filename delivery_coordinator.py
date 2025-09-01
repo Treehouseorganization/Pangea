@@ -90,7 +90,7 @@ class DeliveryCoordinator:
             else:
                 # EXISTING LOGIC: Regular groups and solo orders (UNCHANGED)
                 for member_phone in members:
-                try:
+                    try:
                     # Get user state from database
                     user_doc = self.db.collection('user_states').document(member_phone).get()
                     
