@@ -22,9 +22,74 @@ class DeliveryCoordinator:
             members = delivery_data.get('members', [])
             order_details = []
             
+            # Check if this is a direct invitation group
+            group_id = delivery_data.get('group_id')
+            is_direct_invitation = False
+            
+            if group_id:
+                try:
+                    group_doc = self.db.collection('active_groups').document(group_id).get()
+                    if group_doc.exists:
+                        group_data = group_doc.to_dict()
+                        is_direct_invitation = group_data.get('type') == 'direct_invitation'
+                        print(f"   🔍 Group type: {'direct_invitation' if is_direct_invitation else 'regular'}")
+                except Exception as e:
+                    print(f"   ⚠️ Could not check group type: {e}")
+            
             print(f"   🔍 Fetching order details for {len(members)} members...")
             
-            for member_phone in members:
+            if is_direct_invitation:
+                # SPECIAL HANDLING: Direct invitations combine both people's food under one order
+                print(f"   📋 DIRECT INVITATION: Combining orders under one name")
+                combined_descriptions = []
+                primary_user_data = None
+                primary_phone = None
+                
+                # Find the user who actually has order details (the one who placed the order)
+                for member_phone in members:
+                    try:
+                        user_doc = self.db.collection('user_states').document(member_phone).get()
+                        if user_doc.exists:
+                            user_data = user_doc.to_dict()
+                            order_number = user_data.get('order_number', '')
+                            customer_name = user_data.get('customer_name', '')
+                            order_description = user_data.get('order_description', '')
+                            
+                            # If this user has actual order details, make them primary
+                            if order_number or (customer_name and customer_name != 'Student Order'):
+                                primary_user_data = user_data
+                                primary_phone = member_phone
+                                print(f"   👑 Primary orderer: {member_phone} ({customer_name})")
+                            
+                            # Collect food descriptions from both users
+                            if order_description:
+                                combined_descriptions.append(order_description)
+                                print(f"   🍕 Added food: {order_description}")
+                    except Exception as e:
+                        print(f"   ❌ Error fetching details for {member_phone}: {e}")
+                
+                # Create single combined order entry
+                if primary_user_data:
+                    combined_food = " + ".join(combined_descriptions) if combined_descriptions else "Combined order for 2 people"
+                    order_details = [{
+                        'user_phone': primary_phone,
+                        'order_number': primary_user_data.get('order_number', ''),
+                        'customer_name': primary_user_data.get('customer_name', 'Direct invitation order'),
+                        'order_description': combined_food
+                    }]
+                    print(f"   ✅ Created combined order: {order_details[0]['customer_name']} - {combined_food}")
+                else:
+                    # Fallback if no primary user found
+                    order_details = [{
+                        'user_phone': members[0],
+                        'order_number': '',
+                        'customer_name': 'Direct invitation order',
+                        'order_description': 'Combined order for 2 people'
+                    }]
+                    print(f"   ⚠️ No primary orderer found, using fallback")
+            else:
+                # EXISTING LOGIC: Regular groups and solo orders (UNCHANGED)
+                for member_phone in members:
                 try:
                     # Get user state from database
                     user_doc = self.db.collection('user_states').document(member_phone).get()

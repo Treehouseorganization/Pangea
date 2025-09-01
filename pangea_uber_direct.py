@@ -888,6 +888,19 @@ The driver will meet you at the delivery location. I'll send updates as your ord
                 delivery_data = delivery_doc.to_dict()
                 group_data = delivery_data.get('group_data', {})
                 
+                # Check if delivery is past its scheduled time + 2 hour buffer
+                delivery_time_str = group_data.get('delivery_time', 'now')
+                if delivery_time_str != 'now':
+                    scheduled_time = parse_delivery_time(delivery_time_str)
+                    chicago_tz = pytz.timezone('America/Chicago')
+                    current_time = datetime.now(chicago_tz)
+                    
+                    # If it's been more than 2 hours past scheduled delivery time, ignore
+                    cutoff_time = scheduled_time + timedelta(hours=2)
+                    if current_time > cutoff_time:
+                        print(f"🚫 Ignoring webhook for delivery {delivery_id} - scheduled for {scheduled_time.strftime('%I:%M %p')}, now {current_time.strftime('%I:%M %p')} (>2h past)")
+                        return {"status": "ignored_expired"}
+                
                 # Send status updates to group
                 self._send_status_update_to_group(group_data, new_status, payload)
             

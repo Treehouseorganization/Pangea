@@ -31,6 +31,11 @@ class ConversationManager:
     async def process_message(self, message: str, user_state: UserState) -> Dict:
         """Process message with full context awareness"""
         
+        # Check if this is a response to a direct invitation
+        invitation_response = await self._check_invitation_response(message, user_state)
+        if invitation_response:
+            return invitation_response
+        
         # Analyze message intent and content
         analysis = await self._analyze_message(message, user_state)
         
@@ -82,6 +87,7 @@ POSSIBLE INTENTS:
 - provide_order_details: Giving order number/name/description
 - request_payment: Asking to pay (usually "pay" or "payment")
 - cancel_order: Wanting to cancel current order
+- invite_specific_user: Inviting specific user by phone number (e.g., "mcdonald's at library 7pm with user +17089011754", "invite +17089011754 to chipotle")
 - ask_question: Questions about service/restaurants/process/options ("what restaurants", "which food", "what's available")
 - general_chat: Casual conversation
 
@@ -95,7 +101,8 @@ Return JSON:
         "delivery_time": "parsed time or null",
         "order_number": "extracted number or null",
         "customer_name": "extracted name or null",
-        "order_description": "what they ordered or null"
+        "order_description": "what they ordered or null",
+        "invitee_phone": "phone number to invite (with + prefix) or null"
     }},
     "missing_info": ["list of what's still needed"],
     "should_trigger_actions": ["list of actions to trigger"],
@@ -275,6 +282,9 @@ Recent conversation:
         elif intent == 'cancel_order':
             return self._generate_cancellation_response(analysis, user_state)
         
+        elif intent == 'invite_specific_user':
+            return await self._handle_direct_invitation(analysis, user_state)
+        
         elif intent == 'ask_question':
             return self._generate_faq_response(analysis, user_state)
         
@@ -434,6 +444,186 @@ Please provide these first, then you can pay."""
                 return "No worries! I've canceled your current request.\n\nWhenever you're ready for delivery, just tell me what you want and where!"
         else:
             return "No problem! You don't have any active orders right now.\n\nWhenever you're hungry, just let me know what you want delivered!"
+    
+    async def _handle_direct_invitation(self, analysis: Dict, user_state: UserState) -> str:
+        """Handle direct invitation to specific user"""
+        
+        extracted_info = analysis.get('extracted_info', {})
+        invitee_phone = extracted_info.get('invitee_phone')
+        restaurant = extracted_info.get('restaurant')
+        location = extracted_info.get('location')
+        delivery_time = extracted_info.get('delivery_time', 'now')
+        
+        # Validate required information
+        missing_info = []
+        if not invitee_phone:
+            missing_info.append('phone number to invite')
+        if not restaurant:
+            missing_info.append('restaurant')
+        if not location:
+            missing_info.append('location')
+        
+        if missing_info:
+            return f"I'd love to help you invite someone! I just need:\n\n{chr(10).join(f'• {info}' for info in missing_info)}\n\nExample: \"invite +17089011754 to McDonald's at the library for 3pm\""
+        
+        # Send invitation to the specified user
+        invitation_sent = await self._send_direct_invitation(
+            inviter_phone=user_state.user_phone,
+            invitee_phone=invitee_phone,
+            restaurant=restaurant,
+            location=location,
+            delivery_time=delivery_time
+        )
+        
+        if invitation_sent:
+            return f"✅ Perfect! I've sent an invitation to {invitee_phone} for {restaurant} delivery to {location} at {delivery_time}.\n\nThey'll get a message asking if they want to join. I'll let you know when they respond! 📱"
+        else:
+            return f"❌ Sorry, I couldn't send the invitation to {invitee_phone}. Please double-check the phone number format (should start with +1)."
+    
+    async def _send_direct_invitation(self, inviter_phone: str, invitee_phone: str, restaurant: str, location: str, delivery_time: str) -> bool:
+        """Send invitation message to specified user"""
+        
+        try:
+            # Create invitation message
+            time_text = f"at {delivery_time}" if delivery_time != 'now' else "now"
+            invitation_message = f"""🍕 You've been invited to order together!
+
+{inviter_phone} invited you to get {restaurant} delivered to {location} {time_text}.
+
+Want to join? Reply:
+• "YES" to accept the invitation
+• "NO" to decline
+
+If you accept, you'll both get order instructions! 🤝"""
+
+            # Send invitation via SMS
+            from pangea_main import send_friendly_message
+            result = send_friendly_message(invitee_phone, invitation_message, message_type="direct_invitation")
+            
+            # Store invitation in database for tracking
+            invitation_data = {
+                'inviter_phone': inviter_phone,
+                'invitee_phone': invitee_phone,
+                'restaurant': restaurant,
+                'location': location,
+                'delivery_time': delivery_time,
+                'status': 'pending',
+                'created_at': datetime.now()
+            }
+            
+            self.db.collection('direct_invitations').document(f"{inviter_phone}_{invitee_phone}_{int(datetime.now().timestamp())}").set(invitation_data)
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to send direct invitation: {e}")
+            return False
+    
+    async def _check_invitation_response(self, message: str, user_state: UserState) -> Dict:
+        """Check if message is a yes/no response to a direct invitation"""
+        
+        message_lower = message.lower().strip()
+        
+        # Check for yes/no responses
+        if message_lower not in ['yes', 'no', 'y', 'n']:
+            return None
+        
+        # Look for pending invitations for this user
+        invitations_query = self.db.collection('direct_invitations').where('invitee_phone', '==', user_state.user_phone).where('status', '==', 'pending')
+        invitations = list(invitations_query.stream())
+        
+        if not invitations:
+            return None  # No pending invitations
+        
+        # Get the most recent invitation
+        invitation_doc = max(invitations, key=lambda doc: doc.to_dict().get('created_at'))
+        invitation_data = invitation_doc.to_dict()
+        
+        inviter_phone = invitation_data['inviter_phone']
+        restaurant = invitation_data['restaurant']
+        location = invitation_data['location']
+        delivery_time = invitation_data['delivery_time']
+        
+        if message_lower in ['yes', 'y']:
+            # Accept invitation - create a direct invitation group
+            await self._create_direct_invitation_group(invitation_data, user_state)
+            
+            # Update invitation status
+            invitation_doc.reference.update({'status': 'accepted'})
+            
+            # Notify both users
+            await self._notify_invitation_accepted(inviter_phone, user_state.user_phone, restaurant, location, delivery_time)
+            
+            response = f"🎉 Great! You've joined the {restaurant} order to {location}!\n\nSince this is a direct invitation, have ONE person place the order for pickup:\n• Use your name when ordering\n• Order for both people\n• We'll handle the delivery!\n\nReady to order? Reply with your order details! 🍕"
+            
+        else:  # no/n
+            # Decline invitation
+            invitation_doc.reference.update({'status': 'declined'})
+            
+            # Notify inviter
+            from pangea_main import send_friendly_message
+            send_friendly_message(inviter_phone, f"👋 {user_state.user_phone} declined your invitation for {restaurant}. No worries - you can still order solo or try inviting someone else!", message_type="invitation_declined")
+            
+            response = f"No problem! I've let {inviter_phone} know you won't be joining their {restaurant} order.\n\nIf you want to order something for yourself, just let me know! 🍴"
+        
+        return {
+            'analysis': {'primary_intent': 'invitation_response'},
+            'actions': [],
+            'response': response,
+            'state_updates': {}
+        }
+    
+    async def _create_direct_invitation_group(self, invitation_data: Dict, invitee_state: UserState):
+        """Create a special group for direct invitation"""
+        
+        import uuid
+        group_id = str(uuid.uuid4())
+        
+        # Create group data
+        group_data = {
+            'group_id': group_id,
+            'type': 'direct_invitation',
+            'inviter': invitation_data['inviter_phone'],
+            'invitee': invitation_data['invitee_phone'],
+            'restaurant': invitation_data['restaurant'],
+            'location': invitation_data['location'],
+            'delivery_time': invitation_data['delivery_time'],
+            'members': [invitation_data['inviter_phone'], invitation_data['invitee_phone']],
+            'group_size': 2,
+            'status': 'matched',
+            'is_fake_match': False,
+            'created_at': datetime.now()
+        }
+        
+        # Store in active_groups collection
+        self.db.collection('active_groups').document(group_id).set(group_data)
+        
+        # Update both users' states to point to this group
+        await self._update_user_for_direct_invitation(invitation_data['inviter_phone'], group_id, invitation_data)
+        await self._update_user_for_direct_invitation(invitation_data['invitee_phone'], group_id, invitation_data)
+        
+    async def _update_user_for_direct_invitation(self, user_phone: str, group_id: str, invitation_data: Dict):
+        """Update user state for direct invitation group"""
+        
+        user_state = await self.memory_manager.get_user_state(user_phone)
+        user_state.stage = OrderStage.MATCHED
+        user_state.group_id = group_id
+        user_state.restaurant = invitation_data['restaurant']
+        user_state.location = invitation_data['location']
+        user_state.delivery_time = invitation_data['delivery_time']
+        user_state.group_size = 2
+        user_state.is_fake_match = False
+        
+        await self.memory_manager.save_user_state(user_state)
+        
+    async def _notify_invitation_accepted(self, inviter_phone: str, invitee_phone: str, restaurant: str, location: str, delivery_time: str):
+        """Notify inviter that their invitation was accepted"""
+        
+        time_text = f"at {delivery_time}" if delivery_time != 'now' else "now"
+        message = f"🎉 {invitee_phone} accepted your invitation for {restaurant}!\n\nSince this is a direct invitation, have ONE person place the order for pickup:\n• Use your name when ordering\n• Order for both people\n• We'll handle the delivery to {location} {time_text}!\n\nReady to order? Reply with your order details! 🍕"
+        
+        from pangea_main import send_friendly_message
+        send_friendly_message(inviter_phone, message, message_type="invitation_accepted")
     
     def _generate_faq_response(self, analysis: Dict, user_state: UserState) -> str:
         """Generate FAQ responses"""
