@@ -91,52 +91,52 @@ class DeliveryCoordinator:
                 # EXISTING LOGIC: Regular groups and solo orders (UNCHANGED)
                 for member_phone in members:
                     try:
-                    # Get user state from database
-                    user_doc = self.db.collection('user_states').document(member_phone).get()
-                    
-                    if user_doc.exists:
-                        user_data = user_doc.to_dict()
+                        # Get user state from database
+                        user_doc = self.db.collection('user_states').document(member_phone).get()
                         
-                        # Extract order information
-                        order_detail = {
-                            'user_phone': member_phone,
-                            'order_number': user_data.get('order_number', ''),
-                            'customer_name': user_data.get('customer_name', ''),
-                            'order_description': user_data.get('order_description', '')
-                        }
-                        
-                        # Only add if we have some order info
-                        if any([order_detail['order_number'], order_detail['customer_name'], order_detail['order_description']]):
-                            order_details.append(order_detail)
-                            print(f"   ✅ Found order for {member_phone}: {order_detail['customer_name']} - {order_detail['order_description']}")
+                        if user_doc.exists:
+                            user_data = user_doc.to_dict()
+                            
+                            # Extract order information
+                            order_detail = {
+                                'user_phone': member_phone,
+                                'order_number': user_data.get('order_number', ''),
+                                'customer_name': user_data.get('customer_name', ''),
+                                'order_description': user_data.get('order_description', '')
+                            }
+                            
+                            # Only add if we have some order info
+                            if any([order_detail['order_number'], order_detail['customer_name'], order_detail['order_description']]):
+                                order_details.append(order_detail)
+                                print(f"   ✅ Found order for {member_phone}: {order_detail['customer_name']} - {order_detail['order_description']}")
+                            else:
+                                # Add placeholder if no details
+                                order_details.append({
+                                    'user_phone': member_phone,
+                                    'order_number': '',
+                                    'customer_name': 'Student Order',
+                                    'order_description': 'Order details not provided'
+                                })
+                                print(f"   ⚠️ No order details for {member_phone}, using placeholder")
                         else:
-                            # Add placeholder if no details
+                            # User not found, add placeholder
                             order_details.append({
                                 'user_phone': member_phone,
                                 'order_number': '',
                                 'customer_name': 'Student Order',
                                 'order_description': 'Order details not provided'
                             })
-                            print(f"   ⚠️ No order details for {member_phone}, using placeholder")
-                    else:
-                        # User not found, add placeholder
+                            print(f"   ⚠️ User {member_phone} not found, using placeholder")
+                            
+                    except Exception as e:
+                        print(f"   ❌ Error fetching details for {member_phone}: {e}")
+                        # Add placeholder for failed lookup
                         order_details.append({
                             'user_phone': member_phone,
                             'order_number': '',
                             'customer_name': 'Student Order',
-                            'order_description': 'Order details not provided'
+                            'order_description': 'Order details not available'
                         })
-                        print(f"   ⚠️ User {member_phone} not found, using placeholder")
-                        
-                except Exception as e:
-                    print(f"   ❌ Error fetching details for {member_phone}: {e}")
-                    # Add placeholder for failed lookup
-                    order_details.append({
-                        'user_phone': member_phone,
-                        'order_number': '',
-                        'customer_name': 'Student Order',
-                        'order_description': 'Order details not available'
-                    })
             
             enhanced_data['order_details'] = order_details
             print(f"   📊 Enhanced delivery data with {len(order_details)} order details")
