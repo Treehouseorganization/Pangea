@@ -240,8 +240,9 @@ Recent conversation:
                 updates['stage'] = OrderStage.REQUESTING_FOOD
         
         # Update extracted information (this should come AFTER clearing old data)
+        # CRITICAL FIX: Only update if value is not None to preserve existing group state
         for key, value in extracted_info.items():
-            if value and hasattr(user_state, key):
+            if value is not None and hasattr(user_state, key):
                 updates[key] = value
         
         if intent == 'provide_order_details' or intent == 'modify_request':
@@ -560,28 +561,11 @@ If you accept, you'll both get order instructions! 🤝"""
         delivery_time = invitation_data['delivery_time']
         
         if message_lower in ['yes', 'y']:
-            # CRITICAL FIX: Clear any existing order state before accepting invitation
             print(f"🧹 CLEARING EXISTING STATE FOR INVITATION ACCEPTANCE:")
             print(f"   📊 Old state - Restaurant: {user_state.restaurant}, Location: {user_state.location}, Group: {user_state.group_id}")
             
-            # Clear old order state completely to prevent contamination
-            user_state.stage = OrderStage.IDLE
-            user_state.restaurant = None  # Will be set by invitation data
-            user_state.location = None    # Will be set by invitation data
-            user_state.delivery_time = "now"
-            user_state.order_number = None
-            user_state.customer_name = None
-            user_state.order_description = None
-            user_state.payment_requested_at = None
-            user_state.payment_timestamp = None
-            user_state.payment_amount = "$3.50"
-            user_state.group_id = None    # Will be set by invitation group creation
-            user_state.group_size = 1
-            user_state.is_fake_match = False
-            user_state.missing_info = []
-            user_state.conversation_history = []  # Clear conversation history to prevent contamination
-            
             # Accept invitation - create a direct invitation group
+            # This will handle all state updates properly for both users
             await self._create_direct_invitation_group(invitation_data, user_state)
             
             # Update invitation status
@@ -609,7 +593,15 @@ If you accept, you'll both get order instructions! 🤝"""
             'analysis': {'primary_intent': 'invitation_response'},
             'actions': [],
             'response': response,
-            'state_updates': {}
+            'state_updates': {
+                'stage': OrderStage.MATCHED,
+                'restaurant': restaurant,
+                'location': location,
+                'delivery_time': delivery_time,
+                'group_size': 2,
+                'is_fake_match': False,
+                'payment_amount': "$3.50"
+            }
         }
     
     async def _create_direct_invitation_group(self, invitation_data: Dict, invitee_state: UserState):
@@ -647,7 +639,7 @@ If you accept, you'll both get order instructions! 🤝"""
         user_state = await self.memory_manager.get_user_state(user_phone)
         
         print(f"🔄 UPDATING USER {user_phone} FOR DIRECT INVITATION:")
-        print(f"   📊 Old state - Restaurant: {user_state.restaurant}, Location: {user_state.location}")
+        print(f"   📊 Old state - Restaurant: {user_state.restaurant}, Location: {user_state.location}, Stage: {user_state.stage}")
         print(f"   📊 New state - Restaurant: {invitation_data['restaurant']}, Location: {invitation_data['location']}")
         
         # Clear ALL old order state completely to prevent any contamination
@@ -671,7 +663,7 @@ If you accept, you'll both get order instructions! 🤝"""
         # Clear conversation history to prevent contamination from old orders
         user_state.conversation_history = []
         
-        print(f"   ✅ Updated state - Restaurant: {user_state.restaurant}, Location: {user_state.location}")
+        print(f"   ✅ Updated state - Restaurant: {user_state.restaurant}, Location: {user_state.location}, Stage: {user_state.stage}")
         
         await self.memory_manager.save_user_state(user_state)
         
