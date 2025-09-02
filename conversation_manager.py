@@ -14,10 +14,11 @@ from models import UserState, OrderStage
 class ConversationManager:
     """Manages conversation flow with memory and context awareness"""
     
-    def __init__(self, anthropic_llm, memory_manager, send_sms_func=None):
+    def __init__(self, anthropic_llm, memory_manager, send_sms_func=None, db=None):
         self.llm = anthropic_llm
         self.memory_manager = memory_manager
         self.send_sms = send_sms_func
+        self.db = db
         
         # Available options
         self.restaurants = ['Chipotle', 'McDonald\'s', 'Chick-fil-A', 'Portillo\'s', 'Starbucks']

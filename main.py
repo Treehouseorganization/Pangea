@@ -43,7 +43,7 @@ class PangeaApp:
         
         # Core components
         self.memory_manager = MemoryManager(self.db)
-        self.conversation_manager = ConversationManager(self.anthropic_llm, self.memory_manager, self.send_sms)
+        self.conversation_manager = ConversationManager(self.anthropic_llm, self.memory_manager, self.send_sms, self.db)
         self.matching_engine = MatchingEngine(self.db, self.anthropic_llm)  # Keep existing
         self.order_state_machine = OrderStateMachine()
         self.delivery_coordinator = DeliveryCoordinator(self.db)
