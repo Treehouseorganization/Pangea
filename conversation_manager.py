@@ -14,9 +14,10 @@ from models import UserState, OrderStage
 class ConversationManager:
     """Manages conversation flow with memory and context awareness"""
     
-    def __init__(self, anthropic_llm, memory_manager):
+    def __init__(self, anthropic_llm, memory_manager, send_sms_func=None):
         self.llm = anthropic_llm
         self.memory_manager = memory_manager
+        self.send_sms = send_sms_func
         
         # Available options
         self.restaurants = ['Chipotle', 'McDonald\'s', 'Chick-fil-A', 'Portillo\'s', 'Starbucks']
@@ -497,8 +498,11 @@ Want to join? Reply:
 If you accept, you'll both get order instructions! 🤝"""
 
             # Send invitation via SMS
-            from pangea_main import send_friendly_message
-            result = send_friendly_message(invitee_phone, invitation_message, message_type="direct_invitation")
+            if self.send_sms:
+                result = self.send_sms(invitee_phone, invitation_message)
+            else:
+                print("❌ No SMS function available for sending invitation")
+                result = False
             
             # Store invitation in database for tracking
             invitation_data = {
@@ -561,8 +565,11 @@ If you accept, you'll both get order instructions! 🤝"""
             invitation_doc.reference.update({'status': 'declined'})
             
             # Notify inviter
-            from pangea_main import send_friendly_message
-            send_friendly_message(inviter_phone, f"👋 {user_state.user_phone} declined your invitation for {restaurant}. No worries - you can still order solo or try inviting someone else!", message_type="invitation_declined")
+            decline_message = f"👋 {user_state.user_phone} declined your invitation for {restaurant}. No worries - you can still order solo or try inviting someone else!"
+            if self.send_sms:
+                self.send_sms(inviter_phone, decline_message)
+            else:
+                print("❌ No SMS function available for sending decline notification")
             
             response = f"No problem! I've let {inviter_phone} know you won't be joining their {restaurant} order.\n\nIf you want to order something for yourself, just let me know! 🍴"
         
@@ -622,8 +629,11 @@ If you accept, you'll both get order instructions! 🤝"""
         time_text = f"at {delivery_time}" if delivery_time != 'now' else "now"
         message = f"🎉 {invitee_phone} accepted your invitation for {restaurant}!\n\nSince this is a direct invitation, have ONE person place the order for pickup:\n• Use your name when ordering\n• Order for both people\n• We'll handle the delivery to {location} {time_text}!\n\nReady to order? Reply with your order details! 🍕"
         
-        from pangea_main import send_friendly_message
-        send_friendly_message(inviter_phone, message, message_type="invitation_accepted")
+        # Send acceptance notification to inviter
+        if self.send_sms:
+            self.send_sms(inviter_phone, message)
+        else:
+            print("❌ No SMS function available for sending acceptance notification")
     
     def _generate_faq_response(self, analysis: Dict, user_state: UserState) -> str:
         """Generate FAQ responses"""

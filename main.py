@@ -43,7 +43,7 @@ class PangeaApp:
         
         # Core components
         self.memory_manager = MemoryManager(self.db)
-        self.conversation_manager = ConversationManager(self.anthropic_llm, self.memory_manager)
+        self.conversation_manager = ConversationManager(self.anthropic_llm, self.memory_manager, self.send_sms)
         self.matching_engine = MatchingEngine(self.db, self.anthropic_llm)  # Keep existing
         self.order_state_machine = OrderStateMachine()
         self.delivery_coordinator = DeliveryCoordinator(self.db)
@@ -785,8 +785,19 @@ Your driver will contact you when they arrive! 🎉"""
                 asyncio.set_event_loop(loop)
                 
                 try:
-                    # Re-get fresh user state and trigger delivery
+                    # Re-get fresh user state and validate payment before triggering
                     fresh_user_state = loop.run_until_complete(self.memory_manager.get_user_state(user_state.user_phone))
+                    
+                    # Check if user actually paid and didn't cancel
+                    if fresh_user_state.stage == OrderStage.IDLE:
+                        print(f"🚫 User {user_state.user_phone} cancelled order - skipping scheduled delivery")
+                        return
+                        
+                    if not fresh_user_state.payment_requested_at and not fresh_user_state.payment_timestamp:
+                        print(f"🚫 User {user_state.user_phone} never paid - skipping scheduled delivery")
+                        return
+                    
+                    print(f"✅ User {user_state.user_phone} paid and didn't cancel - proceeding with delivery")
                     result = loop.run_until_complete(self._trigger_delivery_now(fresh_user_state))
                     print(f"✅ Scheduled delivery triggered successfully: {result}")
                 except Exception as e:
