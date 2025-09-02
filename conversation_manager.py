@@ -468,6 +468,16 @@ Please provide these first, then you can pay."""
         if missing_info:
             return f"I'd love to help you invite someone! I just need:\n\n{chr(10).join(f'• {info}' for info in missing_info)}\n\nExample: \"invite +17089011754 to McDonald's at the library for 3pm\""
         
+        # CRITICAL FIX: Clear and update inviter's state with invitation details
+        print(f"🔄 UPDATING INVITER STATE FOR DIRECT INVITATION:")
+        print(f"   📊 Setting - Restaurant: {restaurant}, Location: {location}")
+        
+        # Update inviter's state with invitation details to ensure consistency
+        user_state.restaurant = restaurant
+        user_state.location = location  
+        user_state.delivery_time = delivery_time
+        user_state.stage = OrderStage.WAITING_FOR_MATCH  # They're waiting for invitee to respond
+        
         # Send invitation to the specified user
         invitation_sent = await self._send_direct_invitation(
             inviter_phone=user_state.user_phone,
@@ -550,6 +560,27 @@ If you accept, you'll both get order instructions! 🤝"""
         delivery_time = invitation_data['delivery_time']
         
         if message_lower in ['yes', 'y']:
+            # CRITICAL FIX: Clear any existing order state before accepting invitation
+            print(f"🧹 CLEARING EXISTING STATE FOR INVITATION ACCEPTANCE:")
+            print(f"   📊 Old state - Restaurant: {user_state.restaurant}, Location: {user_state.location}, Group: {user_state.group_id}")
+            
+            # Clear old order state completely to prevent contamination
+            user_state.stage = OrderStage.IDLE
+            user_state.restaurant = None  # Will be set by invitation data
+            user_state.location = None    # Will be set by invitation data
+            user_state.delivery_time = "now"
+            user_state.order_number = None
+            user_state.customer_name = None
+            user_state.order_description = None
+            user_state.payment_requested_at = None
+            user_state.payment_timestamp = None
+            user_state.payment_amount = "$3.50"
+            user_state.group_id = None    # Will be set by invitation group creation
+            user_state.group_size = 1
+            user_state.is_fake_match = False
+            user_state.missing_info = []
+            user_state.conversation_history = []  # Clear conversation history to prevent contamination
+            
             # Accept invitation - create a direct invitation group
             await self._create_direct_invitation_group(invitation_data, user_state)
             
@@ -614,13 +645,33 @@ If you accept, you'll both get order instructions! 🤝"""
         """Update user state for direct invitation group"""
         
         user_state = await self.memory_manager.get_user_state(user_phone)
+        
+        print(f"🔄 UPDATING USER {user_phone} FOR DIRECT INVITATION:")
+        print(f"   📊 Old state - Restaurant: {user_state.restaurant}, Location: {user_state.location}")
+        print(f"   📊 New state - Restaurant: {invitation_data['restaurant']}, Location: {invitation_data['location']}")
+        
+        # Clear ALL old order state completely to prevent any contamination
         user_state.stage = OrderStage.MATCHED
         user_state.group_id = group_id
-        user_state.restaurant = invitation_data['restaurant']
-        user_state.location = invitation_data['location']
+        user_state.restaurant = invitation_data['restaurant']  # Set to invitation restaurant
+        user_state.location = invitation_data['location']      # Set to invitation location
         user_state.delivery_time = invitation_data['delivery_time']
         user_state.group_size = 2
         user_state.is_fake_match = False
+        
+        # Clear ALL old order details to prevent confusion
+        user_state.order_number = None
+        user_state.customer_name = None
+        user_state.order_description = None
+        user_state.payment_requested_at = None
+        user_state.payment_timestamp = None
+        user_state.payment_amount = "$3.50"  # Reset payment amount
+        user_state.missing_info = []
+        
+        # Clear conversation history to prevent contamination from old orders
+        user_state.conversation_history = []
+        
+        print(f"   ✅ Updated state - Restaurant: {user_state.restaurant}, Location: {user_state.location}")
         
         await self.memory_manager.save_user_state(user_state)
         

@@ -443,6 +443,17 @@ After payment, I'll coordinate your delivery!"""
         except Exception as e:
             print(f"            ⚠️ Failed to sync to order_sessions: {e}")
         
+        # CRITICAL FIX: For direct invitations, prevent duplicate delivery creation
+        # Check if this is a direct invitation group and if delivery already exists
+        delivery_already_exists = await self._check_delivery_already_exists(user_state.group_id)
+        if delivery_already_exists:
+            print(f"            🚫 Delivery already exists for group {user_state.group_id}, skipping trigger")
+            return {
+                'status': 'payment_requested',
+                'payment_link': payment_link,
+                'delivery_skipped': True
+            }
+        
         # Check if delivery should be triggered
         should_trigger = await self._should_trigger_delivery_now(user_state)
         print(f"            🚚 Should trigger delivery now: {should_trigger}")
@@ -576,6 +587,26 @@ After payment, I'll coordinate your delivery!"""
         has_location = user_state.location
         
         return all([has_identifier, has_description, has_restaurant, has_location])
+    
+    async def _check_delivery_already_exists(self, group_id: str) -> bool:
+        """Check if a delivery already exists for this group to prevent duplicates"""
+        if not group_id:
+            return False
+            
+        try:
+            # Check the deliveries collection for this group_id
+            deliveries_query = self.db.collection('deliveries').where('group_id', '==', group_id)
+            existing_deliveries = list(deliveries_query.stream())
+            
+            if existing_deliveries:
+                print(f"            🔍 Found {len(existing_deliveries)} existing deliveries for group {group_id}")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            print(f"            ❌ Error checking existing deliveries: {e}")
+            return False  # If we can't check, allow the delivery to proceed
     
     async def _should_trigger_delivery_now(self, user_state: UserState) -> bool:
         """Determine if delivery should be triggered immediately"""
