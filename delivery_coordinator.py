@@ -32,6 +32,14 @@ class DeliveryCoordinator:
                     if group_doc.exists:
                         group_data = group_doc.to_dict()
                         is_direct_invitation = group_data.get('type') == 'direct_invitation'
+                        
+                        # INVITE FEATURE FIX: Get correct members list from active_groups for direct invitations
+                        if is_direct_invitation:
+                            actual_members = group_data.get('members', [])
+                            if len(actual_members) > len(members):
+                                members = actual_members
+                                print(f"   🔧 FIXED: Updated members list from active_groups: {members}")
+                        
                         print(f"   🔍 Group type: {'direct_invitation' if is_direct_invitation else 'regular'}")
                 except Exception as e:
                     print(f"   ⚠️ Could not check group type: {e}")
