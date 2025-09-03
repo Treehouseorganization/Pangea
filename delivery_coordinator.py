@@ -45,7 +45,20 @@ class DeliveryCoordinator:
                 primary_user_data = None
                 primary_phone = None
                 
-                # Find the user who actually has order details (the one who placed the order)
+                # INVITE FEATURE FIX: First collect food descriptions from ALL users
+                for member_phone in members:
+                    try:
+                        user_doc = self.db.collection('user_states').document(member_phone).get()
+                        if user_doc.exists:
+                            user_data = user_doc.to_dict()
+                            order_description = user_data.get('order_description', '')
+                            if order_description:
+                                combined_descriptions.append(order_description)
+                                print(f"   🍕 Added food: {order_description}")
+                    except Exception as e:
+                        print(f"   ❌ Error fetching details for {member_phone}: {e}")
+                
+                # Then find the user who actually has order details (the one who placed the order)
                 for member_phone in members:
                     try:
                         user_doc = self.db.collection('user_states').document(member_phone).get()
@@ -53,18 +66,13 @@ class DeliveryCoordinator:
                             user_data = user_doc.to_dict()
                             order_number = user_data.get('order_number', '')
                             customer_name = user_data.get('customer_name', '')
-                            order_description = user_data.get('order_description', '')
                             
                             # If this user has actual order details, make them primary
                             if order_number or (customer_name and customer_name != 'Student Order'):
                                 primary_user_data = user_data
                                 primary_phone = member_phone
                                 print(f"   👑 Primary orderer: {member_phone} ({customer_name})")
-                            
-                            # Collect food descriptions from both users
-                            if order_description:
-                                combined_descriptions.append(order_description)
-                                print(f"   🍕 Added food: {order_description}")
+                                break
                     except Exception as e:
                         print(f"   ❌ Error fetching details for {member_phone}: {e}")
                 
