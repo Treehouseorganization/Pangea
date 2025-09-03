@@ -516,7 +516,24 @@ After payment, I'll coordinate your delivery!"""
                     return await self._schedule_conditional_delivery(user_state, paid_users)
     
     async def _handle_cancel_order(self, user_state: UserState, action_data: Dict) -> Dict:
-        """Handle order cancellation with group member notification"""
+        """Handle order cancellation with group member notification and scheduled delivery cancellation"""
+        
+        # CRITICAL FIX: Mark group as cancelled in database to prevent scheduled delivery execution
+        if user_state.group_id:
+            try:
+                print(f"🚫 CANCELLING GROUP: {user_state.group_id}")
+                
+                # Mark the group as cancelled in active_groups collection
+                self.db.collection('active_groups').document(user_state.group_id).update({
+                    'status': 'cancelled',
+                    'cancelled_at': datetime.now(),
+                    'cancelled_by': user_state.user_phone
+                })
+                
+                print(f"✅ Marked group {user_state.group_id} as cancelled in database")
+                
+            except Exception as e:
+                print(f"⚠️ Error marking group as cancelled: {e}")
         
         # If this was a group order, notify the other member they can continue solo
         if user_state.group_id and not user_state.is_fake_match:
@@ -823,6 +840,24 @@ Your driver will contact you when they arrive! 🎉"""
                     if fresh_user_state.stage == OrderStage.IDLE:
                         print(f"🚫 User {user_state.user_phone} cancelled order - skipping scheduled delivery")
                         return
+                    
+                    # CRITICAL FIX: Also check if group was cancelled in database
+                    if fresh_user_state.group_id:
+                        try:
+                            group_doc = self.db.collection('active_groups').document(fresh_user_state.group_id).get()
+                            if group_doc.exists:
+                                group_data = group_doc.to_dict()
+                                group_status = group_data.get('status', 'active')
+                                
+                                if group_status == 'cancelled':
+                                    print(f"🚫 Group {fresh_user_state.group_id} was cancelled - skipping scheduled delivery")
+                                    return
+                            else:
+                                print(f"🚫 Group {fresh_user_state.group_id} no longer exists - skipping scheduled delivery")
+                                return
+                                
+                        except Exception as group_check_error:
+                            print(f"❌ Error checking group status: {group_check_error} - proceeding with delivery")
                         
                     if not fresh_user_state.payment_requested_at and not fresh_user_state.payment_timestamp:
                         print(f"🚫 User {user_state.user_phone} never paid - skipping scheduled delivery")
@@ -889,6 +924,23 @@ Your driver will contact you when they arrive! 🎉"""
                 asyncio.set_event_loop(loop)
                 
                 try:
+                    # CRITICAL FIX: Check if group was cancelled before proceeding
+                    try:
+                        group_doc = self.db.collection('active_groups').document(user_state.group_id).get()
+                        if group_doc.exists:
+                            group_data = group_doc.to_dict()
+                            group_status = group_data.get('status', 'active')
+                            
+                            if group_status == 'cancelled':
+                                print(f"🚫 Group {user_state.group_id} was cancelled - skipping conditional delivery")
+                                return
+                        else:
+                            print(f"🚫 Group {user_state.group_id} no longer exists - skipping conditional delivery")
+                            return
+                            
+                    except Exception as group_check_error:
+                        print(f"❌ Error checking group status: {group_check_error} - proceeding with delivery")
+                    
                     # Re-check who has paid
                     fresh_group_members = loop.run_until_complete(
                         self.memory_manager.get_group_members(user_state.group_id)

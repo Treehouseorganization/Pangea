@@ -239,6 +239,11 @@ Recent conversation:
             else:
                 updates['stage'] = OrderStage.REQUESTING_FOOD
         
+        # Skip state updates for invitation intents - they handle their own state
+        elif intent == 'invite_specific_user':
+            # Invitation handler manages its own state updates
+            return {}
+        
         # Update extracted information (this should come AFTER clearing old data)
         # CRITICAL FIX: Only update if value is not None to preserve existing group state
         for key, value in extracted_info.items():

@@ -269,7 +269,57 @@ class DeliveryCoordinator:
             # Start background thread to create delivery at scheduled time
             def delayed_delivery():
                 time.sleep(delay_seconds)
-                print(f"🔔 Scheduled time reached - creating delivery")
+                print(f"🔔 Scheduled time reached - checking group validity before creating delivery")
+                
+                # CRITICAL FIX: Check if group is still valid before executing delivery
+                group_id = delivery_data.get('group_id')
+                if group_id:
+                    try:
+                        group_doc = self.db.collection('active_groups').document(group_id).get()
+                        if group_doc.exists:
+                            group_data = group_doc.to_dict()
+                            group_status = group_data.get('status', 'active')
+                            
+                            if group_status == 'cancelled':
+                                print(f"🚫 Group {group_id} was cancelled - skipping scheduled delivery")
+                                return
+                            elif group_status not in ['active', 'fake_match', 'matched']:
+                                print(f"🚫 Group {group_id} has invalid status '{group_status}' - skipping scheduled delivery")
+                                return
+                        else:
+                            print(f"🚫 Group {group_id} no longer exists - skipping scheduled delivery")
+                            return
+                            
+                    except Exception as e:
+                        print(f"❌ Error checking group validity: {e} - proceeding with delivery")
+                
+                # Additional check: Verify payment status for group members
+                members = delivery_data.get('members', [])
+                if members:
+                    try:
+                        # Check if all members have actually paid (payment_timestamp exists)
+                        all_paid = True
+                        for member_phone in members:
+                            user_doc = self.db.collection('user_states').document(member_phone).get()
+                            if user_doc.exists:
+                                user_data = user_doc.to_dict()
+                                if not user_data.get('payment_timestamp'):
+                                    print(f"🚫 User {member_phone} hasn't completed payment - skipping scheduled delivery")
+                                    all_paid = False
+                                    break
+                            else:
+                                print(f"🚫 User {member_phone} not found - skipping scheduled delivery")
+                                all_paid = False
+                                break
+                        
+                        if not all_paid:
+                            return
+                            
+                    except Exception as e:
+                        print(f"❌ Error checking payment status: {e} - skipping delivery for safety")
+                        return
+                
+                print(f"✅ Group is valid and all members paid - proceeding with scheduled delivery")
                 import asyncio
                 asyncio.run(self.create_delivery(delivery_data))
             
