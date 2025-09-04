@@ -578,6 +578,21 @@ After payment, I'll coordinate your delivery!"""
         # Update missing info tracking
         user_state.missing_info = self._calculate_missing_info(user_state)
     
+    def _is_direct_invitation_group(self, user_state: UserState) -> bool:
+        """Check if user is in a direct invitation group"""
+        if not user_state.group_id:
+            return False
+            
+        try:
+            group_doc = self.db.collection('active_groups').document(user_state.group_id).get()
+            if group_doc.exists:
+                group_data = group_doc.to_dict()
+                return group_data.get('type') == 'direct_invitation'
+        except Exception as e:
+            print(f"   ⚠️ Error checking group type: {e}")
+        
+        return False
+
     def _calculate_missing_info(self, user_state: UserState) -> List[str]:
         """Calculate what information is still missing"""
         missing = []
@@ -589,8 +604,14 @@ After payment, I'll coordinate your delivery!"""
         
         # For order collection stage
         if user_state.stage == OrderStage.COLLECTING_ORDER_INFO:
-            if not (user_state.order_number or user_state.customer_name):
-                missing.append('order_identifier')
+            # Check if this is a direct invitation group
+            is_direct_invitation = self._is_direct_invitation_group(user_state)
+            
+            # For direct invitation groups, don't require order identifier
+            if not is_direct_invitation:
+                if not (user_state.order_number or user_state.customer_name):
+                    missing.append('order_identifier')
+            
             if not user_state.order_description:
                 missing.append('order_description')
         
@@ -598,11 +619,17 @@ After payment, I'll coordinate your delivery!"""
     
     def _has_complete_order_info(self, user_state: UserState) -> bool:
         """Check if user has provided complete order information"""
-        has_identifier = user_state.order_number or user_state.customer_name
         has_description = user_state.order_description
         has_restaurant = user_state.restaurant
         has_location = user_state.location
         
+        # For direct invitation groups, only require description (no identifier needed)
+        is_direct_invitation = self._is_direct_invitation_group(user_state)
+        if is_direct_invitation:
+            return all([has_description, has_restaurant, has_location])
+        
+        # For regular users, require identifier as before
+        has_identifier = user_state.order_number or user_state.customer_name
         return all([has_identifier, has_description, has_restaurant, has_location])
     
     async def _check_delivery_already_exists(self, group_id: str) -> bool:

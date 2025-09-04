@@ -282,10 +282,10 @@ Recent conversation:
             return self._generate_food_request_response(analysis, user_state, missing_info)
         
         elif intent == 'provide_order_details' or intent == 'modify_request':
-            return self._generate_order_details_response(analysis, user_state, missing_info)
+            return await self._generate_order_details_response(analysis, user_state, missing_info)
         
         elif intent == 'request_payment':
-            return self._generate_payment_response(analysis, user_state)
+            return await self._generate_payment_response(analysis, user_state)
         
         elif intent == 'cancel_order':
             return self._generate_cancellation_response(analysis, user_state)
@@ -368,12 +368,42 @@ Your share: $4.50 each (vs $8+ solo)
 
 Let's get your food!"""
     
-    def _generate_order_details_response(self, analysis: Dict, user_state: UserState, missing_info: List[str]) -> str:
+    async def _generate_order_details_response(self, analysis: Dict, user_state: UserState, missing_info: List[str]) -> str:
         """Generate response for order details collection"""
         
         restaurant = user_state.restaurant or "the restaurant"
         extracted_info = analysis.get('extracted_info', {})
         
+        # Check if this is a direct invitation group
+        is_direct_invitation = await self._is_direct_invitation_group(user_state)
+        
+        if is_direct_invitation:
+            # For direct invitations, only ask for order description, not identifier
+            if 'order_description' in missing_info:
+                return f"""I need to know what you ordered from {restaurant}.
+
+Please tell me what food items you got:
+• Main item (like "Big Mac meal" or "Chicken bowl")
+• Size/modifications (like "large fries" or "no onions")  
+• Drinks or sides
+
+Since this is a group order, everything will be combined under one name for pickup!"""
+            else:
+                # Order description is complete for direct invitation
+                description = (extracted_info.get('order_description') or 
+                              user_state.order_description)
+                
+                return f"""Perfect! I've got your order details for {restaurant}!
+
+Order: {description}
+
+Your payment share: {user_state.payment_amount}
+
+When you're ready to pay, just text: **PAY**
+
+I'll send you the payment link!"""
+        
+        # Original logic for non-direct-invitation users
         if 'order_identifier' in missing_info and 'order_description' in missing_info:
             return f"""I need your order details for {restaurant}.
 
@@ -422,15 +452,26 @@ When you're ready to pay, just text: **PAY**
 
 I'll send you the payment link!"""
     
-    def _generate_payment_response(self, analysis: Dict, user_state: UserState) -> str:
+    async def _generate_payment_response(self, analysis: Dict, user_state: UserState) -> str:
         """Generate response for payment requests"""
         
-        if not self._has_complete_order_info(user_state):
+        # Check if user has complete order info (handles direct invitation logic)
+        has_complete_info = await self._has_complete_order_info_async(user_state)
+        is_direct_invitation = await self._is_direct_invitation_group(user_state)
+        
+        if not has_complete_info:
             missing = []
-            if not (user_state.order_number or user_state.customer_name):
-                missing.append('order number or name')
-            if not user_state.order_description:
-                missing.append('what you ordered')
+            
+            # For direct invitation users, only require description
+            if is_direct_invitation:
+                if not user_state.order_description:
+                    missing.append('what you ordered')
+            else:
+                # For regular users, require both identifier and description
+                if not (user_state.order_number or user_state.customer_name):
+                    missing.append('order number or name')
+                if not user_state.order_description:
+                    missing.append('what you ordered')
             
             return f"""I need your order details before you can pay!
 
@@ -874,8 +915,38 @@ Respond naturally as their food coordinator:"""
         
         return bool(has_identifier and has_description)
     
-    def _has_complete_order_info(self, user_state: UserState) -> bool:
+    async def _is_direct_invitation_group(self, user_state: UserState) -> bool:
+        """Check if user is in a direct invitation group"""
+        if not user_state.group_id:
+            return False
+            
+        try:
+            group_doc = self.db.collection('active_groups').document(user_state.group_id).get()
+            if group_doc.exists:
+                group_data = group_doc.to_dict()
+                return group_data.get('type') == 'direct_invitation'
+        except Exception as e:
+            print(f"   ⚠️ Error checking group type: {e}")
+        
+        return False
+    
+    async def _has_complete_order_info_async(self, user_state: UserState) -> bool:
         """Check if user has provided complete order information"""
+        has_description = user_state.order_description
+        has_restaurant = user_state.restaurant
+        has_location = user_state.location
+        
+        # For direct invitation groups, only require description (no identifier needed)
+        is_direct_invitation = await self._is_direct_invitation_group(user_state)
+        if is_direct_invitation:
+            return all([has_description, has_restaurant, has_location])
+        
+        # For regular users, require identifier as before
+        has_identifier = user_state.order_number or user_state.customer_name
+        return all([has_identifier, has_description, has_restaurant, has_location])
+    
+    def _has_complete_order_info(self, user_state: UserState) -> bool:
+        """Check if user has provided complete order information (sync version for non-invitation users)"""
         has_identifier = user_state.order_number or user_state.customer_name
         has_description = user_state.order_description
         has_restaurant = user_state.restaurant

@@ -55,14 +55,16 @@ class DeliveryCoordinator:
                             customer_name = user_data.get('customer_name', '')
                             order_description = user_data.get('order_description', '')
                             
+                            print(f"   🔍 User {member_phone}: order_number='{order_number}', customer_name='{customer_name}', order_description='{order_description}'")
+                            
                             # If this user has actual order details, make them primary
                             if order_number or (customer_name and customer_name != 'Student Order'):
                                 primary_user_data = user_data
                                 primary_phone = member_phone
                                 print(f"   👑 Primary orderer: {member_phone} ({customer_name})")
                             
-                            # Collect food descriptions from both users
-                            if order_description:
+                            # Collect food descriptions from both users (critical for direct invitations)
+                            if order_description and order_description.strip():
                                 combined_descriptions.append(order_description)
                                 print(f"   🍕 Added food: {order_description}")
                     except Exception as e:
