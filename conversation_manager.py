@@ -60,6 +60,12 @@ class ConversationManager:
     async def _analyze_message(self, message: str, user_state: UserState) -> Dict:
         """Comprehensive message analysis with context"""
         
+        # Pre-check for phone number patterns to ensure consistent invite detection
+        import re
+        phone_pattern = r'(?:with user\s*|invite\s*)(\+\d[\d\s\-\(\)]+)'
+        phone_match = re.search(phone_pattern, message, re.IGNORECASE)
+        has_phone_invite = bool(phone_match)
+        
         # Build context for Claude
         context_info = self._build_context_for_analysis(user_state)
         
@@ -69,6 +75,7 @@ CURRENT USER STATE:
 {context_info}
 
 USER MESSAGE: "{message}"
+{"⚠️  PHONE NUMBER DETECTED: This message contains a phone invitation pattern. Primary intent MUST be 'invite_specific_user'." if has_phone_invite else ""}
 
 SYSTEM CAPABILITIES:
 - Available restaurants: {', '.join(self.restaurants)}
@@ -92,6 +99,8 @@ POSSIBLE INTENTS:
 - invite_specific_user: Inviting specific user by phone number (e.g., "mcdonald's at library 7pm with user +17089011754", "invite +17089011754 to chipotle")
 - ask_question: Questions about service/restaurants/process/options ("what restaurants", "which food", "what's available")
 - general_chat: Casual conversation
+
+CRITICAL RULE: If the message contains "with user +[phone]" or "invite +[phone]" patterns, the primary intent MUST be "invite_specific_user" regardless of other content.
 
 Return JSON:
 {{

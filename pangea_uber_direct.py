@@ -557,21 +557,42 @@ class UberDirectClient:
             customer_name = order_detail.get('customer_name', '')
             order_description = order_detail.get('order_description', '')
             
-            if order_number:
-                item_name = f"Order #{order_number}"
-            elif customer_name:
-                item_name = f"{customer_name}'s Order"
+            # Handle combined orders from direct invitations (split by " + ")
+            if order_description and " + " in order_description:
+                # Split combined description into individual food items
+                food_items = [item.strip() for item in order_description.split(" + ")]
+                for j, food_item in enumerate(food_items):
+                    if order_number:
+                        item_name = f"Order #{order_number} - Item {j+1}"
+                    elif customer_name:
+                        item_name = f"{customer_name}'s Order - Item {j+1}"
+                    else:
+                        item_name = f"Student Order {i+1} - Item {j+1}"
+                    
+                    item_name += f" - {food_item}"
+                    
+                    manifest_items.append({
+                        "name": item_name,
+                        "quantity": 1,
+                        "size": "small"
+                    })
             else:
-                item_name = f"Student Order {i+1}"
-            
-            if order_description:
-                item_name += f" - {order_description}"
-            
-            manifest_items.append({
-                "name": item_name,
-                "quantity": 1,
-                "size": "small"
-            })
+                # Original single-item logic
+                if order_number:
+                    item_name = f"Order #{order_number}"
+                elif customer_name:
+                    item_name = f"{customer_name}'s Order"
+                else:
+                    item_name = f"Student Order {i+1}"
+                
+                if order_description:
+                    item_name += f" - {order_description}"
+                
+                manifest_items.append({
+                    "name": item_name,
+                    "quantity": 1,
+                    "size": "small"
+                })
         
         # Use string addresses for delivery creation
         pickup_address = self._get_restaurant_address_string(restaurant)
