@@ -282,25 +282,47 @@ class MemoryManager:
             if not user_state.group_id:
                 return
             
-            # Store group information for matching engine compatibility
-            group_data = {
-                'group_id': user_state.group_id,
-                'restaurant': user_state.restaurant,
-                'location': user_state.location,
-                'delivery_time': user_state.delivery_time,
-                'group_size': user_state.group_size,
-                'is_fake_match': user_state.is_fake_match,
-                'members': [user_state.user_phone],  # Will be updated when we get all members
-                'last_updated': datetime.now()
-            }
+            # Check if group already exists in active_groups
+            group_doc = self.db.collection('active_groups').document(user_state.group_id).get()
             
-            # Get all group members to update member list
-            all_members = await self.get_group_members(user_state.group_id)
-            group_data['members'] = [member.user_phone for member in all_members]
-            group_data['group_size'] = len(all_members)
-            
-            # Store in groups collection for matching engine compatibility
-            self.db.collection('active_groups').document(user_state.group_id).set(group_data, merge=True)
+            if group_doc.exists:
+                # Group already exists - just add this user to members list if not already there
+                existing_data = group_doc.to_dict()
+                existing_members = existing_data.get('members', [])
+                
+                if user_state.user_phone not in existing_members:
+                    # Add user to members list using array union to prevent race conditions
+                    self.db.collection('active_groups').document(user_state.group_id).update({
+                        'members': existing_members + [user_state.user_phone],
+                        'group_size': len(existing_members) + 1,
+                        'last_updated': datetime.now()
+                    })
+                    print(f"📝 Added {user_state.user_phone} to existing group {user_state.group_id}")
+                else:
+                    # Just update timestamp and other fields without touching members
+                    self.db.collection('active_groups').document(user_state.group_id).update({
+                        'restaurant': user_state.restaurant,
+                        'location': user_state.location,
+                        'delivery_time': user_state.delivery_time,
+                        'is_fake_match': user_state.is_fake_match,
+                        'last_updated': datetime.now()
+                    })
+                    print(f"🔄 Updated group metadata for {user_state.group_id}")
+            else:
+                # Group doesn't exist - create it (this handles solo orders and race condition cases)
+                group_data = {
+                    'group_id': user_state.group_id,
+                    'restaurant': user_state.restaurant,
+                    'location': user_state.location,
+                    'delivery_time': user_state.delivery_time,
+                    'group_size': user_state.group_size,
+                    'is_fake_match': user_state.is_fake_match,
+                    'members': [user_state.user_phone],
+                    'last_updated': datetime.now()
+                }
+                
+                self.db.collection('active_groups').document(user_state.group_id).set(group_data)
+                print(f"🆕 Created new group {user_state.group_id} for {user_state.user_phone}")
             
         except Exception as e:
             print(f"❌ Error updating group membership: {e}")
