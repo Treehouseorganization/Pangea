@@ -172,12 +172,43 @@ class DeliveryCoordinator:
                 
                 print(f"   🔄 Synced group status: is_fake_match={current_is_fake_match}, group_size={current_group_size}")
                 
-                # If group was upgraded from fake to real, ensure we have all members
-                if not current_is_fake_match and current_group_size == 2:
+                # Ensure we have all members for real groups (including direct invitations)
+                if not current_is_fake_match:
                     current_members = group_data.get('members', [])
-                    if len(current_members) == 2:
+                    if len(current_members) >= 2:
                         delivery_data['members'] = current_members
+                        delivery_data['group_size'] = len(current_members)  # Ensure group_size matches actual members
                         print(f"   👥 Updated members list: {current_members}")
+                        print(f"   📊 Updated group_size to: {len(current_members)}")
+                    elif current_group_size >= 2:
+                        # ROBUST FIX: Try to reconstruct members list from user_states when group_id is missing
+                        print(f"   ⚠️ Group claims size {current_group_size} but members list shows {len(current_members)}")
+                        print(f"   🔧 Attempting to reconstruct members from user_states with group_id {group_id}")
+                        
+                        try:
+                            # Query all user_states to find users with this group_id
+                            user_states = self.db.collection('user_states').where('group_id', '==', group_id).get()
+                            reconstructed_members = []
+                            
+                            for user_doc in user_states:
+                                if user_doc.exists:
+                                    reconstructed_members.append(user_doc.id)  # user_doc.id is the phone number
+                            
+                            if len(reconstructed_members) >= 2:
+                                delivery_data['members'] = reconstructed_members
+                                delivery_data['group_size'] = len(reconstructed_members)
+                                print(f"   ✅ Reconstructed members from user_states: {reconstructed_members}")
+                                print(f"   📊 Updated group_size to: {len(reconstructed_members)}")
+                                
+                                # Update the group document with the reconstructed members
+                                self.db.collection('active_groups').document(group_id).update({
+                                    'members': reconstructed_members
+                                })
+                                print(f"   💾 Updated group document with reconstructed members")
+                            else:
+                                print(f"   ❌ Could only find {len(reconstructed_members)} users with group_id {group_id}")
+                        except Exception as e:
+                            print(f"   ❌ Failed to reconstruct members: {e}")
             
             return delivery_data
             
