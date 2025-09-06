@@ -24,7 +24,8 @@ from firebase_admin import credentials, firestore
 # Import from main Pangea system
 try:
     from pangea_main import db, send_friendly_message, anthropic_llm
-    from pangea_locations import RESTAURANTS, DROPOFFS
+    from pangea_locations import RESTAURANTS
+    from dynamic_location_handler import DynamicLocationHandler
 except ImportError:
     # Fallback initialization if running standalone
     load_dotenv()
@@ -287,6 +288,8 @@ class UberDirectClient:
         self.config = UberDeliveryConfig()
         self.access_token = None
         self.token_expires_at = None
+        from dynamic_location_handler import DynamicLocationHandler
+        self.location_handler = DynamicLocationHandler()
         
     def authenticate(self) -> str:
         """Get OAuth 2.0 access token for Uber Direct API"""
@@ -339,13 +342,14 @@ class UberDirectClient:
                 print(f"   Response Body: {e.response.text}")
             raise Exception(f"Failed to authenticate with Uber: {e}")
 
-    def create_delivery_quote(self, pickup_location: str, dropoff_location: str) -> Dict:
+    def create_delivery_quote(self, pickup_location: str, dropoff_data: Dict, school_name: str = None) -> Dict:
         """
         Create a delivery quote to check feasibility and cost
         
         Args:
-            pickup_location: Restaurant location
-            dropoff_location: Student delivery location
+            pickup_location: Restaurant name
+            dropoff_data: Address data from dynamic location handler
+            school_name: Detected school name for restaurant matching
             
         Returns:
             Quote data with pricing and timing estimates
@@ -362,8 +366,8 @@ class UberDirectClient:
         }
         
         # ✅ FIX: Use proper address format for quotes
-        pickup_address = self._get_restaurant_address_string(pickup_location)
-        dropoff_address = self._get_dropoff_address_string(dropoff_location)
+        pickup_address = self._get_restaurant_address(pickup_location, school_name)
+        dropoff_address = self._get_dropoff_address(dropoff_data)
         
         payload = {
             "pickup_address": pickup_address,
@@ -493,31 +497,76 @@ class UberDirectClient:
             print(f"❌ Delivery cancellation failed: {e}")
             return {"error": f"Failed to cancel delivery: {e}"}
 
-    def _get_restaurant_address(self, restaurant_name: str) -> str:
-        """Convert restaurant name to full address"""
+    def _get_restaurant_address(self, restaurant_name: str, school_name: str = None) -> str:
+        """Convert restaurant name to JSON address for quotes using school-specific locations"""
         
-        restaurant_addresses = {
-            "Chipotle": '{"street_address": ["633 N State St"], "city": "Chicago", "state": "IL", "zip_code": "60654"}',
-            "McDonald's": '{"street_address": ["210 N Canal St"], "city": "Chicago", "state": "IL", "zip_code": "60606"}',
-            "Chick-fil-A": '{"street_address": ["30 E Adams St"], "city": "Chicago", "state": "IL", "zip_code": "60603"}',
-            "Portillo's": '{"street_address": ["520 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "Starbucks": '{"street_address": ["1 N State St"], "city": "Chicago", "state": "IL", "zip_code": "60602"}'
-        }
+        # Get restaurant locations for the detected school
+        if school_name:
+            restaurants = self.location_handler.get_restaurant_locations_for_school(school_name)
+            if restaurants and restaurant_name in restaurants:
+                restaurant_data = restaurants[restaurant_name]
+                address = restaurant_data['address']
+                
+                # Parse address components
+                parts = [part.strip() for part in address.split(',')]
+                if len(parts) >= 3:
+                    street = parts[0]
+                    city = parts[1]
+                    state_zip = parts[2].split()
+                    state = state_zip[0] if state_zip else "IL"
+                    zip_code = state_zip[1] if len(state_zip) > 1 else "60607"
+                    
+                    return f'{{"street_address": ["{street}"], "city": "{city}", "state": "{state}", "zip_code": "{zip_code}"}}'
         
-        return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
+        # Fallback to UIC locations if school not found or no school specified
+        from pangea_locations import RESTAURANTS as UIC_RESTAURANTS
+        if restaurant_name in UIC_RESTAURANTS:
+            restaurant_data = UIC_RESTAURANTS[restaurant_name]
+            address = restaurant_data['address']
+            
+            # Parse address components
+            parts = [part.strip() for part in address.split(',')]
+            if len(parts) >= 3:
+                street = parts[0]
+                city = parts[1]
+                state_zip = parts[2].split()
+                state = state_zip[0] if state_zip else "IL"
+                zip_code = state_zip[1] if len(state_zip) > 1 else "60607"
+                
+                return f'{{"street_address": ["{street}"], "city": "{city}", "state": "{state}", "zip_code": "{zip_code}"}}'
+        
+        # Final fallback
+        return '{"street_address": ["1132 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
 
-    def _get_dropoff_address(self, dropoff_location: str) -> str:
-        """Convert dropoff location to full address"""
+    def _get_dropoff_address(self, dropoff_data: Dict) -> str:
+        """Convert dropoff data to JSON address for quotes"""
         
-        dropoff_addresses = {
-            "Student Union": '{"street_address": ["750 S Halsted St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "Campus Center": '{"street_address": ["828 S Wolcott Ave"], "city": "Chicago", "state": "IL", "zip_code": "60612"}',
-            "Library Plaza": '{"street_address": ["801 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "Recreation Center": '{"street_address": ["901 W Roosevelt Rd"], "city": "Chicago", "state": "IL", "zip_code": "60608"}',
-            "Health Sciences Building": '{"street_address": ["1601 W Taylor St"], "city": "Chicago", "state": "IL", "zip_code": "60612"}'
-        }
-        
-        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Student Union"])
+        # Use the confirmed address data from dynamic location handler
+        if isinstance(dropoff_data, dict) and 'formatted_address' in dropoff_data:
+            address = dropoff_data['formatted_address']
+            
+            # Parse the formatted address into components
+            # Format: "123 Main St, City, State ZIP, Country"
+            parts = [part.strip() for part in address.split(',')]
+            
+            if len(parts) >= 3:
+                street_address = parts[0]
+                city = parts[1]
+                
+                # Handle "State ZIP" format
+                state_zip = parts[2].split()
+                state = state_zip[0] if state_zip else "IL"
+                zip_code = state_zip[1] if len(state_zip) > 1 else "60607"
+                
+                return f'{{"street_address": ["{street_address}"], "city": "{city}", "state": "{state}", "zip_code": "{zip_code}"}}'
+            else:
+                # Fallback for malformed addresses
+                return f'{{"street_address": ["{address}"], "city": "Chicago", "state": "IL", "zip_code": "60607"}}'
+        elif isinstance(dropoff_data, str):
+            # Fallback: if somehow a string is passed, treat as street address
+            return f'{{"street_address": ["{dropoff_data}"], "city": "Chicago", "state": "IL", "zip_code": "60607"}}'
+        else:
+            raise ValueError(f"Invalid dropoff_data format: {dropoff_data}")
 
     def _build_delivery_payload(self, group_data: Dict, quote_id: str) -> Dict:
         """Build the delivery request payload with correct structure and FIXED timezone handling"""
@@ -595,8 +644,12 @@ class UberDirectClient:
                 })
         
         # Use string addresses for delivery creation
-        pickup_address = self._get_restaurant_address_string(restaurant)
-        dropoff_address = self._get_dropoff_address_string(dropoff_location)
+        restaurant = group_data.get('restaurant', 'Unknown Restaurant')
+        dropoff_data = group_data.get('dropoff_data', {})
+        school_name = group_data.get('detected_school')
+        
+        pickup_address = self._get_restaurant_address_string(restaurant, school_name)
+        dropoff_address = self._get_dropoff_address_string(dropoff_data)
         
         # ✅ FIXED: Better timezone handling for scheduled delivery time
         import pytz
@@ -666,38 +719,57 @@ class UberDirectClient:
         
         return payload
 
-    def _get_restaurant_address_string(self, restaurant_name: str) -> str:
-        """Convert restaurant name to address string for delivery creation"""
+    def _get_restaurant_address_string(self, restaurant_name: str, school_name: str = None) -> str:
+        """Convert restaurant name to address string for delivery creation using school-specific locations"""
         
-        # ✅ UPDATED: Using your actual restaurant addresses
-        restaurant_addresses = {
-            "Chipotle": "1132 S Clinton St, Chicago, IL 60607",
-            "McDonald's": "2315 W Ogden Ave, Chicago, IL 60608", 
-            "Chick-fil-A": "1106 S Clinton St, Chicago, IL 60607",
-            "Portillo's": "520 W Taylor St, Chicago, IL 60607",
-            "Starbucks": "1430 W Taylor St, Chicago, IL 60607"
-        }
+        # Get restaurant locations for the detected school
+        if school_name:
+            restaurants = self.location_handler.get_restaurant_locations_for_school(school_name)
+            if restaurants and restaurant_name in restaurants:
+                return restaurants[restaurant_name]['address']
         
-        return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
+        # Fallback to UIC locations if school not found or no school specified
+        from pangea_locations import RESTAURANTS as UIC_RESTAURANTS
+        if restaurant_name in UIC_RESTAURANTS:
+            return UIC_RESTAURANTS[restaurant_name]['address']
+        
+        # Final fallback
+        return "1132 S Clinton St, Chicago, IL 60607"
 
-    def _get_dropoff_address_string(self, dropoff_location: str) -> str:
-        """Convert dropoff location to address string for delivery creation"""
+    def _get_dropoff_address_string(self, dropoff_data: Dict) -> str:
+        """Convert dropoff data to address string for delivery creation"""
         
-        # ✅ UPDATED: Using your actual dropoff addresses
-        dropoff_addresses = {
-            "Richard J Daley Library": "801 S Morgan St, Chicago, IL 60607",
-            "Student Center East": "750 S Halsted St, Chicago, IL 60607",
-            "Student Center West": "828 S Wolcott Ave, Chicago, IL 60612", 
-            "Student Services Building": "1200 W Harrison St, Chicago, IL 60607",
-            "University Hall": "601 S Morgan St, Chicago, IL 60607"
-        }
-        
-        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
+        # Use the confirmed address from dynamic location handler
+        if isinstance(dropoff_data, dict) and 'formatted_address' in dropoff_data:
+            return dropoff_data['formatted_address']
+        elif isinstance(dropoff_data, str):
+            # Fallback: if somehow a string is passed, return it
+            return dropoff_data
+        else:
+            raise ValueError(f"Invalid dropoff_data format: {dropoff_data}")
 
-    def _get_restaurant_address(self, restaurant_name: str) -> str:
-        """Convert restaurant name to JSON address for quotes"""
+    def _get_restaurant_address(self, restaurant_name: str, school_name: str = None) -> str:
+        """Convert restaurant name to JSON address for quotes using school-specific locations"""
         
-        # ✅ UPDATED: Using your actual restaurant addresses in JSON format
+        # Get restaurant locations for the detected school
+        if school_name:
+            restaurants = self.location_handler.get_restaurant_locations_for_school(school_name)
+            if restaurants and restaurant_name in restaurants:
+                restaurant_data = restaurants[restaurant_name]
+                address = restaurant_data['address']
+                
+                # Parse address components
+                parts = [part.strip() for part in address.split(',')]
+                if len(parts) >= 3:
+                    street = parts[0]
+                    city = parts[1]
+                    state_zip = parts[2].split()
+                    state = state_zip[0] if state_zip else "IL"
+                    zip_code = state_zip[1] if len(state_zip) > 1 else "60607"
+                    
+                    return f'{{"street_address": ["{street}"], "city": "{city}", "state": "{state}", "zip_code": "{zip_code}"}}'
+        
+        # Fallback to UIC addresses if school not found or restaurant not available
         restaurant_addresses = {
             "Chipotle": '{"street_address": ["1132 S Clinton St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
             "McDonald's": '{"street_address": ["2315 W Ogden Ave"], "city": "Chicago", "state": "IL", "zip_code": "60608"}',
@@ -708,19 +780,30 @@ class UberDirectClient:
         
         return restaurant_addresses.get(restaurant_name, restaurant_addresses["Chipotle"])
 
-    def _get_dropoff_address(self, dropoff_location: str) -> str:
-        """Convert dropoff location to JSON address for quotes"""
+    def _get_dropoff_address(self, dropoff_data: Dict) -> str:
+        """Convert dropoff data to JSON address for quotes"""
         
-        # ✅ UPDATED: Using your actual dropoff addresses in JSON format
-        dropoff_addresses = {
-            "Richard J Daley Library": '{"street_address": ["801 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "Student Center East": '{"street_address": ["750 S Halsted St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "Student Center West": '{"street_address": ["828 S Wolcott Ave"], "city": "Chicago", "state": "IL", "zip_code": "60612"}',
-            "Student Services Building": '{"street_address": ["1200 W Harrison St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}',
-            "University Hall": '{"street_address": ["601 S Morgan St"], "city": "Chicago", "state": "IL", "zip_code": "60607"}'
-        }
-        
-        return dropoff_addresses.get(dropoff_location, dropoff_addresses["Richard J Daley Library"])
+        # Use the confirmed address data from dynamic location handler
+        if isinstance(dropoff_data, dict) and 'formatted_address' in dropoff_data:
+            address = dropoff_data['formatted_address']
+            
+            # Parse the formatted address into components
+            # Format: "123 Main St, City, State ZIP, Country"
+            parts = [part.strip() for part in address.split(',')]
+            
+            if len(parts) >= 3:
+                street = parts[0]
+                city = parts[1] 
+                state_zip = parts[2].split()
+                state = state_zip[0] if state_zip else "IL"
+                zip_code = state_zip[1] if len(state_zip) > 1 else "60607"
+                
+                return f'{{"street_address": ["{street}"], "city": "{city}", "state": "{state}", "zip_code": "{zip_code}"}}'
+            else:
+                # Fallback format if parsing fails
+                return f'{{"street_address": ["{address}"], "city": "Chicago", "state": "IL", "zip_code": "60607"}}'
+        else:
+            raise ValueError(f"Invalid dropoff_data format: {dropoff_data}")
 
     def _store_quote(self, quote_data: Dict):
         """Store quote in Firebase for tracking"""

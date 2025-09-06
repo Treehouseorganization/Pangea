@@ -377,7 +377,7 @@ Time to order!"""
             }
     
     async def _handle_request_payment(self, user_state: UserState, action_data: Dict) -> Dict:
-        """Handle payment request"""
+        """Handle payment request - creates real Stripe payment link"""
         print(f"         💳 PAYMENT REQUEST:")
         print(f"            📊 Order Complete: {self._has_complete_order_info(user_state)}")
         print(f"            💰 Payment Amount: {user_state.payment_amount}")
@@ -390,30 +390,52 @@ Time to order!"""
                 'missing': user_state.missing_info
             }
         
-        # Generate payment link
-        payment_links = {
-            1: os.getenv("STRIPE_LINK_350", "https://pay.stripe.com/solo_order"),
-            2: os.getenv("STRIPE_LINK_450", "https://pay.stripe.com/group_order")
-        }
-        payment_link = payment_links.get(user_state.group_size, payment_links[1])
+        # Create real Stripe payment link
+        from stripe_handler import create_payment_link
         
-        # Update state - mark user as paid immediately when they request payment
+        order_type = 'solo' if user_state.group_size == 1 else 'group'
+        order_details = {
+            'restaurant': user_state.restaurant,
+            'location': user_state.location,
+            'group_id': user_state.group_id,
+            'delivery_time': user_state.delivery_time
+        }
+        
+        stripe_result = create_payment_link(
+            user_id=user_state.user_phone,
+            order_type=order_type,
+            order_details=order_details
+        )
+        
+        if 'error' in stripe_result:
+            print(f"            ❌ Stripe error: {stripe_result['message']}")
+            return {
+                'status': 'payment_error',
+                'message': stripe_result['message']
+            }
+        
+        payment_link = stripe_result['payment_url']
+        
+        # Update state - ONLY mark payment as requested (not paid until webhook confirms)
         payment_time = datetime.now()
         user_state.payment_requested_at = payment_time
-        user_state.payment_timestamp = payment_time  # Also set payment_timestamp to mark as paid
+        # DO NOT set payment_timestamp yet - only when Stripe webhook confirms
         user_state.stage = OrderStage.PAYMENT_PENDING
+        user_state.stripe_payment_link_id = stripe_result['payment_link_id']
         
-        print(f"            🔗 Generated payment link: {payment_link}")
+        print(f"            🔗 Created Stripe payment link: {payment_link}")
+        print(f"            💳 Link ID: {stripe_result['payment_link_id']}")
+        print(f"            💵 Amount: ${stripe_result['amount_cents']/100}")
         
         # Send payment message
         payment_message = f"""💳 Payment for {user_state.restaurant}
 
 Your share: {user_state.payment_amount}
 
-Click here to pay:
+🔗 Click here to pay securely:
 {payment_link}
 
-After payment, I'll coordinate your delivery!"""
+✅ You'll receive delivery tracking once payment is confirmed!"""
         
         payment_sms_sent = self.send_sms(user_state.user_phone, payment_message)
         print(f"            📱 Payment SMS: {'✅ Sent' if payment_sms_sent else '❌ Failed'}")
@@ -460,8 +482,8 @@ After payment, I'll coordinate your delivery!"""
         if should_trigger:
             print(f"            🚚 Triggering delivery immediately...")
             result = await self._trigger_delivery_now(user_state)
-            print(f"            ⏰ Scheduling notifications for 50 seconds...")
-            self._schedule_delayed_notifications(user_state, result)
+            print(f"            📱 Sending delivery notifications...")
+            self._send_delivery_notifications(user_state, result)
         
         return {
             'status': 'payment_requested',
@@ -745,7 +767,7 @@ After payment, I'll coordinate your delivery!"""
                     member.stage = OrderStage.DELIVERED
                     await self.memory_manager.save_user_state(member)
                 
-                # Don't schedule notifications here - they will be scheduled separately with delay
+                # Send notifications immediately - no artificial delay needed with real payments
             
             return result
             
@@ -753,20 +775,15 @@ After payment, I'll coordinate your delivery!"""
             print(f"❌ Delivery trigger error: {e}")
             return {'status': 'error', 'error': str(e)}
     
-    def _schedule_delayed_notifications(self, user_state: UserState, delivery_result: Dict):
-        """Schedule delivery notifications with 50-second delay to simulate payment processing"""
-        import threading
+    def _send_delivery_notifications(self, user_state: UserState, delivery_result: Dict):
+        """Send delivery notifications immediately (no delay needed with real payments)"""
         
-        print(f"         📱 SCHEDULING DELAYED NOTIFICATIONS:")
+        print(f"         📱 SENDING DELIVERY NOTIFICATIONS:")
         print(f"            👥 Group ID: {user_state.group_id}")
-        print(f"            ⏰ Adding 50-second delay before sending notifications")
+        print(f"            📨 Sending notifications immediately (real payment processed)")
         
-        def delayed_notifications():
-            """Send notifications after delay in background thread"""
-            import time
-            print(f"            🕒 Starting 50-second notification delay...")
-            time.sleep(50)
-            print(f"            📱 Delay complete - sending delivery notifications now!")
+        def send_notifications():
+            """Send notifications immediately"""
             
             try:
                 # Build delivery data for notifications
